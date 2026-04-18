@@ -81,11 +81,7 @@ export default defineEventHandler(async (event) => {
   })
 
   setResponseHeader(event, 'Accept-Ranges', 'bytes')
-  setResponseHeader(
-    event,
-    'Content-Type',
-    row.kind === 'video' ? 'video/mp4' : 'application/octet-stream'
-  )
+  setResponseHeader(event, 'Content-Type', row.mimeType)
   setResponseHeader(event, 'Cache-Control', 'public, max-age=31536000, immutable')
 
   if (plan.status === 416) {

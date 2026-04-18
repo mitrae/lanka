@@ -82,4 +82,48 @@ describe('ingestMedia', () => {
       })
     ).rejects.toThrow(/empty/i)
   })
+
+  it('records mimeType from explicit input', async () => {
+    const row = await ingestMedia(db, store, {
+      stream: readable('PNG-BYTES'),
+      filename: 'test.png',
+      kind: 'image',
+      mimeType: 'image/png'
+    })
+    expect(row.mimeType).toBe('image/png')
+  })
+
+  it('defaults mimeType to application/octet-stream when not provided', async () => {
+    const row = await ingestMedia(db, store, {
+      stream: readable('RAW'),
+      filename: 'blob.bin',
+      kind: 'image'
+    })
+    expect(row.mimeType).toBe('application/octet-stream')
+  })
+
+  it('stores a thumbnail for image uploads', async () => {
+    const sharp = (await import('sharp')).default
+    const pngBuf = await sharp({
+      create: {
+        width: 100,
+        height: 100,
+        channels: 3,
+        background: { r: 0, g: 128, b: 255 }
+      }
+    })
+      .png()
+      .toBuffer()
+    const stream = Readable.from([pngBuf])
+
+    const row = await ingestMedia(db, store, {
+      stream,
+      filename: 'square.png',
+      kind: 'image',
+      mimeType: 'image/png'
+    })
+
+    expect(await store.hasThumbnail(row.sha256)).toBe(true)
+    expect(row.thumbnailBytes).toBeGreaterThan(0)
+  })
 })

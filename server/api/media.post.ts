@@ -18,6 +18,7 @@ export type IngestInput = {
   stream: Readable
   filename: string
   kind: 'video' | 'image'
+  mimeType?: string
   durationMs?: number
   width?: number
   height?: number
@@ -25,19 +26,11 @@ export type IngestInput = {
 
 export type IngestedMedia = typeof schema.media.$inferSelect
 
-/**
- * Buffers the stream to a temp file to compute sha256 and byte count, then either:
- * - returns the existing media row if sha256 already present (dedupe), OR
- * - moves the file into the store and inserts a new media row.
- */
 export async function ingestMedia(
   db: BetterSQLite3Database<typeof schema>,
   store: MediaStore,
   input: IngestInput
 ): Promise<IngestedMedia> {
-  // Tee to temp file while hashing. Single finally guarantees tmp cleanup
-  // on every exit — including pipeline rejection, store.put failure, or
-  // DB error.
   const tmpDir = mkdtempSync(join(tmpdir(), 'lanka-ingest-'))
   const tmpPath = join(tmpDir, 'upload.bin')
   const hash = createHash('sha256')
@@ -62,10 +55,28 @@ export async function ingestMedia(
       .from(schema.media)
       .where(eq(schema.media.sha256, sha256))
       .get()
-
     if (existing) return existing
 
     await store.put(sha256, createReadStream(tmpPath))
+
+    // Thumbnail generation — if it fails, log and keep going (the row still
+    // goes in without a thumbnail, so retries / manual regeneration can happen
+    // later).
+    let thumbnailBytes: number | null = null
+    try {
+      const { generateImageThumbnail, generateVideoThumbnail } = await import(
+        '~/server/services/thumbnails'
+      )
+      const { Readable } = await import('node:stream')
+      const thumbBuf =
+        input.kind === 'image'
+          ? await generateImageThumbnail(createReadStream(tmpPath))
+          : await generateVideoThumbnail(createReadStream(tmpPath))
+      await store.putThumbnail(sha256, Readable.from([thumbBuf]))
+      thumbnailBytes = thumbBuf.length
+    } catch (err) {
+      console.warn('[thumbnail]', { sha256, err: (err as Error).message })
+    }
 
     const [row] = await db
       .insert(schema.media)
@@ -73,7 +84,9 @@ export async function ingestMedia(
         sha256,
         kind: input.kind,
         filename: input.filename,
+        mimeType: input.mimeType ?? 'application/octet-stream',
         bytes,
+        thumbnailBytes,
         durationMs: input.durationMs ?? null,
         width: input.width ?? null,
         height: input.height ?? null
@@ -107,6 +120,7 @@ export default defineEventHandler(async (event) => {
     stream: createReadStream(file.filepath),
     filename: file.originalFilename ?? 'upload.bin',
     kind,
+    mimeType: file.mimetype ?? undefined,
     durationMs: durMs ? Number(durMs) : undefined
   })
 
