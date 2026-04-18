@@ -10,6 +10,10 @@ export default defineNuxtConfig({
     pages: 'app/pages',
     layouts: 'app/layouts'
   },
+  imports: {
+    dirs: ['app/composables', 'app/stores']
+  },
+  components: [{ path: '~/app/components', pathPrefix: false }],
   colorMode: {
     preference: 'dark',
     fallback: 'dark',
