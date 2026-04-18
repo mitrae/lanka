@@ -8,7 +8,7 @@ import type { Readable } from 'node:stream'
 export interface MediaStore {
   put(sha256: string, stream: Readable): Promise<void>
   has(sha256: string): Promise<boolean>
-  open(sha256: string): Readable
+  open(sha256: string, opts?: { start?: number; end?: number }): Readable
   stat(sha256: string): Promise<{ bytes: number }>
   delete(sha256: string): Promise<void>
 }
@@ -41,8 +41,8 @@ export class LocalDiskStore implements MediaStore {
     return existsSync(this.path(sha))
   }
 
-  open(sha: string): Readable {
-    return createReadStream(this.path(sha))
+  open(sha: string, opts?: { start?: number; end?: number }): Readable {
+    return createReadStream(this.path(sha), opts)
   }
 
   async stat(sha: string): Promise<{ bytes: number }> {
