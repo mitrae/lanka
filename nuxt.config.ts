@@ -1,6 +1,6 @@
 // nuxt.config.ts
 export default defineNuxtConfig({
-  compatibilityDate: '2025-10-01',
+  compatibilityDate: '2026-04-01',
   devtools: { enabled: true },
   typescript: {
     strict: true,
