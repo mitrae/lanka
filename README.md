@@ -2,7 +2,7 @@
 
 Self-hosted digital signage for Android TVs on a Tailscale tailnet.
 
-**Status:** Plan 1 + Plan 2a complete — foundation, device sync, and full admin CRUD. No UI yet.
+**Status:** Plan 1 + Plan 2a + Plan 2b complete — foundation, device sync, admin CRUD API, and dashboard UI.
 
 ## Requirements
 
@@ -94,9 +94,21 @@ docs/          superpowers specs and plans
 
 `docs/superpowers/specs/2026-04-18-lanka-digital-signage-design.md`
 
+## Dashboard
+
+Visit `http://localhost:3000` during dev. Routes:
+
+- `/` — Overview (stat cards, unclaimed-device claim tray)
+- `/addresses` — Addresses list + detail
+- `/groups` — Groups list + detail (filterable by address)
+- `/devices` — Devices list with live SSE status + detail with reload / assignment override
+- `/media` — Media library with drag-drop upload
+- `/playlists` — Playlists list + editor (reorder + inline image-duration)
+
+Dark mode default; toggle in the header. Desktop-only (minimum 1280px wide). Runs as a Nuxt SPA (`ssr: false`).
+
 ## Next plans
 
-1. **Dashboard UI** (Plan 2b) — Nuxt UI pages on top of the CRUD API.
-2. **Player web page** — `/player` route with double-buffered playback.
-3. **Deployment** — Dockerfile, Compose, systemd, backups.
-4. **Android APK** — native kiosk shell.
+1. **Player web page** (Plan 3) — `/player` Nuxt route with double-buffered playback + SSE client for TVs.
+2. **Deployment** (Plan 4) — Dockerfile, Compose, systemd, backups.
+3. **Android APK** (Plan 5) — native kiosk shell with FS bridge.
