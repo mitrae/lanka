@@ -49,9 +49,12 @@ export async function handleTelemetry(
     })
     .where(eq(schema.devices.id, deviceId))
 
-  // Playback errors are logged for now; a dedicated errors table can be added later.
   if (body.error) {
-    console.warn('[telemetry]', { deviceId, error: body.error })
+    await db.insert(schema.deviceErrors).values({
+      deviceId,
+      sha256: body.error.sha256 ?? null,
+      message: body.error.message
+    })
   }
 }
 

@@ -86,4 +86,28 @@ describe('POST /api/devices/:id/telemetry handler', () => {
       handleTelemetry(db, 'dev-1', { currentItemId: 99999 })
     ).rejects.toThrow()
   })
+
+  it('persists error payloads to device_errors', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', {
+      currentItemId: null,
+      error: { sha256: 'bad-file-sha', message: 'decode failure' }
+    })
+
+    const rows = await db.select().from(schema.deviceErrors)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      deviceId: 'dev-1',
+      sha256: 'bad-file-sha',
+      message: 'decode failure'
+    })
+    expect(rows[0].createdAt).toBeInstanceOf(Date)
+  })
+
+  it('does not write to device_errors when no error field', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: null })
+    const rows = await db.select().from(schema.deviceErrors)
+    expect(rows).toHaveLength(0)
+  })
 })
