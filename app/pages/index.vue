@@ -31,7 +31,6 @@ const stats = computed(() => {
 
 <template>
   <div>
-    <template #header>Overview</template>
     <div class="grid grid-cols-4 gap-4">
       <StatCard
         label="Total devices"

@@ -40,7 +40,6 @@ async function remove(m: MediaListRow) {
 
 <template>
   <div>
-    <template #header>Media library</template>
     <div class="flex items-center justify-between">
       <p class="text-sm text-(--ui-text-muted)">
         Upload videos and images. Playlists reference media from this library.

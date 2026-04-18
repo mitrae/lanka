@@ -95,12 +95,6 @@ async function reload() {
 
 <template>
   <div>
-    <template #header>
-      <NuxtLink to="/devices" class="hover:text-(--ui-text)">Devices</NuxtLink>
-      <span> / </span>
-      <span class="text-(--ui-text)">{{ device?.name ?? id }}</span>
-    </template>
-
     <div v-if="!device">
       <USkeleton class="h-32 w-full" />
     </div>
@@ -170,8 +164,8 @@ async function reload() {
               <UButton
                 variant="ghost"
                 @click="
-                  editing = false
-                  editName = device!.name ?? ''
+                  editing = false;
+                  editName = device!.name ?? '';
                   editGroupId = device!.groupId
                 "
               >

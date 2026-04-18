@@ -152,12 +152,6 @@ async function deletePlaylist() {
 
 <template>
   <div>
-    <template #header>
-      <NuxtLink to="/playlists" class="hover:text-(--ui-text)">Playlists</NuxtLink>
-      <span> / </span>
-      <span class="text-(--ui-text)">{{ playlist?.name ?? '…' }}</span>
-    </template>
-
     <div v-if="!playlist">
       <USkeleton class="h-32 w-full" />
     </div>

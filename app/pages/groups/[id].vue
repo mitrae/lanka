@@ -89,12 +89,6 @@ async function remove() {
 
 <template>
   <div>
-    <template #header>
-      <NuxtLink to="/groups" class="hover:text-(--ui-text)">Groups</NuxtLink>
-      <span> / </span>
-      <span class="text-(--ui-text)">{{ group?.name ?? '…' }}</span>
-    </template>
-
     <div v-if="!group">
       <USkeleton class="h-24 w-full" />
     </div>
@@ -143,8 +137,8 @@ async function remove() {
               <UButton
                 variant="ghost"
                 @click="
-                  editing = false
-                  editName = group!.name
+                  editing = false;
+                  editName = group!.name;
                   editAddressId = group!.addressId
                 "
               >

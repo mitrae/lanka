@@ -30,7 +30,6 @@ async function createAddress() {
 
 <template>
   <div>
-    <template #header>Addresses</template>
     <div class="flex items-center justify-between">
       <p class="text-sm text-(--ui-text-muted)">
         Physical locations. Each address can contain multiple groups.

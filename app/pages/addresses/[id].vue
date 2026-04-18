@@ -97,12 +97,6 @@ async function remove() {
 
 <template>
   <div>
-    <template #header>
-      <NuxtLink to="/addresses" class="hover:text-(--ui-text)">Addresses</NuxtLink>
-      <span> / </span>
-      <span class="text-(--ui-text)">{{ address?.name ?? '…' }}</span>
-    </template>
-
     <div v-if="!address">
       <USkeleton class="h-24 w-full" />
     </div>

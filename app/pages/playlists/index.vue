@@ -30,7 +30,6 @@ async function createPlaylist() {
 
 <template>
   <div>
-    <template #header>Playlists</template>
     <div class="flex items-center justify-between">
       <p class="text-sm text-(--ui-text-muted)">
         Ordered lists of media that TVs loop. Assign a playlist to a device, group, or address.

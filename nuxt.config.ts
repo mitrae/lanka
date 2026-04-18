@@ -2,6 +2,7 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-04-01',
   devtools: { enabled: true },
+  ssr: false,
   srcDir: '.',
   modules: ['@nuxt/ui', '@nuxt/fonts', '@nuxtjs/color-mode', '@pinia/nuxt'],
   css: ['~/app/assets/css/main.css'],

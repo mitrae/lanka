@@ -68,7 +68,6 @@ function fmtAge(iso: string | null) {
 
 <template>
   <div>
-    <template #header>Devices</template>
     <div class="flex items-center gap-3">
       <USelectMenu
         v-model="addressFilter"

@@ -40,7 +40,6 @@ function addressName(id: number) {
 
 <template>
   <div>
-    <template #header>Groups</template>
     <div class="flex items-center gap-3">
       <USelectMenu
         v-model="addressFilter"
