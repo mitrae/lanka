@@ -5,6 +5,10 @@ export default defineNuxtConfig({
   srcDir: '.',
   modules: ['@nuxt/ui', '@nuxt/fonts', '@nuxtjs/color-mode', '@pinia/nuxt'],
   css: ['~/app/assets/css/main.css'],
+  dir: {
+    pages: 'app/pages',
+    layouts: 'app/layouts'
+  },
   colorMode: {
     preference: 'dark',
     fallback: 'dark',
