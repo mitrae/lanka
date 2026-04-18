@@ -5,7 +5,8 @@ import {
   integer,
   text,
   check,
-  uniqueIndex
+  uniqueIndex,
+  index
 } from 'drizzle-orm/sqlite-core'
 
 export const addresses = sqliteTable('addresses', {
@@ -58,7 +59,9 @@ export const media = sqliteTable(
     sha256: text('sha256').notNull(),
     kind: text('kind', { enum: ['video', 'image'] }).notNull(),
     filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull().default('application/octet-stream'),
     bytes: integer('bytes').notNull(),
+    thumbnailBytes: integer('thumbnail_bytes'),
     durationMs: integer('duration_ms'),
     width: integer('width'),
     height: integer('height'),
@@ -131,6 +134,24 @@ export const assignments = sqliteTable(
   })
 )
 
+export const deviceErrors = sqliteTable(
+  'device_errors',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    deviceId: text('device_id')
+      .notNull()
+      .references(() => devices.id, { onDelete: 'cascade' }),
+    sha256: text('sha256'),
+    message: text('message').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => ({
+    deviceIdx: index('device_errors_device_idx').on(t.deviceId, t.createdAt)
+  })
+)
+
 // Relations (used by Drizzle query API)
 export const addressesRelations = relations(addresses, ({ many }) => ({
   groups: many(groups),
@@ -167,4 +188,7 @@ export const assignmentsRelations = relations(assignments, ({ one }) => ({
     fields: [assignments.addressId],
     references: [addresses.id]
   })
+}))
+export const deviceErrorsRelations = relations(deviceErrors, ({ one }) => ({
+  device: one(devices, { fields: [deviceErrors.deviceId], references: [devices.id] })
 }))
