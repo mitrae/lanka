@@ -2300,7 +2300,7 @@ describe('ingestMedia', () => {
       kind: 'image'
     })
     expect(row.sha256).toBe(
-      '5ccfb63d9bfdb05ad74a66c2b89d27c8b7d49ccd5f4ed164ca8ba5c28cc3f21f'
+      '71a5d2aaa19f4e61586b93e1b533793bf0c49cdb8ccb4f89043d3229ef8f9db8'
     )
     expect(row.kind).toBe('image')
     expect(row.filename).toBe('test.png')
