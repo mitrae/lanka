@@ -40,7 +40,12 @@ export async function seedMedia(
       kind: opts.kind,
       filename: opts.filename ?? `${opts.sha256}.bin`,
       bytes: opts.bytes ?? 1024,
-      durationMs: opts.durationMs ?? (opts.kind === 'video' ? 15000 : null)
+      durationMs:
+        opts.durationMs !== undefined
+          ? opts.durationMs
+          : opts.kind === 'video'
+            ? 15000
+            : null
     })
     .returning()
   return row
