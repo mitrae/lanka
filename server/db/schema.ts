@@ -5,8 +5,7 @@ import {
   integer,
   text,
   check,
-  uniqueIndex,
-  index
+  uniqueIndex
 } from 'drizzle-orm/sqlite-core'
 
 export const addresses = sqliteTable('addresses', {
@@ -40,7 +39,10 @@ export const devices = sqliteTable('devices', {
   name: text('name'),
   lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
   playerVersion: text('player_version'),
-  currentItemId: integer('current_item_id'), // FK added after playlistItems defined (see below)
+  // No FK on currentItemId — SQLite can't express a circular FK cleanly
+  // (devices→playlistItems→playlists). Orphan cleanup is the playlist/item
+  // delete handler's job: null this column whenever the referenced item dies.
+  currentItemId: integer('current_item_id'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
