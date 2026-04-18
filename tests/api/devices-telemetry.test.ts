@@ -1,0 +1,89 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { eq } from 'drizzle-orm'
+import { createTestDb, type TestDb } from '../helpers/test-db'
+import {
+  assign,
+  seedAddress,
+  seedDevice,
+  seedGroup,
+  seedMedia,
+  seedPlaylist
+} from '../helpers/fixtures'
+import { handleTelemetry } from '~/server/api/devices/[id]/telemetry.post'
+import * as schema from '~/server/db/schema'
+
+describe('POST /api/devices/:id/telemetry handler', () => {
+  let db: TestDb
+  let close: () => void
+
+  beforeEach(() => {
+    const t = createTestDb()
+    db = t.db
+    close = t.close
+  })
+  afterEach(() => close())
+
+  async function setup() {
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: grp.id })
+    const m = await seedMedia(db, { sha256: 'a', kind: 'video' })
+    const pl = await seedPlaylist(db, { items: [{ mediaId: m.id }] })
+    await assign(db, { playlistId: pl.id, deviceId: 'dev-1' })
+    const [item] = await db
+      .select()
+      .from(schema.playlistItems)
+      .where(eq(schema.playlistItems.playlistId, pl.id))
+    return { item }
+  }
+
+  it('updates currentItemId', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    const [dev] = await db
+      .select()
+      .from(schema.devices)
+      .where(eq(schema.devices.id, 'dev-1'))
+    expect(dev.currentItemId).toBe(item.id)
+  })
+
+  it('accepts null currentItemId (e.g. no content state)', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: null })
+    const [dev] = await db
+      .select()
+      .from(schema.devices)
+      .where(eq(schema.devices.id, 'dev-1'))
+    expect(dev.currentItemId).toBeNull()
+  })
+
+  it('updates lastSeenAt', async () => {
+    await setup()
+    const beforeRow = await db
+      .select({ ls: schema.devices.lastSeenAt })
+      .from(schema.devices)
+      .where(eq(schema.devices.id, 'dev-1'))
+      .get()
+    await new Promise((r) => setTimeout(r, 10))
+    await handleTelemetry(db, 'dev-1', { currentItemId: null })
+    const afterRow = await db
+      .select({ ls: schema.devices.lastSeenAt })
+      .from(schema.devices)
+      .where(eq(schema.devices.id, 'dev-1'))
+      .get()
+    expect(afterRow!.ls!.getTime()).toBeGreaterThan(beforeRow!.ls?.getTime() ?? 0)
+  })
+
+  it('404s on unknown device', async () => {
+    await expect(
+      handleTelemetry(db, 'ghost', { currentItemId: null })
+    ).rejects.toThrow(/unknown/i)
+  })
+
+  it('rejects currentItemId that references an unknown playlist_item', async () => {
+    await setup()
+    await expect(
+      handleTelemetry(db, 'dev-1', { currentItemId: 99999 })
+    ).rejects.toThrow()
+  })
+})
