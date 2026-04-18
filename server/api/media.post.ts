@@ -35,53 +35,54 @@ export async function ingestMedia(
   store: MediaStore,
   input: IngestInput
 ): Promise<IngestedMedia> {
-  // Tee to temp file while hashing
+  // Tee to temp file while hashing. Single finally guarantees tmp cleanup
+  // on every exit — including pipeline rejection, store.put failure, or
+  // DB error.
   const tmpDir = mkdtempSync(join(tmpdir(), 'lanka-ingest-'))
   const tmpPath = join(tmpDir, 'upload.bin')
   const hash = createHash('sha256')
   let bytes = 0
 
-  const out = createWriteStream(tmpPath)
-  input.stream.on('data', (chunk: Buffer) => {
-    hash.update(chunk)
-    bytes += chunk.length
-  })
-  await pipeline(input.stream, out)
-
-  if (bytes === 0) {
-    await rm(tmpDir, { recursive: true, force: true })
-    throw createError({ statusCode: 400, message: 'Empty upload' })
-  }
-
-  const sha256 = hash.digest('hex')
-
-  const existing = await db
-    .select()
-    .from(schema.media)
-    .where(eq(schema.media.sha256, sha256))
-    .get()
-
-  if (existing) {
-    await rm(tmpDir, { recursive: true, force: true })
-    return existing
-  }
-
-  await store.put(sha256, createReadStream(tmpPath))
-  await rm(tmpDir, { recursive: true, force: true })
-
-  const [row] = await db
-    .insert(schema.media)
-    .values({
-      sha256,
-      kind: input.kind,
-      filename: input.filename,
-      bytes,
-      durationMs: input.durationMs ?? null,
-      width: input.width ?? null,
-      height: input.height ?? null
+  try {
+    const out = createWriteStream(tmpPath)
+    input.stream.on('data', (chunk: Buffer) => {
+      hash.update(chunk)
+      bytes += chunk.length
     })
-    .returning()
-  return row
+    await pipeline(input.stream, out)
+
+    if (bytes === 0) {
+      throw createError({ statusCode: 400, message: 'Empty upload' })
+    }
+
+    const sha256 = hash.digest('hex')
+
+    const existing = await db
+      .select()
+      .from(schema.media)
+      .where(eq(schema.media.sha256, sha256))
+      .get()
+
+    if (existing) return existing
+
+    await store.put(sha256, createReadStream(tmpPath))
+
+    const [row] = await db
+      .insert(schema.media)
+      .values({
+        sha256,
+        kind: input.kind,
+        filename: input.filename,
+        bytes,
+        durationMs: input.durationMs ?? null,
+        width: input.width ?? null,
+        height: input.height ?? null
+      })
+      .returning()
+    return row
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true })
+  }
 }
 
 export default defineEventHandler(async (event) => {
