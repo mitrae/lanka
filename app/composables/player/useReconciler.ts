@@ -47,7 +47,6 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   let attempt = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let pollTimer: ReturnType<typeof setInterval> | null = null
-  let closed = false
   let es: EventSource | null = null
   let streamState: StreamState = 'disconnected'
 
@@ -127,7 +126,6 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   }
 
   function close(): void {
-    closed = true
     clearRetryTimer()
     if (pollTimer) {
       clearInterval(pollTimer)
