@@ -6,7 +6,7 @@
 
 **Architecture:** Nuxt 4 monolith with Nitro API routes. SQLite via `better-sqlite3` + Drizzle ORM. Content-addressed media on local disk behind a `MediaStore` interface. Three-level playlist resolution (Device > Group > Address) implemented as a single SQL `UNION ALL` query. SSE hub keyed by device id.
 
-**Tech Stack:** Node.js 22 LTS, Nuxt 4, TypeScript, Drizzle ORM, better-sqlite3, drizzle-kit, vitest, pino, sharp (added in later plan for thumbnails), pnpm.
+**Tech Stack:** Node.js 20 LTS (22+ also supported), Nuxt 4, TypeScript, Drizzle ORM, better-sqlite3, drizzle-kit, vitest, pino, sharp (added in later plan for thumbnails), pnpm.
 
 **Parent spec:** `docs/superpowers/specs/2026-04-18-lanka-digital-signage-design.md`
 
@@ -108,7 +108,7 @@ Replace generated `package.json` contents with:
     "db:studio": "drizzle-kit studio"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=20.18.0"
   }
 }
 ```
