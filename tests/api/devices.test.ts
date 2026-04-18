@@ -73,7 +73,7 @@ describe('devices CRUD', () => {
     expect(rows.map((r) => r.id)).toEqual(['a1-d'])
   })
 
-  it('list excludes unclaimed by default, includes when ?unclaimed=true', async () => {
+  it('list includes claimed + unclaimed by default; ?unclaimed=true narrows to unclaimed only', async () => {
     const a = await seedAddress(db)
     const g = await seedGroup(db, a.id)
     await seedDevice(db, { id: 'unclaimed' })

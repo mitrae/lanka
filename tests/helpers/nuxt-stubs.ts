@@ -8,8 +8,6 @@
 // Maintenance: when a new Nitro auto-import is introduced by a server file
 // that is transitively imported from tests, add a stub here.
 
-import { vi } from 'vitest'
-
 function notInTests(name: string) {
   return (..._args: unknown[]) => {
     throw new Error(

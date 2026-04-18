@@ -19,15 +19,22 @@ export async function handleUpdateGroup(
   rawBody: unknown
 ) {
   const body = UpdateSchema.parse(rawBody)
-  const [row] = await db
-    .update(schema.groups)
-    .set({ ...body, updatedAt: new Date() })
-    .where(eq(schema.groups.id, id))
-    .returning()
-  if (!row) {
-    throw createError({ statusCode: 404, message: `Group ${id} not found` })
+  try {
+    const [row] = await db
+      .update(schema.groups)
+      .set({ ...body, updatedAt: new Date() })
+      .where(eq(schema.groups.id, id))
+      .returning()
+    if (!row) {
+      throw createError({ statusCode: 404, message: `Group ${id} not found` })
+    }
+    return row
+  } catch (err: any) {
+    if (err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+      throw createError({ statusCode: 400, message: 'Unknown addressId' })
+    }
+    throw err
   }
-  return row
 }
 
 export default defineEventHandler(async (event) => {
