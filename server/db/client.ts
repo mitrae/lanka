@@ -6,6 +6,7 @@ import * as schema from './schema'
 let _db: BetterSQLite3Database<typeof schema> | null = null
 let _sqlite: Database.Database | null = null
 
+// Singleton: after the first call, `url` is ignored. Tests should call createTestDb() instead.
 export function openDatabase(url: string): BetterSQLite3Database<typeof schema> {
   if (_db) return _db
   const path = url.replace(/^file:/, '')
