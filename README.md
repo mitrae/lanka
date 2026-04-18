@@ -2,7 +2,7 @@
 
 Self-hosted digital signage for Android TVs on a Tailscale tailnet.
 
-**Status:** Plan 1 + Plan 2a + Plan 2b complete — foundation, device sync, admin CRUD API, and dashboard UI.
+**Status:** Plan 1 + Plan 2a + Plan 2b + Plan 3 complete — foundation, device sync, admin CRUD API, dashboard UI, and the `/player` route.
 
 ## Requirements
 
@@ -107,8 +107,33 @@ Visit `http://localhost:3000` during dev. Routes:
 
 Dark mode default; toggle in the header. Desktop-only (minimum 1280px wide). Runs as a Nuxt SPA (`ssr: false`).
 
+## Player (`/player`)
+
+The fullscreen player route, served by the same Nuxt app. Loaded by the
+Android WebView kiosk (Plan 5) or a desktop browser for QA.
+
+- **URL:** `http://<host>:<port>/player?deviceId=<device-id>`
+  - `deviceId` query overrides the persisted id for ad-hoc testing.
+  - Omit the query to use (or generate) the browser's persisted id.
+- **Design:** `docs/superpowers/specs/2026-04-18-lanka-player-design.md`.
+- **Behavior:** registers → fetches manifest → plays items in a loop
+  (video `ended` + image timer), double-buffered. Syncs via
+  `/api/devices/:id/stream` SSE + 30-second safety poll. Posts
+  telemetry on each item start and on errors. Falls back to
+  `NoContentScreen` on 204 and `StandbyScreen` on first-boot failures.
+
+### Manual QA checklist
+
+- [ ] Unclaimed → NoContentScreen, device appears in dashboard unclaimed tray
+- [ ] After assignment → PlayerStage, no black flash on video→image and image→video transitions
+- [ ] Playlist-version bump → seamless rebuild within ~5s
+- [ ] `POST /api/devices/:id/reload` → `window.location.reload()`
+- [ ] Corrupt media file → item skipped, red dot on dashboard
+- [ ] Server restart mid-playback → player keeps last playlist, recovers on reconnect
+- [ ] Single video playlist → native `<video loop>`, zero-gap loop
+- [ ] Single image playlist → timer re-fires, telemetry re-posts every cycle
+
 ## Next plans
 
-1. **Player web page** (Plan 3) — `/player` Nuxt route with double-buffered playback + SSE client for TVs.
-2. **Deployment** (Plan 4) — Dockerfile, Compose, systemd, backups.
-3. **Android APK** (Plan 5) — native kiosk shell with FS bridge.
+1. **Deployment** (Plan 4) — Dockerfile, Compose, systemd, backups.
+2. **Android APK** (Plan 5) — native kiosk shell with FS bridge.
