@@ -11,3 +11,9 @@ import { vi } from 'vitest'
   return err
 })
 ;(globalThis as any).useDb = vi.fn()
+;(globalThis as any).getRouterParam = vi.fn()
+;(globalThis as any).createEventStream = vi.fn(() => ({
+  push: vi.fn(),
+  send: vi.fn(),
+  onClosed: vi.fn()
+}))
