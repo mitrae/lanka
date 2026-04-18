@@ -33,8 +33,10 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22",
+    "@vitest/coverage-v8": "^4.1.4",
     "drizzle-kit": "^0.31.10",
     "typescript": "^6.0.3",
+    "vitest": "^4.1.4",
     "vue-tsc": "^3.2.6"
   }
 }
