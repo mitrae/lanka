@@ -11,6 +11,11 @@ export interface MediaStore {
   open(sha256: string, opts?: { start?: number; end?: number }): Readable
   stat(sha256: string): Promise<{ bytes: number }>
   delete(sha256: string): Promise<void>
+
+  putThumbnail(sha256: string, stream: Readable): Promise<void>
+  hasThumbnail(sha256: string): Promise<boolean>
+  openThumbnail(sha256: string): Readable
+  deleteThumbnail(sha256: string): Promise<void>
 }
 
 export class LocalDiskStore implements MediaStore {
@@ -20,13 +25,16 @@ export class LocalDiskStore implements MediaStore {
     return join(this.dir, sha)
   }
 
-  async put(sha: string, stream: Readable): Promise<void> {
-    const final = this.path(sha)
-    await mkdir(dirname(final), { recursive: true })
-    const tmp = `${final}.${randomBytes(6).toString('hex')}.tmp`
+  private thumbPath(sha: string): string {
+    return join(this.dir, '.thumbs', `${sha}.jpg`)
+  }
+
+  private async putAtomic(finalPath: string, stream: Readable): Promise<void> {
+    await mkdir(dirname(finalPath), { recursive: true })
+    const tmp = `${finalPath}.${randomBytes(6).toString('hex')}.tmp`
     try {
       await pipeline(stream, createWriteStream(tmp))
-      await rename(tmp, final)
+      await rename(tmp, finalPath)
     } catch (err) {
       try {
         await unlink(tmp)
@@ -35,6 +43,10 @@ export class LocalDiskStore implements MediaStore {
       }
       throw err
     }
+  }
+
+  async put(sha: string, stream: Readable): Promise<void> {
+    await this.putAtomic(this.path(sha), stream)
   }
 
   async has(sha: string): Promise<boolean> {
@@ -53,6 +65,26 @@ export class LocalDiskStore implements MediaStore {
   async delete(sha: string): Promise<void> {
     try {
       await unlink(this.path(sha))
+    } catch (err: any) {
+      if (err.code !== 'ENOENT') throw err
+    }
+  }
+
+  async putThumbnail(sha: string, stream: Readable): Promise<void> {
+    await this.putAtomic(this.thumbPath(sha), stream)
+  }
+
+  async hasThumbnail(sha: string): Promise<boolean> {
+    return existsSync(this.thumbPath(sha))
+  }
+
+  openThumbnail(sha: string): Readable {
+    return createReadStream(this.thumbPath(sha))
+  }
+
+  async deleteThumbnail(sha: string): Promise<void> {
+    try {
+      await unlink(this.thumbPath(sha))
     } catch (err: any) {
       if (err.code !== 'ENOENT') throw err
     }

@@ -64,4 +64,26 @@ describe('LocalDiskStore', () => {
     for await (const c of s) chunks.push(c as Buffer)
     expect(Buffer.concat(chunks).toString()).toBe('2345')
   })
+
+  it('writes and reads a thumbnail at the .thumbs/ namespace', async () => {
+    await store.putThumbnail('thumbsha', Readable.from([Buffer.from('JPEG-BYTES')]))
+    expect(await store.hasThumbnail('thumbsha')).toBe(true)
+
+    const s = store.openThumbnail('thumbsha')
+    const chunks: Buffer[] = []
+    for await (const c of s) chunks.push(c as Buffer)
+    expect(Buffer.concat(chunks).toString()).toBe('JPEG-BYTES')
+  })
+
+  it('hasThumbnail returns false when not written', async () => {
+    expect(await store.hasThumbnail('no-thumb')).toBe(false)
+  })
+
+  it('thumbnail put is atomic (no .tmp leftover)', async () => {
+    await store.putThumbnail('atomic', Readable.from([Buffer.from('x')]))
+    const fs = await import('node:fs/promises')
+    const thumbsDir = join(dir, '.thumbs')
+    const entries = await fs.readdir(thumbsDir)
+    expect(entries.some((e) => e.endsWith('.tmp'))).toBe(false)
+  })
 })
