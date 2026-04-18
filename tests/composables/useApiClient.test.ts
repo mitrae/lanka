@@ -96,4 +96,83 @@ describe('useApiClient', () => {
       method: 'DELETE'
     })
   })
+
+  it('register() POSTs to /api/devices/register', async () => {
+    const calls: Array<{ url: string; opts: any }> = []
+    const mock = Object.assign(
+      (url: string, opts: any) => {
+        calls.push({ url, opts })
+        return Promise.resolve({
+          deviceId: 'tv-1',
+          claimed: false,
+          name: null,
+          groupId: null
+        })
+      },
+      { raw: () => Promise.resolve({ status: 200, _data: null }) }
+    ) as any
+
+    const api = createApiClient(mock)
+    const out = await api.register({ deviceId: 'tv-1', playerVersion: '3.0.0' })
+
+    expect(calls[0]?.url).toBe('/api/devices/register')
+    expect(calls[0]?.opts.method).toBe('POST')
+    expect(calls[0]?.opts.body).toEqual({
+      deviceId: 'tv-1',
+      playerVersion: '3.0.0'
+    })
+    expect(out.claimed).toBe(false)
+  })
+
+  it('getManifest() returns the body on 200', async () => {
+    const manifest = {
+      playlistId: 1,
+      playlistName: 'P',
+      version: 5,
+      items: []
+    }
+    const mock = Object.assign(
+      (_u: string, _o: any) => Promise.reject(new Error('should not call fetch')),
+      { raw: () => Promise.resolve({ status: 200, _data: manifest }) }
+    ) as any
+
+    const api = createApiClient(mock)
+    const out = await api.getManifest('tv-1')
+    expect(out).toEqual(manifest)
+  })
+
+  it('getManifest() returns null on 204', async () => {
+    const mock = Object.assign(
+      (_u: string, _o: any) => Promise.reject(new Error('should not call fetch')),
+      { raw: () => Promise.resolve({ status: 204, _data: null }) }
+    ) as any
+
+    const api = createApiClient(mock)
+    const out = await api.getManifest('tv-1')
+    expect(out).toBeNull()
+  })
+
+  it('postTelemetry() POSTs { currentItemId, error? }', async () => {
+    const calls: Array<{ url: string; opts: any }> = []
+    const mock = Object.assign(
+      (url: string, opts: any) => {
+        calls.push({ url, opts })
+        return Promise.resolve(undefined)
+      },
+      { raw: () => Promise.resolve({ status: 204, _data: null }) }
+    ) as any
+
+    const api = createApiClient(mock)
+    await api.postTelemetry('tv-1', {
+      currentItemId: 42,
+      error: { sha256: 'abc', message: 'decode failed' }
+    })
+
+    expect(calls[0]?.url).toBe('/api/devices/tv-1/telemetry')
+    expect(calls[0]?.opts.method).toBe('POST')
+    expect(calls[0]?.opts.body).toEqual({
+      currentItemId: 42,
+      error: { sha256: 'abc', message: 'decode failed' }
+    })
+  })
 })

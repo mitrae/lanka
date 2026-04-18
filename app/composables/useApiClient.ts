@@ -5,11 +5,13 @@ import type {
   Device,
   DeviceListRow,
   Group,
+  Manifest,
   Media,
   MediaListRow,
   Playlist,
   PlaylistDetail,
-  PlaylistSummary
+  PlaylistSummary,
+  RegisterResult
 } from '~/app/types/api'
 
 type FetchFn = typeof $fetch
@@ -45,6 +47,20 @@ export interface ApiClient {
   ): Promise<Device>
   deleteDevice(id: string): Promise<void>
   reloadDevice(id: string): Promise<void>
+
+  // player-facing
+  register(body: {
+    deviceId: string
+    playerVersion: string
+  }): Promise<RegisterResult>
+  getManifest(deviceId: string): Promise<Manifest | null>
+  postTelemetry(
+    deviceId: string,
+    body: {
+      currentItemId: number | null
+      error?: { sha256?: string; message: string }
+    }
+  ): Promise<void>
 
   // media
   listMedia(): Promise<MediaListRow[]>
@@ -122,6 +138,26 @@ export function createApiClient(fetch: FetchFn): ApiClient {
       fetch<void>(`/api/devices/${id}`, { method: 'DELETE' }),
     reloadDevice: (id) =>
       fetch<void>(`/api/devices/${id}/reload`, { method: 'POST' }),
+
+    // player-facing
+    register: (body) =>
+      fetch<RegisterResult>('/api/devices/register', {
+        method: 'POST',
+        body
+      }),
+    getManifest: async (deviceId) => {
+      const res = await (fetch as any).raw(
+        `/api/devices/${deviceId}/manifest`,
+        { method: 'GET' }
+      )
+      if (res.status === 204) return null
+      return res._data as Manifest
+    },
+    postTelemetry: (deviceId, body) =>
+      fetch<void>(`/api/devices/${deviceId}/telemetry`, {
+        method: 'POST',
+        body
+      }),
 
     // media
     listMedia: () => fetch<MediaListRow[]>('/api/media', { method: 'GET' }),
