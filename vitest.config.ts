@@ -7,7 +7,7 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['tests/**/*.test.ts'],
-    setupFiles: [],
+    setupFiles: ['./tests/helpers/nuxt-stubs.ts'],
     pool: 'forks' // better-sqlite3 native module isolates per-worker
   },
   resolve: {
