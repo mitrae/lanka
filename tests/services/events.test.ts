@@ -76,4 +76,36 @@ describe('EventsHub', () => {
     u2()
     expect(hub.deviceSubscriberCount('dev-1')).toBe(0)
   })
+
+  it('subscribeDashboard receives events emitted via emitDashboard', () => {
+    const received: Array<{ event: string; data: unknown }> = []
+    hub.subscribeDashboard((event, data) => received.push({ event, data }))
+
+    hub.emitDashboard('device-status', { id: 'd1', status: 'online' })
+    expect(received).toEqual([
+      { event: 'device-status', data: { id: 'd1', status: 'online' } }
+    ])
+  })
+
+  it('emitDevice mirrors to dashboard subscribers as device-event', () => {
+    const received: Array<{ event: string; data: unknown }> = []
+    hub.subscribeDashboard((event, data) => received.push({ event, data }))
+
+    hub.emitDevice('d1', 'manifest-changed', { playlistId: 7 })
+
+    expect(received).toEqual([
+      {
+        event: 'device-event',
+        data: { deviceId: 'd1', event: 'manifest-changed', data: { playlistId: 7 } }
+      }
+    ])
+  })
+
+  it('dashboardSubscriberCount tracks count', () => {
+    expect(hub.dashboardSubscriberCount()).toBe(0)
+    const u = hub.subscribeDashboard(() => {})
+    expect(hub.dashboardSubscriberCount()).toBe(1)
+    u()
+    expect(hub.dashboardSubscriberCount()).toBe(0)
+  })
 })
