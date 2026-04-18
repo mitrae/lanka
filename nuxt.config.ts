@@ -2,6 +2,14 @@
 export default defineNuxtConfig({
   compatibilityDate: '2026-04-01',
   devtools: { enabled: true },
+  srcDir: '.',
+  modules: ['@nuxt/ui', '@nuxt/fonts', '@nuxtjs/color-mode', '@pinia/nuxt'],
+  css: ['~/app/assets/css/main.css'],
+  colorMode: {
+    preference: 'dark',
+    fallback: 'dark',
+    classSuffix: ''
+  },
   typescript: {
     strict: true,
     typeCheck: false
