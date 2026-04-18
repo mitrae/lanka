@@ -17,6 +17,7 @@ function notInTests(name: string) {
   }
 }
 
+;(globalThis as any).$fetch = notInTests('$fetch')
 ;(globalThis as any).defineEventHandler = (handler: unknown) => handler
 ;(globalThis as any).readBody = notInTests('readBody')
 ;(globalThis as any).getRouterParam = notInTests('getRouterParam')
