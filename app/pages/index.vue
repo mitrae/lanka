@@ -3,7 +3,6 @@
 import { useDevicesStore } from '~/app/stores/devices'
 import { useMediaStore } from '~/app/stores/media'
 import { usePlaylistsStore } from '~/app/stores/playlists'
-import { useDashboardStream } from '~/app/composables/useDashboardStream'
 
 definePageMeta({ layout: 'default' })
 
@@ -17,10 +16,6 @@ onMounted(async () => {
     mediaStore.refresh(),
     playlistsStore.refresh()
   ])
-  if (import.meta.client) {
-    const stream = useDashboardStream()
-    stream.onDeviceEvent((p) => devicesStore.applyDeviceEvent(p))
-  }
 })
 
 const stats = computed(() => {

@@ -10,8 +10,10 @@ const navItems = [
   { label: 'Playlists', icon: 'i-lucide-list-music', to: '/playlists' }
 ]
 
-// Placeholder until Task 14; real state comes from useDashboardStream()
-const streamState = ref<'connecting' | 'connected' | 'disconnected'>('connected')
+const stream = import.meta.client ? useDashboardStream() : null
+const streamState = computed(() =>
+  stream ? stream.state.value : ('connecting' as const)
+)
 
 const colorMode = useColorMode()
 function toggleDark() {

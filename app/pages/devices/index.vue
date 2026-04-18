@@ -3,7 +3,6 @@
 import { useDevicesStore } from '~/app/stores/devices'
 import { useAddressesStore } from '~/app/stores/addresses'
 import { useGroupsStore } from '~/app/stores/groups'
-import { useDashboardStream } from '~/app/composables/useDashboardStream'
 
 definePageMeta({ layout: 'default' })
 
@@ -31,10 +30,6 @@ onMounted(async () => {
     groupsStore.refresh(),
     refresh()
   ])
-  if (import.meta.client) {
-    const stream = useDashboardStream()
-    stream.onDeviceEvent((p) => devicesStore.applyDeviceEvent(p))
-  }
 })
 
 watch([addressFilter, groupFilter, statusFilter], refresh)
