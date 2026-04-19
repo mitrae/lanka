@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Lanka nightly backup daily at 03:00 local time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+Unit=lanka-backup.service
+
+[Install]
+WantedBy=timers.target
