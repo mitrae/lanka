@@ -25,17 +25,17 @@ describe('healthz', () => {
   })
 
   it('returns ok when db responds and mediaDir is writable', async () => {
-    const res = await handleHealthz(db, dir)
+    const res = await handleHealthz(db, dir, 'test')
     expect(res.ok).toBe(true)
-    expect(typeof res.version).toBe('string')
+    expect(res.version).toBe('test')
   })
 
   it('throws when mediaDir is not writable', async () => {
     chmodSync(dir, 0o500) // r-x, no write
-    await expect(handleHealthz(db, dir)).rejects.toThrow()
+    await expect(handleHealthz(db, dir, 'test')).rejects.toThrow()
   })
 
   it('throws when mediaDir does not exist', async () => {
-    await expect(handleHealthz(db, join(dir, 'does-not-exist'))).rejects.toThrow()
+    await expect(handleHealthz(db, join(dir, 'does-not-exist'), 'test')).rejects.toThrow()
   })
 })
