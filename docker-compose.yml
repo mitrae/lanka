@@ -1,0 +1,19 @@
+services:
+  lanka:
+    build: .
+    container_name: lanka
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=file:/app/data/signage.db
+      - MEDIA_DIR=/app/data/media
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 20s

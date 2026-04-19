@@ -1,10 +1,9 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { useMediaStore } from '~/server/services/media-store-singleton'
 import type { MediaStore } from '~/server/services/media-store'
-import { bumpPlaylistVersion } from '~/server/services/playlist-version'
 
 export { handleGetMedia } from './[id].get'
 
@@ -14,18 +13,17 @@ export async function handleDeleteMedia(
   id: number,
   opts: { force: boolean }
 ): Promise<void> {
-  const [row] = await db
+  const existing = await db
     .select()
     .from(schema.media)
     .where(eq(schema.media.id, id))
+  const row = existing[0]
   if (!row) {
     throw createError({ statusCode: 404, message: `Media ${id} not found` })
   }
 
   const referencingItems = await db
-    .select({
-      playlistId: schema.playlistItems.playlistId
-    })
+    .select({ playlistId: schema.playlistItems.playlistId })
     .from(schema.playlistItems)
     .where(eq(schema.playlistItems.mediaId, id))
 
@@ -38,16 +36,29 @@ export async function handleDeleteMedia(
 
   const affectedPlaylists = new Set(referencingItems.map((r) => r.playlistId))
 
-  if (opts.force && affectedPlaylists.size > 0) {
-    await db
-      .delete(schema.playlistItems)
-      .where(eq(schema.playlistItems.mediaId, id))
-    for (const pid of affectedPlaylists) {
-      await bumpPlaylistVersion(db, pid)
+  db.transaction((tx) => {
+    if (opts.force && affectedPlaylists.size > 0) {
+      tx.delete(schema.playlistItems)
+        .where(eq(schema.playlistItems.mediaId, id))
+        .run()
+      for (const pid of affectedPlaylists) {
+        const bumped = tx
+          .update(schema.playlists)
+          .set({
+            version: sql`${schema.playlists.version} + 1`,
+            updatedAt: new Date()
+          })
+          .where(eq(schema.playlists.id, pid))
+          .returning({ id: schema.playlists.id })
+          .all()
+        if (bumped.length === 0) {
+          throw new Error(`Playlist ${pid} not found during force-delete bump`)
+        }
+      }
     }
-  }
+    tx.delete(schema.media).where(eq(schema.media.id, id)).run()
+  })
 
-  await db.delete(schema.media).where(eq(schema.media.id, id))
   await store.delete(row.sha256)
   await store.deleteThumbnail(row.sha256)
 }

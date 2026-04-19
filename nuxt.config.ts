@@ -25,7 +25,8 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     databaseUrl: process.env.DATABASE_URL ?? 'file:./data/signage.db',
-    mediaDir: process.env.MEDIA_DIR ?? './data/media'
+    mediaDir: process.env.MEDIA_DIR ?? './data/media',
+    appVersion: process.env.npm_package_version ?? 'dev'
   },
   nitro: {
     experimental: {

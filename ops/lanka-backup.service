@@ -1,0 +1,9 @@
+[Unit]
+Description=Lanka nightly backup
+After=lanka.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/lanka
+ExecStart=/opt/lanka/scripts/backup.sh
+User=root
