@@ -175,12 +175,13 @@ cd /opt/lanka
 sudo ./scripts/deploy.sh
 ```
 
-The script snapshots the DB + media before the pull, builds and restarts, then polls `/api/healthz` for 60s. On failure it rolls the working tree back to the pre-pull HEAD and rebuilds the previous version.
+The script snapshots the DB + media before the pull, builds and restarts, then polls `/api/healthz` for up to ~90s (30 attempts × 2s sleep, 3s curl timeout). On failure it rolls the working tree back to the pre-pull HEAD and rebuilds the previous version.
 
 ### Restore from backup
 
 ```bash
 sudo systemctl stop lanka
+sudo rm -f /opt/lanka/data/signage.db /opt/lanka/data/signage.db-wal /opt/lanka/data/signage.db-shm
 sudo cp /opt/lanka/backups/db/signage-YYYY-MM-DD.db /opt/lanka/data/signage.db
 sudo rsync -a --delete /opt/lanka/backups/media/ /opt/lanka/data/media/
 sudo systemctl start lanka
