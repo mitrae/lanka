@@ -21,7 +21,12 @@ PRE_HEAD="$(git rev-parse HEAD)"
 echo "==> Current HEAD before pull: $PRE_HEAD"
 
 echo "==> Pulling (fast-forward only)"
-git pull --ff-only
+if ! git pull --ff-only; then
+  echo "!! git pull --ff-only failed: local main has diverged from origin/main." >&2
+  echo "!! Either reset local commits with 'git reset --hard origin/main' (losing them)" >&2
+  echo "!! or investigate unpushed work on the host before retrying deploy.sh." >&2
+  exit 1
+fi
 
 NEW_HEAD="$(git rev-parse HEAD)"
 if [ "$PRE_HEAD" = "$NEW_HEAD" ]; then
@@ -32,9 +37,16 @@ fi
 echo "==> Building and restarting"
 docker compose up -d --build
 
-echo "==> Resolving HOST/PORT from .env for healthz poll"
-HOST_IP="$(grep ^HOST= .env | cut -d= -f2)"
-PORT_VAL="$(grep ^PORT= .env | cut -d= -f2)"
+echo "==> Loading HOST/PORT from .env for healthz poll"
+# docker-compose already treats .env as shell-sourceable via env_file.
+# Source it the same way here so future format changes (comments,
+# quoted values) don't silently break the poll URL.
+set -a
+# shellcheck disable=SC1091
+. ./.env
+set +a
+HOST_IP="$HOST"
+PORT_VAL="$PORT"
 
 echo "==> Waiting for http://${HOST_IP}:${PORT_VAL}/api/healthz"
 for i in $(seq 1 30); do
@@ -51,4 +63,8 @@ git reset --hard "$PRE_HEAD"
 docker compose up -d --build
 
 echo "!! Rollback complete. Investigate the failed deploy in docker logs lanka."
+echo "!! If the failed deploy advanced the DB schema (drizzle migrations are"
+echo "!! forward-only), the rolled-back code may be incompatible with the"
+echo "!! current DB. Restore from backups/db/signage-\$(date +%F).db per"
+echo "!! the README 'Restore from backup' procedure before the service recovers."
 exit 1
