@@ -133,6 +133,91 @@ Android WebView kiosk (Plan 5) or a desktop browser for QA.
 - [ ] Single video playlist → native `<video loop>`, zero-gap loop
 - [ ] Single image playlist → timer re-fires, telemetry re-posts every cycle
 
+## Deployment
+
+Production is a single Ubuntu 22.04+ host on a Tailscale tailnet, running the app as one Docker Compose service. All traffic reaches the host over the tailnet; the app binds to the Tailscale interface only, so it's unreachable from the public NIC even if the firewall is misconfigured.
+
+### Host prerequisites
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-plugin sqlite3 rsync curl git
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+```
+
+### First install
+
+```bash
+# Check out the repo under /opt.
+sudo git clone <repo-url> /opt/lanka
+sudo chown -R root:root /opt/lanka
+sudo mkdir -p /opt/lanka/data/media /opt/lanka/backups
+
+# Install systemd units.
+sudo cp /opt/lanka/ops/lanka.service        /etc/systemd/system/
+sudo cp /opt/lanka/ops/lanka-backup.service /etc/systemd/system/
+sudo cp /opt/lanka/ops/lanka-backup.timer   /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# Start the service and the backup timer.
+sudo systemctl enable --now lanka.service
+sudo systemctl enable --now lanka-backup.timer
+```
+
+Confirm: `systemctl status lanka` shows `active (running)`. Visit `http://<tailnet-ip>:3000` from another tailnet device. `http://<tailnet-ip>:3000/api/healthz` returns `{"ok":true,...}`.
+
+### Upgrading
+
+```bash
+ssh <lanka-host>
+cd /opt/lanka
+sudo ./scripts/deploy.sh
+```
+
+The script snapshots the DB + media before the pull, builds and restarts, then polls `/api/healthz` for 60s. On failure it rolls the working tree back to the pre-pull HEAD and rebuilds the previous version.
+
+### Restore from backup
+
+```bash
+sudo systemctl stop lanka
+sudo cp /opt/lanka/backups/db/signage-YYYY-MM-DD.db /opt/lanka/data/signage.db
+sudo rsync -a --delete /opt/lanka/backups/media/ /opt/lanka/data/media/
+sudo systemctl start lanka
+```
+
+DB snapshots retain 7 days; media is a current-state mirror.
+
+### Offsite backups (optional, future)
+
+Drop an executable at `/opt/lanka/backups/offsite.sh`. `backup.sh` invokes it at the end of each nightly run with the backup root as `$1`. No code change needed.
+
+## Operations
+
+### Logs
+
+- App logs: `docker logs -f lanka` (last 30MB, 3 files × 10MB — configured in `docker-compose.yml`).
+- Service lifecycle: `journalctl -u lanka -f`.
+- Backup runs: `journalctl -u lanka-backup`.
+
+### Health
+
+- `GET /api/healthz` returns 200 when SQLite responds to `SELECT 1` and `MEDIA_DIR` is writable. The Docker `HEALTHCHECK` polls it every 30s; `docker ps` shows the container as healthy/unhealthy. `restart: unless-stopped` recovers from crashes.
+
+### Backups
+
+- Schedule: nightly at 03:00 local (`lanka-backup.timer`).
+- DB snapshot: `/opt/lanka/backups/db/signage-YYYY-MM-DD.db`, 7-day retention.
+- Media mirror: `/opt/lanka/backups/media/` (current state, `rsync --delete`).
+- Manual run: `sudo systemctl start lanka-backup.service`.
+- Next scheduled run: `systemctl list-timers lanka-backup.timer`.
+
+### Common tasks
+
+- Shell into the container: `docker exec -it lanka bash`
+- Inspect the DB from the host: `sqlite3 /opt/lanka/data/signage.db`
+- Rotate to a new tailnet IP: `sudo systemctl restart lanka` (re-runs `render-env.sh`).
+
 ## Next plans
 
 1. **Deployment** (Plan 4) — Dockerfile, Compose, systemd, backups.
