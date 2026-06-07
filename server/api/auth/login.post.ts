@@ -34,7 +34,15 @@ export async function authenticateUser(
 
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
-  const result = await authenticateUser(useDb(), body)
+  let result: { user: SessionUser; token: string } | null
+  try {
+    result = await authenticateUser(useDb(), body)
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      throw createError({ statusCode: 400, message: err.message })
+    }
+    throw err
+  }
   if (!result) throw createError({ statusCode: 401, message: 'Invalid username or password' })
   setCookie(event, SESSION_COOKIE, result.token, {
     httpOnly: true,

@@ -64,7 +64,6 @@ export interface Media {
 
 export interface MediaListRow extends Media {
   usedInPlaylists: number
-  organizationId: number | null
 }
 
 export interface PlaylistItem {

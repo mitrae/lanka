@@ -17,5 +17,13 @@ export async function handleCreateOrganization(
 
 export default defineEventHandler(async (event) => {
   requireRole(event.context.user, ['admin', 'super'])
-  return handleCreateOrganization(useDb(), await readBody(event))
+  const body = await readBody(event)
+  try {
+    return await handleCreateOrganization(useDb(), body)
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      throw createError({ statusCode: 400, message: err.message })
+    }
+    throw err
+  }
 })

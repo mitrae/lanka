@@ -34,5 +34,13 @@ export default defineEventHandler(async (event) => {
   requireRole(event.context.user, ['admin', 'super'])
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, message: 'Bad media id' })
-  return handleAssignMediaOrg(useDb(), id, await readBody(event))
+  const body = await readBody(event)
+  try {
+    return await handleAssignMediaOrg(useDb(), id, body)
+  } catch (err: any) {
+    if (err instanceof z.ZodError) {
+      throw createError({ statusCode: 400, message: err.message })
+    }
+    throw err
+  }
 })

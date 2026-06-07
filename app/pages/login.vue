@@ -32,10 +32,10 @@ async function submit() {
 
       <form class="space-y-4" @submit.prevent="submit">
         <UFormField label="Username">
-          <UInput v-model="username" autocomplete="username" size="lg" class="w-full" />
+          <UInput v-model="username" name="username" autocomplete="username" size="lg" class="w-full" />
         </UFormField>
         <UFormField label="Password">
-          <UInput v-model="password" type="password" autocomplete="current-password" size="lg" class="w-full" />
+          <UInput v-model="password" type="password" name="password" autocomplete="current-password" size="lg" class="w-full" />
         </UFormField>
         <p v-if="error" class="text-sm text-rose-500">{{ error }}</p>
         <UButton
