@@ -8,10 +8,13 @@ import type {
   Manifest,
   Media,
   MediaListRow,
+  Organization,
+  OrgReach,
   Playlist,
   PlaylistDetail,
   PlaylistSummary,
-  RegisterResult
+  RegisterResult,
+  SessionUser
 } from '~/app/types/api'
 
 type FetchFn = typeof $fetch
@@ -80,6 +83,19 @@ export interface ApiClient {
       items: Array<{ mediaId: number; durationMsOverride?: number }>
     }
   ): Promise<void>
+
+  // auth
+  login(body: { username: string; password: string }): Promise<{ user: SessionUser }>
+  logout(): Promise<void>
+  me(): Promise<{ user: SessionUser }>
+
+  // organizations
+  listOrganizations(): Promise<Organization[]>
+  createOrganization(body: { name: string }): Promise<Organization>
+  assignMediaOrganization(mediaId: number, body: { organizationId: number | null }): Promise<Media>
+
+  // portal
+  getPortalStats(): Promise<OrgReach>
 
   // assignments (target-addressed)
   assignDeviceToPlaylist(
@@ -183,6 +199,18 @@ export function createApiClient(fetch: FetchFn): ApiClient {
       fetch<void>(`/api/playlists/${id}`, { method: 'DELETE' }),
     replacePlaylistItems: (id, body) =>
       fetch<void>(`/api/playlists/${id}/items`, { method: 'PUT', body }),
+
+    // auth
+    login: (body) => fetch<{ user: SessionUser }>('/api/auth/login', { method: 'POST', body }),
+    logout: () => fetch<void>('/api/auth/logout', { method: 'POST' }),
+    me: () => fetch<{ user: SessionUser }>('/api/auth/me', { method: 'GET' }),
+    // organizations
+    listOrganizations: () => fetch<Organization[]>('/api/organizations', { method: 'GET' }),
+    createOrganization: (body) => fetch<Organization>('/api/organizations', { method: 'POST', body }),
+    assignMediaOrganization: (mediaId, body) =>
+      fetch<Media>(`/api/media/${mediaId}/organization`, { method: 'PUT', body }),
+    // portal
+    getPortalStats: () => fetch<OrgReach>('/api/portal/stats', { method: 'GET' }),
 
     // assignments
     assignDeviceToPlaylist: (deviceId, body) =>
