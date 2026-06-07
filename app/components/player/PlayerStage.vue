@@ -25,9 +25,33 @@ const imgB = ref<HTMLImageElement | null>(null)
 const itemInA = ref<ManifestItem | null>(null)
 const itemInB = ref<ManifestItem | null>(null)
 
-// Consecutive error count — bail to a "stalled" state if we can't make progress.
+// Consecutive error count — fall into a "stalled" state if we can't make
+// progress, then self-heal by retrying after a delay (no operator needed).
+const MAX_CONSECUTIVE_ERRORS = 5
+const RECOVERY_DELAY_MS = 15_000
 let consecutiveErrors = 0
 const stalled = ref(false)
+let recoveryTimer: number | null = null
+
+function clearRecoveryTimer(): void {
+  if (recoveryTimer !== null) {
+    window.clearTimeout(recoveryTimer)
+    recoveryTimer = null
+  }
+}
+
+function scheduleRecovery(): void {
+  if (recoveryTimer !== null) return
+  recoveryTimer = window.setTimeout(() => {
+    recoveryTimer = null
+    // Retry the current items. If media/network has recovered the stall clears
+    // and playback resumes; if not, errors climb back to the threshold and we
+    // re-arm — a slow self-healing retry instead of a permanently dark screen.
+    consecutiveErrors = 0
+    stalled.value = false
+    mountInitial()
+  }, RECOVERY_DELAY_MS)
+}
 
 function frontSlot(): 'A' | 'B' {
   return frontIsA.value ? 'A' : 'B'
@@ -76,9 +100,12 @@ function playFrontVideoIfNeeded(): void {
 
 function reportError(index: number, msg: string): void {
   consecutiveErrors += 1
-  if (consecutiveErrors >= 5) {
+  if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+    // Pause error-driven advancing and retry after a delay. Do NOT call
+    // scheduler.stop() — that permanently clears its handlers, so the screen
+    // could only ever recover via a manifest change (operator action).
     stalled.value = true
-    props.scheduler.stop()
+    scheduleRecovery()
     return
   }
   props.scheduler.itemErrored(index, msg)
@@ -140,6 +167,7 @@ onMounted(() => {
   onBeforeUnmount(() => {
     unsubTransition()
     unsubStart()
+    clearRecoveryTimer()
   })
 })
 

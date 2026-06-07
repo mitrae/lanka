@@ -2,19 +2,33 @@
 
 Minimal Android APK that opens the Lanka `/player` page in a fullscreen WebView.
 Tailscale is a **separate** install (official app from Play Store / sideload),
-not embedded. No kiosk protection, no boot intercept, no watchdog — that's the
-full Plan 5 scope. See `docs/superpowers/plans/2026-04-19-lanka-apk-kiosk.md`
-for the eventual production design.
+not embedded — and intentionally stays that way (no embedded `tsnet`). The thin
+shell now includes the small bits of unattended hardening that an always-on box
+actually needs; the heavier Plan 5 ideas (embedded tsnet, WorkManager watchdog,
+full D-pad interception, on-screen override dialog) are deliberately **not**
+built. See `docs/superpowers/plans/2026-04-19-lanka-apk-kiosk.md` for the
+original production design.
 
 ## What it does
 
 1. Generates and persists a UUID `deviceId` on first run (SharedPreferences).
 2. Opens `${LANKA_SERVER_URL}/player?deviceId=<uuid>` in a fullscreen WebView.
-3. Hides system bars, keeps the screen on, suppresses the back action via
-   `singleTask` (no key intercept beyond Android's defaults).
+3. Hides system bars and keeps the screen on.
 4. Forwards WebView `console.*` to logcat under tag `LankaPlayer`.
 
-That's it.
+### Unattended self-recovery (so a box doesn't go dark and stay dark)
+
+5. **Auto-launches after a reboot** via a `BOOT_COMPLETED` receiver, so a power
+   cut / overnight power-off / OS-update reboot brings the player back with no
+   human present. (See the autostart caveat under *Known limitations*.)
+6. **Retries a failed page load** with capped backoff (3 → 6 → 12 → 24 → 30 s):
+   if the server or tailnet isn't ready at launch, or drops briefly, the WebView
+   reloads itself instead of sitting on a blank error page.
+7. **Recovers from WebView renderer death** (`onRenderProcessGone`): an OOM or
+   codec crash during long video playback rebuilds the kiosk instead of letting
+   the OS kill the Activity to a black screen.
+8. **Swallows the BACK key** so a stray remote press can't drop the kiosk to the
+   launcher.
 
 ## Prerequisites (build host)
 
@@ -41,6 +55,36 @@ APK lands at `app/build/outputs/apk/debug/app-debug.apk` (~1.5 MB).
 
 To change the URL, rebuild — there is no on-device override in the PoC.
 
+## Release build (signed)
+
+Signing creds are read from `android/keystore.properties` (kept **out of git**),
+or the `LANKA_KEYSTORE_PATH` / `LANKA_KEYSTORE_PASS` / `LANKA_KEY_ALIAS` /
+`LANKA_KEY_PASS` env vars for CI. With neither present, `assembleRelease`
+produces an *unsigned* APK.
+
+One-time: create a self-signed keystore and point `keystore.properties` at it.
+
+```bash
+cd android
+keytool -genkeypair -v -keystore lanka-release.jks -storetype PKCS12 \
+  -alias lanka -keyalg RSA -keysize 2048 -validity 10000
+cat > keystore.properties <<'EOF'
+storeFile=lanka-release.jks
+storePassword=<your-store-pass>
+keyAlias=lanka
+keyPassword=<your-key-pass>
+EOF
+```
+
+**Back up `lanka-release.jks` + `keystore.properties` together.** Losing the
+keystore means every box must uninstall/reinstall (a different signature can't
+`-r` upgrade and Android wipes the app's stored `deviceId`).
+
+```bash
+./gradlew :app:assembleRelease -PLANKA_SERVER_URL=http://lanka-server:3000
+# → app/build/outputs/apk/release/app-release.apk  (verify: apksigner verify <apk>)
+```
+
 ## On the TV (one-time setup)
 
 1. **Enable Developer options + USB debugging** (or "Apps from unknown sources").
@@ -58,12 +102,25 @@ To change the URL, rebuild — there is no on-device override in the PoC.
 
 ## Known limitations (intentional, PoC scope)
 
-- **No autostart on boot** — user opens the app manually each power-on.
-- **No watchdog** — if the WebView crashes, the activity stays on a blank
-  screen until user opens the app again.
-- **No key handling** — pressing BACK, HOME etc. behaves like a normal app:
-  back exits the activity, HOME goes to launcher.
-- **No URL override on device** — wrong URL = rebuild APK.
+- **Autostart depends on the box.** A `BOOT_COMPLETED` receiver relaunches the
+  app after a reboot, but Android 10+ restricts background activity launches, so
+  some boxes won't honor it. The robust fallback on a single-purpose box is to
+  set Lanka as the device's **HOME launcher** (it then boots straight into the
+  player and BACK/HOME return to it for free). Keep Tailscale reachable for
+  sign-in before doing this.
+- **HOME is not intercepted** — only BACK is swallowed. Pressing HOME on a box
+  where Lanka isn't the launcher goes to the launcher (use the HOME-launcher
+  setup above to close that gap).
+- **Renderer recovery is not total-crash recovery.** `onRenderProcessGone`
+  rebuilds the kiosk when the WebView *renderer* dies, but a full app-process
+  kill (true OOM) still relies on autostart/HOME-launcher to relaunch.
+- **No URL override on device** — wrong/changed server URL = rebuild APK. (A
+  cheap `adb am start --es serverUrl …` override is a candidate next step.)
+- **Sleep/wake (goal 3) is not implemented** — an unprivileged app can't power
+  the TV panel off (HDMI-CEC is privileged); see the audit notes for the
+  scheduled-blank-screen + smart-plug approach.
+- **No on-device media cache** — videos are fetched from the server each loop
+  (Plan 6). Watch tailnet bandwidth at fleet scale.
 - **Cleartext HTTP allowed** (`usesCleartextTraffic="true"`) so plain
   `http://` server URLs work over the tailnet without TLS.
 

@@ -1,7 +1,23 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// Release signing is read from android/keystore.properties (kept out of git),
+// or, failing that, the LANKA_KEYSTORE_* environment variables (for CI). When
+// neither is present the release build is left unsigned, so a plain
+// `assembleDebug` on a fresh checkout still works without any secrets.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
+}
+fun signProp(prop: String, env: String): String? =
+    keystoreProps.getProperty(prop) ?: System.getenv(env)
+val releaseStoreFile = signProp("storeFile", "LANKA_KEYSTORE_PATH")?.let { rootProject.file(it) }
+val hasReleaseSigning = releaseStoreFile?.exists() == true
 
 android {
     namespace = "ai.lanka.kiosk"
@@ -25,9 +41,23 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = signProp("storePassword", "LANKA_KEYSTORE_PASS")
+                keyAlias = signProp("keyAlias", "LANKA_KEY_ALIAS")
+                keyPassword = signProp("keyPassword", "LANKA_KEY_PASS")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
