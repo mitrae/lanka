@@ -15,9 +15,15 @@ export default defineNuxtConfig({
   },
   components: [{ path: '~/app/components', pathPrefix: false }],
   colorMode: {
-    preference: 'dark',
-    fallback: 'dark',
+    preference: 'light',
+    fallback: 'light',
     classSuffix: ''
+  },
+  fonts: {
+    families: [
+      { name: 'Bricolage Grotesque', provider: 'google' },
+      { name: 'Hanken Grotesque', provider: 'google' }
+    ]
   },
   typescript: {
     strict: true,
