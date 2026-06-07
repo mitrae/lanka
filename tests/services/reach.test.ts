@@ -53,4 +53,48 @@ describe('computeOrgReach', () => {
   it('returns null for an unknown organization', async () => {
     expect(await computeOrgReach(db, 999, new Date())).toBeNull()
   })
+
+  it('dedups a device across multiple org media in the org totals', async () => {
+    const org = await seedOrganization(db, 'Acme')
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    const now = new Date('2026-06-07T12:00:00Z')
+
+    // single online device
+    await seedDevice(db, { id: 'd1', groupId: grp.id })
+    await db.update(schema.devices).set({ lastSeenAt: new Date(now.getTime() - 60_000) }).where(eq(schema.devices.id, 'd1'))
+
+    // two org-owned media in one playlist assigned to the single device
+    const a = await seedMedia(db, { sha256: 'a', kind: 'image', organizationId: org.id })
+    const b = await seedMedia(db, { sha256: 'b', kind: 'image', organizationId: org.id })
+    const pl = await seedPlaylist(db, { items: [{ mediaId: a.id }, { mediaId: b.id }] })
+    await assign(db, { playlistId: pl.id, deviceId: 'd1' })
+
+    const reach = await computeOrgReach(db, org.id, now)
+    expect(reach!.media).toHaveLength(2)
+    // each media reaches the one device
+    for (const m of reach!.media) expect(m.screensScheduled).toBe(1)
+    // but the device is counted once across the union, not twice
+    expect(reach!.totals.screensReached).toBe(1)
+    expect(reach!.totals.screensOnline).toBe(1)
+  })
+
+  it('counts only device_errors whose sha256 matches the org media', async () => {
+    const org = await seedOrganization(db)
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'd1', groupId: grp.id })
+
+    const m = await seedMedia(db, { sha256: 'errm', kind: 'image', organizationId: org.id })
+
+    // two errors for this org media...
+    await db.insert(schema.deviceErrors).values({ deviceId: 'd1', sha256: 'errm', message: 'boom 1' })
+    await db.insert(schema.deviceErrors).values({ deviceId: 'd1', sha256: 'errm', message: 'boom 2' })
+    // ...and one unrelated error that must NOT be counted
+    await db.insert(schema.deviceErrors).values({ deviceId: 'd1', sha256: 'other', message: 'unrelated' })
+
+    const reach = await computeOrgReach(db, org.id, new Date())
+    const mine = reach!.media.find((x) => x.mediaId === m.id)!
+    expect(mine.recentErrors).toBe(2)
+  })
 })

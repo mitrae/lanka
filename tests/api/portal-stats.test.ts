@@ -22,4 +22,10 @@ describe('handlePortalStats', () => {
       handlePortalStats(db, { id: 1, username: 'c', role: 'client', organizationId: null })
     ).rejects.toMatchObject({ statusCode: 400 })
   })
+
+  it('throws 404 when the linked organization does not exist', async () => {
+    await expect(
+      handlePortalStats(db, { id: 1, username: 'c', role: 'client', organizationId: 999 })
+    ).rejects.toMatchObject({ statusCode: 404 })
+  })
 })
