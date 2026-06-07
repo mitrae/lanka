@@ -26,7 +26,16 @@ export default defineNuxtConfig({
   runtimeConfig: {
     databaseUrl: process.env.DATABASE_URL ?? 'file:./data/signage.db',
     mediaDir: process.env.MEDIA_DIR ?? './data/media',
-    appVersion: process.env.npm_package_version ?? 'dev'
+    appVersion: process.env.npm_package_version ?? 'dev',
+    // Cloudflare R2 (S3-compatible). When all four are set, media is stored in
+    // R2 instead of mediaDir; the server still proxies bytes over the tailnet.
+    // Server-only (not under `public`), so credentials never reach the client.
+    r2: {
+      endpoint: process.env.R2_ENDPOINT ?? '',
+      bucket: process.env.R2_BUCKET ?? '',
+      accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? ''
+    }
   },
   nitro: {
     experimental: {

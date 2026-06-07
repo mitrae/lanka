@@ -96,6 +96,6 @@ export default defineEventHandler(async (event) => {
   }
   setResponseStatus(event, plan.status)
 
-  const stream = store.open(sha, { start: plan.start, end: plan.end })
+  const stream = await store.open(sha, { start: plan.start, end: plan.end })
   return sendStream(event, stream)
 })

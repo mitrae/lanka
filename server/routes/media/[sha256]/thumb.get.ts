@@ -20,5 +20,5 @@ export default defineEventHandler(async (event) => {
 
   setResponseHeader(event, 'Content-Type', 'image/jpeg')
   setResponseHeader(event, 'Cache-Control', 'public, max-age=31536000, immutable')
-  return sendStream(event, store.openThumbnail(sha))
+  return sendStream(event, await store.openThumbnail(sha))
 })

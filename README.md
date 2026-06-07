@@ -52,6 +52,13 @@ pnpm db:migrate   # apply migrations to data/signage.db
 | GET  | `/media/:sha256` | Serve a media file (supports Range) |
 | GET  | `/media/:sha256/thumb` | Serve JPEG thumbnail |
 
+> **Media storage backend.** By default media lives on local disk (`MEDIA_DIR`).
+> Set all four `R2_*` env vars (see `.env.example`) to store it in Cloudflare R2
+> instead. Either way the API is identical: the server serves `/media/:sha256`
+> over the tailnet — with R2 it proxies the bytes (Range included), so players
+> never touch the public internet and R2's zero egress applies. Switching
+> backends does not migrate existing objects; re-upload or copy them across.
+
 ### Admin CRUD
 
 | Method | Path | Purpose |
@@ -188,6 +195,11 @@ sudo systemctl start lanka
 ```
 
 DB snapshots retain 7 days; media is a current-state mirror.
+
+> When media is stored in **R2**, the nightly media-mirror rsync only copies the
+> (empty) local `MEDIA_DIR` — durability is Cloudflare's. Back up the DB as
+> usual; treat the R2 bucket as the media system of record (enable bucket
+> versioning there if you want point-in-time recovery).
 
 ### Offsite backups (optional, future)
 

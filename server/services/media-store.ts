@@ -8,13 +8,14 @@ import type { Readable } from 'node:stream'
 export interface MediaStore {
   put(sha256: string, stream: Readable): Promise<void>
   has(sha256: string): Promise<boolean>
-  open(sha256: string, opts?: { start?: number; end?: number }): Readable
+  // Async so backends that fetch over the network (e.g. R2) fit the contract.
+  open(sha256: string, opts?: { start?: number; end?: number }): Promise<Readable>
   stat(sha256: string): Promise<{ bytes: number }>
   delete(sha256: string): Promise<void>
 
   putThumbnail(sha256: string, stream: Readable): Promise<void>
   hasThumbnail(sha256: string): Promise<boolean>
-  openThumbnail(sha256: string): Readable
+  openThumbnail(sha256: string): Promise<Readable>
   deleteThumbnail(sha256: string): Promise<void>
 }
 
@@ -53,7 +54,10 @@ export class LocalDiskStore implements MediaStore {
     return existsSync(this.path(sha))
   }
 
-  open(sha: string, opts?: { start?: number; end?: number }): Readable {
+  async open(
+    sha: string,
+    opts?: { start?: number; end?: number }
+  ): Promise<Readable> {
     return createReadStream(this.path(sha), opts)
   }
 
@@ -78,7 +82,7 @@ export class LocalDiskStore implements MediaStore {
     return existsSync(this.thumbPath(sha))
   }
 
-  openThumbnail(sha: string): Readable {
+  async openThumbnail(sha: string): Promise<Readable> {
     return createReadStream(this.thumbPath(sha))
   }
 

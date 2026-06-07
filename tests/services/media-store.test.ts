@@ -31,7 +31,7 @@ describe('LocalDiskStore', () => {
 
   it('opens a readable stream by sha', async () => {
     await store.put('def', Readable.from([Buffer.from('world')]))
-    const s = store.open('def')
+    const s = await store.open('def')
     const chunks: Buffer[] = []
     for await (const chunk of s) chunks.push(chunk as Buffer)
     expect(Buffer.concat(chunks).toString()).toBe('world')
@@ -59,7 +59,7 @@ describe('LocalDiskStore', () => {
 
   it('opens a ranged stream', async () => {
     await store.put('rng', Readable.from([Buffer.from('0123456789')]))
-    const s = store.open('rng', { start: 2, end: 5 })
+    const s = await store.open('rng', { start: 2, end: 5 })
     const chunks: Buffer[] = []
     for await (const c of s) chunks.push(c as Buffer)
     expect(Buffer.concat(chunks).toString()).toBe('2345')
@@ -69,7 +69,7 @@ describe('LocalDiskStore', () => {
     await store.putThumbnail('thumbsha', Readable.from([Buffer.from('JPEG-BYTES')]))
     expect(await store.hasThumbnail('thumbsha')).toBe(true)
 
-    const s = store.openThumbnail('thumbsha')
+    const s = await store.openThumbnail('thumbsha')
     const chunks: Buffer[] = []
     for await (const c of s) chunks.push(c as Buffer)
     expect(Buffer.concat(chunks).toString()).toBe('JPEG-BYTES')
