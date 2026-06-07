@@ -41,3 +41,6 @@ function notInTests(name: string) {
 }
 // useDb is swapped by individual tests that need it; baseline just throws.
 ;(globalThis as any).useDb = notInTests('useDb')
+;(globalThis as any).getCookie = notInTests('getCookie')
+;(globalThis as any).setCookie = notInTests('setCookie')
+;(globalThis as any).deleteCookie = notInTests('deleteCookie')
