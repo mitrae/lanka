@@ -30,6 +30,22 @@ original production design.
 8. **Swallows the BACK key** so a stray remote press can't drop the kiosk to the
    launcher.
 
+### On-device media cache
+
+9. **Caches media on local storage** so videos replay from disk instead of
+   re-fetching over the tailnet every loop. `LankaWebViewClient.shouldInterceptRequest`
+   (→ `MediaCache`) transparently intercepts `/media/<sha256>` requests:
+   - **cache hit** → served from `filesDir/media-cache/<sha>` with full HTTP
+     Range support (so `<video>` seeks/loops play locally, no network);
+   - **cache miss** → request goes to the network as usual and the file is
+     downloaded in the background for the next loop.
+
+   Media is content-addressed (immutable), so cached files never go stale. Disk
+   is bounded by a **2 GB LRU cap** (`MediaCache.MAX_BYTES`); least-recently-used
+   files are evicted first. The web player is unchanged — it requests the same
+   `/media/<sha>` URLs, so the cache is invisible to it (and a desktop browser
+   simply always uses the network for QA).
+
 ## Prerequisites (build host)
 
 - JDK 17+
@@ -119,8 +135,10 @@ keystore means every box must uninstall/reinstall (a different signature can't
 - **Sleep/wake (goal 3) is not implemented** — an unprivileged app can't power
   the TV panel off (HDMI-CEC is privileged); see the audit notes for the
   scheduled-blank-screen + smart-plug approach.
-- **No on-device media cache** — videos are fetched from the server each loop
-  (Plan 6). Watch tailnet bandwidth at fleet scale.
+- **Media cache is best-effort, not a prefetch.** The *first* loop of each new
+  item still streams from the server (then it's cached); there's no upfront
+  download of the whole playlist. Cap is a fixed 2 GB LRU — a playlist larger
+  than that degrades to per-loop network for the overflow.
 - **Cleartext HTTP allowed** (`usesCleartextTraffic="true"`) so plain
   `http://` server URLs work over the tailnet without TLS.
 

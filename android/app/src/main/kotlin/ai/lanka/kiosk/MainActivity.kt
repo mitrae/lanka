@@ -38,7 +38,8 @@ class MainActivity : Activity() {
         webView.webViewClient = LankaWebViewClient(
             onMainFrameError = { scheduleReload() },
             onPageOk = { reloadAttempt = 0 },
-            onRenderGone = { recoverFromRenderGone() }
+            onRenderGone = { recoverFromRenderGone() },
+            mediaCache = MediaCache.get(this)
         )
         webView.webChromeClient = LankaChromeClient()
         webView.settings.apply {

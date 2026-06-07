@@ -5,6 +5,7 @@ import android.util.Log
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 
@@ -20,8 +21,19 @@ import android.webkit.WebViewClient
 class LankaWebViewClient(
     private val onMainFrameError: () -> Unit = {},
     private val onPageOk: () -> Unit = {},
-    private val onRenderGone: () -> Unit = {}
+    private val onRenderGone: () -> Unit = {},
+    private val mediaCache: MediaCache? = null
 ) : WebViewClient() {
+
+    override fun shouldInterceptRequest(
+        view: WebView?,
+        request: WebResourceRequest?
+    ): WebResourceResponse? {
+        if (request != null) {
+            mediaCache?.intercept(request)?.let { return it }
+        }
+        return super.shouldInterceptRequest(view, request)
+    }
 
     override fun onPageFinished(view: WebView?, url: String?) {
         onPageOk()
