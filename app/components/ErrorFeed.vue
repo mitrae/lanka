@@ -5,9 +5,7 @@
 </script>
 
 <template>
-  <section
-    class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated)"
-  >
+  <section class="soft-card overflow-hidden">
     <header class="border-b border-(--ui-border) px-5 py-3">
       <h2 class="text-sm font-semibold">Recent playback errors</h2>
     </header>

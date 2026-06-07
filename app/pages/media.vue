@@ -39,37 +39,31 @@ async function remove(m: MediaListRow) {
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center justify-between">
-      <p class="text-sm text-(--ui-text-muted)">
-        Upload videos and images. Playlists reference media from this library.
-      </p>
-      <UButton
-        color="primary"
-        icon="i-lucide-upload"
-        @click="showUpload = true"
-      >
-        Upload
-      </UButton>
-    </div>
+  <div class="reveal">
+    <PageHeader
+      title="Media"
+      subtitle="Upload videos and images. Playlists reference media from this library."
+      icon="i-lucide-image"
+    >
+      <template #actions>
+        <UButton color="primary" icon="i-lucide-upload" @click="showUpload = true">
+          Upload
+        </UButton>
+      </template>
+    </PageHeader>
 
-    <USkeleton v-if="store.loading && store.list.length === 0" class="mt-6 h-32 w-full" />
+    <USkeleton v-if="store.loading && store.list.length === 0" class="h-32 w-full" />
     <EmptyState
       v-else-if="store.list.length === 0"
-      class="mt-6"
       icon="i-lucide-image"
       title="No media yet"
       description="Upload videos or images to start building playlists."
     >
-      <UButton
-        color="primary"
-        icon="i-lucide-upload"
-        @click="showUpload = true"
-      >
+      <UButton color="primary" icon="i-lucide-upload" @click="showUpload = true">
         Upload your first file
       </UButton>
     </EmptyState>
-    <div v-else class="mt-6 grid grid-cols-4 gap-4">
+    <div v-else class="grid grid-cols-4 gap-4">
       <MediaCard
         v-for="m in store.list"
         :key="m.id"

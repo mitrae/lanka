@@ -5,7 +5,7 @@ const props = withDefaults(defineProps<{
   size?: number
   label?: string
   color?: string
-}>(), { size: 132, color: '#5b8def' })
+}>(), { size: 132, color: '#6366f1' })
 
 const radius = computed(() => props.size / 2 - 10)
 const circumference = computed(() => 2 * Math.PI * radius.value)
@@ -16,7 +16,7 @@ const dash = computed(() => `${circumference.value * pct.value} ${circumference.
 <template>
   <div class="flex flex-col items-center">
     <svg :width="size" :height="size" :viewBox="`0 0 ${size} ${size}`">
-      <circle :cx="size / 2" :cy="size / 2" :r="radius" fill="none" stroke="rgba(0,0,0,0.06)" stroke-width="12" />
+      <circle :cx="size / 2" :cy="size / 2" :r="radius" fill="none" stroke="var(--donut-track)" stroke-width="12" />
       <circle
         :cx="size / 2" :cy="size / 2" :r="radius" fill="none"
         :stroke="color" stroke-width="12" stroke-linecap="round"
@@ -24,8 +24,16 @@ const dash = computed(() => `${circumference.value * pct.value} ${circumference.
         :transform="`rotate(-90 ${size / 2} ${size / 2})`"
         style="transition: stroke-dasharray 600ms ease"
       />
-      <text :x="size / 2" :y="size / 2 - 2" text-anchor="middle" class="fill-black font-display" font-size="26" font-weight="700">{{ value }}</text>
-      <text :x="size / 2" :y="size / 2 + 18" text-anchor="middle" fill="rgba(0,0,0,0.45)" font-size="11">/ {{ total }}</text>
+      <text
+        :x="size / 2" :y="size / 2 - 2" text-anchor="middle"
+        class="fill-current font-display text-(--ui-text-highlighted)"
+        font-size="26" font-weight="700"
+      >{{ value }}</text>
+      <text
+        :x="size / 2" :y="size / 2 + 18" text-anchor="middle"
+        class="fill-current text-(--ui-text-dimmed)"
+        font-size="11"
+      >/ {{ total }}</text>
     </svg>
     <span v-if="label" class="mt-2 text-xs text-(--ui-text-muted)">{{ label }}</span>
   </div>

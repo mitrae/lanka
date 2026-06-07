@@ -96,38 +96,49 @@ async function remove() {
 </script>
 
 <template>
-  <div>
+  <div class="reveal">
+    <NuxtLink
+      to="/addresses"
+      class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
+    >
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> Addresses
+    </NuxtLink>
+
     <div v-if="!address">
       <USkeleton class="h-24 w-full" />
     </div>
     <template v-else>
-      <section
-        class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-6"
-      >
+      <section class="soft-card p-6">
         <div class="flex items-start justify-between">
-          <div>
-            <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-              Address
-            </p>
-            <template v-if="!editing">
-              <h2 class="mt-1 text-2xl font-semibold">{{ address.name }}</h2>
-              <p class="mt-1 text-xs font-mono text-(--ui-text-muted)">
-                #{{ address.id }}
+          <div class="flex items-start gap-4">
+            <div class="rounded-xl bg-indigo-500/10 p-3 text-indigo-600 dark:text-indigo-400">
+              <UIcon name="i-lucide-building-2" class="size-6" />
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
+                Address
               </p>
-            </template>
-            <template v-else>
-              <UInput
-                v-model="editName"
-                autofocus
-                class="mt-1"
-                @keyup.enter="save"
-              />
-            </template>
+              <template v-if="!editing">
+                <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ address.name }}</h2>
+                <p class="mt-1 font-mono text-xs text-(--ui-text-muted)">
+                  #{{ address.id }}
+                </p>
+              </template>
+              <template v-else>
+                <UInput
+                  v-model="editName"
+                  autofocus
+                  class="mt-1"
+                  @keyup.enter="save"
+                />
+              </template>
+            </div>
           </div>
           <div class="flex gap-2">
             <template v-if="!editing">
               <UButton
                 variant="soft"
+                color="neutral"
                 icon="i-lucide-pencil"
                 @click="editing = true"
               >
@@ -146,6 +157,7 @@ async function remove() {
               <UButton color="primary" @click="save">Save</UButton>
               <UButton
                 variant="ghost"
+                color="neutral"
                 @click="editing = false; editName = address!.name"
               >
                 Cancel
@@ -156,14 +168,12 @@ async function remove() {
       </section>
 
       <section class="mt-8">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-semibold">Groups in this address</h3>
-        </div>
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Groups in this address</h3>
         <div class="mt-4 flex items-center gap-2">
           <UInput
             v-model="newGroupName"
             placeholder="New group name (e.g. Lobby)"
-            class="flex-1 max-w-md"
+            class="max-w-md flex-1"
             @keyup.enter="createGroup"
           />
           <UButton color="primary" icon="i-lucide-plus" @click="createGroup">
@@ -178,17 +188,19 @@ async function remove() {
           title="No groups yet"
           description="Groups subdivide an address. A clinic might have 'Lobby' and 'Cafeteria' groups."
         />
-        <ul v-else class="mt-4 space-y-2">
+        <ul v-else class="mt-4 space-y-2.5">
           <li
             v-for="g in groupsStore.list"
             :key="g.id"
-            class="flex items-center justify-between rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4"
+            class="soft-card hover-lift"
           >
-            <NuxtLink :to="`/groups/${g.id}`" class="flex-1 flex items-center gap-3">
-              <UIcon name="i-lucide-folder" class="size-5 text-(--ui-text-muted)" />
-              <span class="font-medium">{{ g.name }}</span>
+            <NuxtLink :to="`/groups/${g.id}`" class="flex items-center gap-3.5 p-4">
+              <span class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                <UIcon name="i-lucide-folder" class="size-4.5" />
+              </span>
+              <span class="flex-1 font-medium text-(--ui-text-highlighted)">{{ g.name }}</span>
+              <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />
             </NuxtLink>
-            <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-muted)" />
           </li>
         </ul>
       </section>

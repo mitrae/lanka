@@ -39,46 +39,52 @@ function addressName(id: number) {
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center gap-3">
-      <USelectMenu
-        v-model="addressFilter"
-        :items="addressItems"
-        value-key="value"
-        placeholder="Filter by address"
-        class="w-64"
-      />
-    </div>
+  <div class="reveal">
+    <PageHeader
+      title="Groups"
+      subtitle="Zones inside an address — a clinic's Lobby and Cafeteria, say."
+      icon="i-lucide-folder"
+    >
+      <template #actions>
+        <USelectMenu
+          v-model="addressFilter"
+          :items="addressItems"
+          value-key="value"
+          placeholder="Filter by address"
+          class="w-64"
+        />
+      </template>
+    </PageHeader>
 
-    <div class="mt-6">
-      <USkeleton
-        v-if="groupsStore.loading && groupsStore.list.length === 0"
-        class="h-24 w-full"
-      />
-      <EmptyState
-        v-else-if="groupsStore.list.length === 0"
-        icon="i-lucide-folder"
-        title="No groups match"
-        description="Create groups from an address detail page."
-      />
-      <ul v-else class="space-y-2">
-        <li
-          v-for="g in groupsStore.list"
-          :key="g.id"
-          class="flex items-center justify-between rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4"
-        >
-          <NuxtLink :to="`/groups/${g.id}`" class="flex-1 flex items-center gap-3">
-            <UIcon name="i-lucide-folder" class="size-5 text-(--ui-text-muted)" />
-            <div>
-              <p class="font-medium">{{ g.name }}</p>
-              <p class="text-xs text-(--ui-text-muted)">
-                in {{ addressName(g.addressId) }}
-              </p>
-            </div>
-          </NuxtLink>
-          <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-muted)" />
-        </li>
-      </ul>
-    </div>
+    <USkeleton
+      v-if="groupsStore.loading && groupsStore.list.length === 0"
+      class="h-24 w-full"
+    />
+    <EmptyState
+      v-else-if="groupsStore.list.length === 0"
+      icon="i-lucide-folder"
+      title="No groups match"
+      description="Create groups from an address detail page."
+    />
+    <ul v-else class="space-y-2.5">
+      <li
+        v-for="g in groupsStore.list"
+        :key="g.id"
+        class="soft-card hover-lift"
+      >
+        <NuxtLink :to="`/groups/${g.id}`" class="flex items-center gap-3.5 p-4">
+          <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+            <UIcon name="i-lucide-folder" class="size-5" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="font-medium text-(--ui-text-highlighted)">{{ g.name }}</p>
+            <p class="text-xs text-(--ui-text-muted)">
+              in {{ addressName(g.addressId) }}
+            </p>
+          </div>
+          <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />
+        </NuxtLink>
+      </li>
+    </ul>
   </div>
 </template>

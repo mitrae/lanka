@@ -7,28 +7,150 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
+/* ============================================================
+   Signal-room design tokens — a calm operational control plane.
+   Light and dark are both first-class: every surface reads from
+   these variables, so one utility class works in either theme.
+   ============================================================ */
 :root {
-  min-width: 1280px;
+  --canvas-top: #f3f5fc;
+  --canvas-bottom: #fcfdff;
+  --glow-indigo: rgba(79, 70, 229, 0.10);
+  --glow-violet: rgba(139, 92, 246, 0.06);
+  --grid-line: rgba(15, 23, 42, 0.035);
+
+  --card-bg: #ffffff;
+  --card-border: rgba(15, 23, 42, 0.08);
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 14px 32px -18px rgba(15, 23, 42, 0.20);
+
+  --rail-bg: rgba(255, 255, 255, 0.70);
+  --rail-border: rgba(15, 23, 42, 0.07);
+
+  --donut-track: rgba(15, 23, 42, 0.08);
 }
 
-/* Soft lavender→white atmosphere used by the app shell + auth/portal screens. */
-.app-bg {
-  background:
-    radial-gradient(1200px 600px at 15% -10%, rgba(124, 138, 255, 0.16), transparent 60%),
-    radial-gradient(1000px 520px at 95% 0%, rgba(255, 120, 120, 0.10), transparent 55%),
-    linear-gradient(180deg, #f4f5fc 0%, #ffffff 55%);
+.dark {
+  --canvas-top: #0a1022;
+  --canvas-bottom: #020617;
+  --glow-indigo: rgba(99, 102, 241, 0.22);
+  --glow-violet: rgba(139, 92, 246, 0.12);
+  --grid-line: rgba(255, 255, 255, 0.04);
+
+  --card-bg: #0c1326;
+  --card-border: rgba(255, 255, 255, 0.08);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 20px 46px -24px rgba(0, 0, 0, 0.85);
+
+  --rail-bg: rgba(9, 14, 30, 0.62);
+  --rail-border: rgba(255, 255, 255, 0.07);
+
+  --donut-track: rgba(255, 255, 255, 0.10);
 }
+
+:root { min-width: 1280px; }
 
 body {
   @apply text-(--ui-text);
   min-width: 1280px;
+  background-color: var(--canvas-bottom);
 }
 
-h1, h2, h3 {
-  font-family: var(--font-display);
+h1, h2, h3 { font-family: var(--font-display); }
+
+/* ---- Canvas: themed gradient + faint control-surface grid ---- */
+.app-bg {
+  background-color: var(--canvas-bottom);
+  background-image:
+    radial-gradient(1100px 560px at 12% -10%, var(--glow-indigo), transparent 60%),
+    radial-gradient(920px 520px at 98% -6%, var(--glow-violet), transparent 55%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(180deg, var(--canvas-top), var(--canvas-bottom) 58%);
+  background-size: auto, auto, 44px 44px, 44px 44px, auto;
 }
 
-/* Reusable soft card */
+/* ---- Calm vertical canvas (login form pane, simple shells) ---- */
+.canvas-bg {
+  background-image: linear-gradient(180deg, var(--canvas-top), var(--canvas-bottom) 60%);
+}
+
+/* ---- Card surface ---- */
 .soft-card {
-  @apply rounded-3xl border border-black/5 bg-white/80 shadow-sm backdrop-blur;
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 1rem;
+  box-shadow: var(--card-shadow);
+}
+
+/* ---- Motion: one orchestrated reveal per view ---- */
+.reveal > * { animation: rise 540ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.reveal > *:nth-child(2) { animation-delay: 60ms; }
+.reveal > *:nth-child(3) { animation-delay: 120ms; }
+.reveal > *:nth-child(4) { animation-delay: 180ms; }
+.reveal > *:nth-child(5) { animation-delay: 240ms; }
+.reveal > *:nth-child(6) { animation-delay: 300ms; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.hover-lift { transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease; }
+.hover-lift:hover { transform: translateY(-2px); }
+
+/* ============================================================
+   Login — broadcast signal panel
+   ============================================================ */
+.signal-panel {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 110% at 50% 6%, rgba(129, 140, 248, 0.38), transparent 55%),
+    radial-gradient(90% 90% at 88% 104%, rgba(139, 92, 246, 0.32), transparent 55%),
+    linear-gradient(158deg, #1e1b4b 0%, #312e81 44%, #4c1d95 100%);
+}
+
+/* concentric "signal" geometry emanating from the tower mark */
+.signal-ring {
+  position: absolute;
+  left: 50%;
+  top: var(--ring-origin, 34%);
+  translate: -50% -50%;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  pointer-events: none;
+}
+.signal-ping {
+  position: absolute;
+  left: 50%;
+  top: var(--ring-origin, 34%);
+  translate: -50% -50%;
+  width: 140px;
+  height: 140px;
+  border-radius: 9999px;
+  border: 1px solid rgba(165, 180, 252, 0.55);
+  opacity: 0;
+  animation: signal-ping 5s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes signal-ping {
+  0% { transform: scale(0.6); opacity: 0; }
+  18% { opacity: 0.55; }
+  100% { transform: scale(5.4); opacity: 0; }
+}
+
+/* film grain for depth on dark panels */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.10;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal > *,
+  .signal-ping { animation: none !important; }
+  .reveal > * { opacity: 1; transform: none; }
+  .hover-lift:hover { transform: none; }
 }

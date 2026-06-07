@@ -26,7 +26,8 @@ export default defineNuxtConfig({
   fonts: {
     families: [
       { name: 'Bricolage Grotesque', provider: 'google' },
-      { name: 'Hanken Grotesque', provider: 'google' }
+      { name: 'Hanken Grotesque', provider: 'google' },
+      { name: 'JetBrains Mono', provider: 'google' }
     ]
   },
   typescript: {

@@ -19,11 +19,12 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="pt-4">
-    <h1 class="mb-1 text-3xl font-bold tracking-tight">
-      {{ stats?.organization.name ?? 'Your stats' }}
-    </h1>
-    <p class="mb-8 text-sm text-(--ui-text-muted)">Reach of your content across the network.</p>
+  <div class="reveal pt-4">
+    <PageHeader
+      :title="stats?.organization.name ?? 'Your stats'"
+      subtitle="Reach of your content across the network."
+      icon="i-lucide-bar-chart-3"
+    />
 
     <p v-if="loading" class="text-(--ui-text-muted)">Loading…</p>
     <p v-else-if="error" class="text-rose-500">{{ error }}</p>
@@ -36,10 +37,10 @@ onMounted(async () => {
         <StatCard label="Showing now" :value="stats.totals.showingNow" icon="i-lucide-play" tone="amber" />
       </div>
 
-      <div class="mt-8 overflow-hidden rounded-3xl border border-black/5 bg-white/80 shadow-sm">
+      <div class="soft-card mt-8 overflow-hidden">
         <table class="w-full text-sm">
           <thead class="text-left text-xs uppercase tracking-wide text-(--ui-text-muted)">
-            <tr class="border-b border-black/5">
+            <tr class="border-b border-(--ui-border)">
               <th class="px-5 py-3 font-medium">Media</th>
               <th class="px-5 py-3 font-medium tabular-nums">Scheduled</th>
               <th class="px-5 py-3 font-medium tabular-nums">Online</th>
@@ -48,10 +49,10 @@ onMounted(async () => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="m in stats.media" :key="m.mediaId" class="border-b border-black/5 last:border-0">
+            <tr v-for="m in stats.media" :key="m.mediaId" class="border-b border-(--ui-border) last:border-0">
               <td class="px-5 py-3">
-                <span class="font-medium">{{ m.filename }}</span>
-                <span class="ml-2 rounded-full bg-black/5 px-2 py-0.5 text-xs">{{ m.kind }}</span>
+                <span class="font-medium text-(--ui-text-highlighted)">{{ m.filename }}</span>
+                <span class="ml-2 rounded-full bg-(--ui-bg-accented) px-2 py-0.5 text-xs text-(--ui-text-muted)">{{ m.kind }}</span>
               </td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensScheduled }}</td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensOnline }}</td>

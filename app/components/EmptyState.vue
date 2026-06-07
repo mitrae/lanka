@@ -9,7 +9,7 @@ defineProps<{
 
 <template>
   <div
-    class="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-(--ui-border) p-12 text-center"
+    class="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-(--ui-border) p-12 text-center"
   >
     <UIcon
       v-if="icon"

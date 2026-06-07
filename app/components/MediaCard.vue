@@ -20,7 +20,7 @@ function fmtDuration(ms: number | null) {
 </script>
 
 <template>
-  <div class="group relative overflow-hidden rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated)">
+  <div class="group relative overflow-hidden soft-card hover-lift">
     <div class="aspect-video bg-zinc-900">
       <img
         v-if="media.thumbnailBytes"

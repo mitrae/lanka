@@ -53,9 +53,7 @@ async function claim(row: DeviceListRow) {
 </script>
 
 <template>
-  <section
-    class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated)"
-  >
+  <section class="soft-card overflow-hidden">
     <header class="flex items-center justify-between border-b border-(--ui-border) px-5 py-3">
       <h2 class="text-sm font-semibold">Unclaimed devices</h2>
       <span class="text-xs text-(--ui-text-muted)">

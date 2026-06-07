@@ -88,39 +88,49 @@ async function remove() {
 </script>
 
 <template>
-  <div>
+  <div class="reveal">
+    <NuxtLink
+      to="/groups"
+      class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
+    >
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> Groups
+    </NuxtLink>
+
     <div v-if="!group">
       <USkeleton class="h-24 w-full" />
     </div>
     <template v-else>
-      <section
-        class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-6"
-      >
+      <section class="soft-card p-6">
         <div class="flex items-start justify-between">
-          <div>
-            <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-              Group
-            </p>
-            <template v-if="!editing">
-              <h2 class="mt-1 text-2xl font-semibold">{{ group.name }}</h2>
-              <p class="mt-1 text-sm text-(--ui-text-muted)">
-                in {{ addressesStore.list.find((a) => a.id === group!.addressId)?.name ?? '?' }}
+          <div class="flex items-start gap-4">
+            <div class="rounded-xl bg-indigo-500/10 p-3 text-indigo-600 dark:text-indigo-400">
+              <UIcon name="i-lucide-folder" class="size-6" />
+            </div>
+            <div>
+              <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
+                Group
               </p>
-            </template>
-            <template v-else>
-              <div class="mt-1 flex flex-col gap-2 w-80">
-                <UInput v-model="editName" />
-                <USelectMenu
-                  v-model="editAddressId"
-                  :items="addressItems"
-                  value-key="value"
-                />
-              </div>
-            </template>
+              <template v-if="!editing">
+                <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ group.name }}</h2>
+                <p class="mt-1 text-sm text-(--ui-text-muted)">
+                  in {{ addressesStore.list.find((a) => a.id === group!.addressId)?.name ?? '?' }}
+                </p>
+              </template>
+              <template v-else>
+                <div class="mt-1 flex w-80 flex-col gap-2">
+                  <UInput v-model="editName" />
+                  <USelectMenu
+                    v-model="editAddressId"
+                    :items="addressItems"
+                    value-key="value"
+                  />
+                </div>
+              </template>
+            </div>
           </div>
           <div class="flex gap-2">
             <template v-if="!editing">
-              <UButton variant="soft" icon="i-lucide-pencil" @click="editing = true">
+              <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editing = true">
                 Edit
               </UButton>
               <UButton
@@ -136,6 +146,7 @@ async function remove() {
               <UButton color="primary" @click="save">Save</UButton>
               <UButton
                 variant="ghost"
+                color="neutral"
                 @click="
                   editing = false;
                   editName = group!.name;
@@ -150,7 +161,7 @@ async function remove() {
       </section>
 
       <section class="mt-8">
-        <h3 class="text-sm font-semibold">Devices in this group</h3>
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Devices in this group</h3>
         <EmptyState
           v-if="devicesStore.list.length === 0"
           class="mt-4"
@@ -158,16 +169,16 @@ async function remove() {
           title="No devices yet"
           description="Devices self-register and appear as unclaimed. Claim them from Overview or the Devices list."
         />
-        <ul v-else class="mt-4 space-y-2">
+        <ul v-else class="mt-4 space-y-2.5">
           <li
             v-for="d in devicesStore.list"
             :key="d.id"
-            class="flex items-center justify-between rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4"
+            class="soft-card hover-lift"
           >
-            <NuxtLink :to="`/devices/${d.id}`" class="flex-1 flex items-center gap-3">
+            <NuxtLink :to="`/devices/${d.id}`" class="flex items-center gap-3.5 p-4">
               <StatusDot :status="d.status" />
-              <span class="font-medium">{{ d.name ?? 'Unnamed' }}</span>
-              <code class="text-xs font-mono text-(--ui-text-muted) truncate max-w-xs">
+              <span class="font-medium text-(--ui-text-highlighted)">{{ d.name ?? 'Unnamed' }}</span>
+              <code class="ml-auto max-w-xs truncate font-mono text-xs text-(--ui-text-dimmed)">
                 {{ d.id }}
               </code>
             </NuxtLink>

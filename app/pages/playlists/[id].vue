@@ -151,19 +151,26 @@ async function deletePlaylist() {
 </script>
 
 <template>
-  <div>
+  <div class="reveal">
+    <NuxtLink
+      to="/playlists"
+      class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
+    >
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> Playlists
+    </NuxtLink>
+
     <div v-if="!playlist">
       <USkeleton class="h-32 w-full" />
     </div>
     <template v-else>
-      <section class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-6">
+      <section class="soft-card p-6">
         <div class="flex items-start justify-between">
           <div>
             <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-              Playlist · v{{ playlist.version }}
+              Playlist · <span class="font-mono">v{{ playlist.version }}</span>
             </p>
             <template v-if="!editingName">
-              <h2 class="mt-1 text-2xl font-semibold">{{ playlist.name }}</h2>
+              <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ playlist.name }}</h2>
             </template>
             <template v-else>
               <UInput
@@ -176,7 +183,7 @@ async function deletePlaylist() {
           </div>
           <div class="flex gap-2">
             <template v-if="!editingName">
-              <UButton variant="soft" icon="i-lucide-pencil" @click="editingName = true">
+              <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editingName = true">
                 Rename
               </UButton>
               <UButton
@@ -192,6 +199,7 @@ async function deletePlaylist() {
               <UButton color="primary" @click="saveName">Save name</UButton>
               <UButton
                 variant="ghost"
+                color="neutral"
                 @click="editingName = false; editName = playlist!.name"
               >
                 Cancel
@@ -202,8 +210,8 @@ async function deletePlaylist() {
       </section>
 
       <div class="mt-8 grid grid-cols-[1fr_2fr] gap-6">
-        <section class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4">
-          <h3 class="text-sm font-semibold">Media library</h3>
+        <section class="soft-card p-4">
+          <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Media library</h3>
           <p class="mt-1 text-xs text-(--ui-text-muted)">
             Click a tile to append it to the playlist.
           </p>
@@ -212,10 +220,10 @@ async function deletePlaylist() {
           </div>
         </section>
 
-        <section class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4">
+        <section class="soft-card p-4">
           <div class="flex items-center justify-between">
-            <h3 class="text-sm font-semibold">
-              Items <span class="text-(--ui-text-muted) font-normal">({{ drafts.length }})</span>
+            <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">
+              Items <span class="font-normal text-(--ui-text-muted)">({{ drafts.length }})</span>
             </h3>
             <UButton
               color="primary"

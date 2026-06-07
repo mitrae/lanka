@@ -94,17 +94,22 @@ async function reload() {
 </script>
 
 <template>
-  <div>
+  <div class="reveal">
+    <NuxtLink
+      to="/devices"
+      class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
+    >
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> Devices
+    </NuxtLink>
+
     <div v-if="!device">
       <USkeleton class="h-32 w-full" />
     </div>
     <template v-else>
-      <section
-        class="rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-6"
-      >
+      <section class="soft-card p-6">
         <div class="flex items-start justify-between">
           <div class="flex items-start gap-4">
-            <div class="rounded-md bg-zinc-500/10 p-3 text-zinc-400">
+            <div class="rounded-xl bg-indigo-500/10 p-3 text-indigo-600 dark:text-indigo-400">
               <UIcon name="i-lucide-tv" class="size-6" />
             </div>
             <div>
@@ -112,10 +117,10 @@ async function reload() {
                 Device
               </p>
               <template v-if="!editing">
-                <h2 class="mt-1 text-2xl font-semibold">
+                <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">
                   {{ device.name ?? '(unnamed)' }}
                 </h2>
-                <p class="mt-1 text-xs font-mono text-(--ui-text-muted)">
+                <p class="mt-1 font-mono text-xs text-(--ui-text-muted)">
                   {{ device.id }}
                 </p>
                 <p class="mt-2 text-sm text-(--ui-text-muted)">
@@ -128,7 +133,7 @@ async function reload() {
                 </p>
               </template>
               <template v-else>
-                <div class="mt-1 flex flex-col gap-2 w-80">
+                <div class="mt-1 flex w-80 flex-col gap-2">
                   <UInput v-model="editName" placeholder="Name" />
                   <USelectMenu
                     v-model="editGroupId"
@@ -144,10 +149,10 @@ async function reload() {
           </div>
           <div class="flex gap-2">
             <template v-if="!editing">
-              <UButton variant="soft" icon="i-lucide-refresh-cw" @click="reload">
+              <UButton variant="soft" color="neutral" icon="i-lucide-refresh-cw" @click="reload">
                 Reload player
               </UButton>
-              <UButton variant="soft" icon="i-lucide-pencil" @click="editing = true">
+              <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editing = true">
                 Edit
               </UButton>
               <UButton
@@ -163,6 +168,7 @@ async function reload() {
               <UButton color="primary" @click="save">Save</UButton>
               <UButton
                 variant="ghost"
+                color="neutral"
                 @click="
                   editing = false;
                   editName = device!.name ?? '';
@@ -176,8 +182,8 @@ async function reload() {
         </div>
       </section>
 
-      <section class="mt-8 rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-6">
-        <h3 class="text-sm font-semibold">Direct playlist assignment</h3>
+      <section class="soft-card mt-8 p-6">
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Direct playlist assignment</h3>
         <p class="mt-1 text-xs text-(--ui-text-muted)">
           Overrides group- and address-level assignment for this device only.
           Clear to fall back to inherited.

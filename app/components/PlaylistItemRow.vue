@@ -18,7 +18,7 @@ defineEmits<{
 
 <template>
   <li
-    class="flex items-center gap-3 rounded-md border border-(--ui-border) bg-(--ui-bg-elevated) p-3"
+    class="flex items-center gap-3 rounded-xl border border-(--ui-border) bg-(--ui-bg-elevated) p-3 transition-colors hover:border-(--ui-border-accented)"
   >
     <div class="flex flex-col">
       <UButton

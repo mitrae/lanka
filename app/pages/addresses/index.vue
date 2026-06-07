@@ -29,24 +29,27 @@ async function createAddress() {
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center justify-between">
-      <p class="text-sm text-(--ui-text-muted)">
-        Physical locations. Each address can contain multiple groups.
-      </p>
-      <UButton
-        v-if="!creating"
-        icon="i-lucide-plus"
-        color="primary"
-        @click="creating = true"
-      >
-        New address
-      </UButton>
-    </div>
+  <div class="reveal">
+    <PageHeader
+      title="Addresses"
+      subtitle="Physical locations. Each address can contain multiple groups."
+      icon="i-lucide-building-2"
+    >
+      <template #actions>
+        <UButton
+          v-if="!creating"
+          icon="i-lucide-plus"
+          color="primary"
+          @click="creating = true"
+        >
+          New address
+        </UButton>
+      </template>
+    </PageHeader>
 
     <div
       v-if="creating"
-      class="mt-4 flex items-center gap-2 rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4"
+      class="soft-card mb-4 flex items-center gap-2 p-4"
     >
       <UInput
         v-model="newName"
@@ -65,33 +68,33 @@ async function createAddress() {
       </UButton>
     </div>
 
-    <div class="mt-6">
-      <USkeleton
-        v-if="store.loading && store.list.length === 0"
-        class="h-24 w-full"
-      />
-      <EmptyState
-        v-else-if="store.list.length === 0"
-        icon="i-lucide-building-2"
-        title="No addresses yet"
-        description="Create your first address to start organizing devices."
-      />
-      <ul v-else class="space-y-2">
-        <li
-          v-for="addr in store.list"
-          :key="addr.id"
-          class="flex items-center justify-between rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated) p-4 hover:border-(--ui-border-accented) transition-colors"
-        >
-          <NuxtLink :to="`/addresses/${addr.id}`" class="flex-1 flex items-center gap-3">
-            <UIcon name="i-lucide-building-2" class="size-5 text-(--ui-text-muted)" />
-            <div>
-              <p class="font-medium">{{ addr.name }}</p>
-              <p class="text-xs text-(--ui-text-muted) font-mono">#{{ addr.id }}</p>
-            </div>
-          </NuxtLink>
-          <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-muted)" />
-        </li>
-      </ul>
-    </div>
+    <USkeleton
+      v-if="store.loading && store.list.length === 0"
+      class="h-24 w-full"
+    />
+    <EmptyState
+      v-else-if="store.list.length === 0"
+      icon="i-lucide-building-2"
+      title="No addresses yet"
+      description="Create your first address to start organizing devices."
+    />
+    <ul v-else class="space-y-2.5">
+      <li
+        v-for="addr in store.list"
+        :key="addr.id"
+        class="soft-card hover-lift"
+      >
+        <NuxtLink :to="`/addresses/${addr.id}`" class="flex items-center gap-3.5 p-4">
+          <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+            <UIcon name="i-lucide-building-2" class="size-5" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <p class="font-medium text-(--ui-text-highlighted)">{{ addr.name }}</p>
+            <p class="font-mono text-xs text-(--ui-text-muted)">#{{ addr.id }}</p>
+          </div>
+          <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />
+        </NuxtLink>
+      </li>
+    </ul>
   </div>
 </template>

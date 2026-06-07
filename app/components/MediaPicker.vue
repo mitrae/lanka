@@ -32,7 +32,7 @@ const filtered = computed(() => {
         v-for="m in filtered"
         :key="m.id"
         type="button"
-        class="group text-left rounded-md border border-(--ui-border) bg-(--ui-bg) hover:border-primary-500 overflow-hidden"
+        class="group overflow-hidden rounded-xl border border-(--ui-border) bg-(--ui-bg) text-left transition-colors hover:border-indigo-500"
         @click="emit('pick', m)"
       >
         <div class="aspect-video bg-zinc-900">

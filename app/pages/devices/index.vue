@@ -67,7 +67,13 @@ function fmtAge(iso: string | null) {
 </script>
 
 <template>
-  <div>
+  <div class="reveal">
+    <PageHeader
+      title="Devices"
+      subtitle="Every screen across your network, with live status."
+      icon="i-lucide-tv"
+    />
+
     <div class="flex items-center gap-3">
       <USelectMenu
         v-model="addressFilter"
@@ -103,28 +109,28 @@ function fmtAge(iso: string | null) {
       />
     </div>
 
-    <div class="mt-6 overflow-hidden rounded-lg border border-(--ui-border) bg-(--ui-bg-elevated)">
+    <div class="mt-6 overflow-hidden soft-card">
       <table class="w-full text-sm">
-        <thead class="bg-(--ui-bg-accented) text-xs uppercase tracking-wide text-(--ui-text-muted)">
+        <thead class="border-b border-(--ui-border) text-xs uppercase tracking-wide text-(--ui-text-muted)">
           <tr>
-            <th class="px-4 py-3 text-left">Status</th>
-            <th class="px-4 py-3 text-left">Name</th>
-            <th class="px-4 py-3 text-left">Location</th>
-            <th class="px-4 py-3 text-left">Last seen</th>
-            <th class="px-4 py-3 text-left">Device ID</th>
+            <th class="px-4 py-3 text-left font-medium">Status</th>
+            <th class="px-4 py-3 text-left font-medium">Name</th>
+            <th class="px-4 py-3 text-left font-medium">Location</th>
+            <th class="px-4 py-3 text-left font-medium">Last seen</th>
+            <th class="px-4 py-3 text-left font-medium">Device ID</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-(--ui-border)">
           <tr
             v-for="d in visible"
             :key="d.id"
-            class="hover:bg-(--ui-bg-accented) transition-colors cursor-pointer"
+            class="cursor-pointer transition-colors hover:bg-(--ui-bg-elevated)"
             @click="$router.push(`/devices/${d.id}`)"
           >
             <td class="px-4 py-3">
               <StatusDot :status="d.status" label />
             </td>
-            <td class="px-4 py-3 font-medium">
+            <td class="px-4 py-3 font-medium text-(--ui-text-highlighted)">
               {{ d.name ?? '(unnamed)' }}
             </td>
             <td class="px-4 py-3 text-(--ui-text-muted)">
@@ -135,7 +141,7 @@ function fmtAge(iso: string | null) {
             </td>
             <td class="px-4 py-3 text-(--ui-text-muted)">{{ fmtAge(d.lastSeenAt) }}</td>
             <td class="px-4 py-3">
-              <code class="text-xs font-mono text-(--ui-text-muted) truncate max-w-xs">
+              <code class="max-w-xs truncate font-mono text-xs text-(--ui-text-dimmed)">
                 {{ d.id }}
               </code>
             </td>

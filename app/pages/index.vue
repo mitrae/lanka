@@ -25,8 +25,11 @@ const stats = computed(() => {
 
 <template>
   <div class="reveal">
-    <h1 class="mb-1 text-3xl font-bold tracking-tight">Overview</h1>
-    <p class="mb-8 text-sm text-(--ui-text-muted)">Your signage network at a glance.</p>
+    <PageHeader
+      title="Overview"
+      subtitle="Your signage network at a glance."
+      icon="i-lucide-layout-dashboard"
+    />
 
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-4">
       <StatCard label="Total devices" :value="stats.total" icon="i-lucide-tv" />
@@ -49,16 +52,3 @@ const stats = computed(() => {
     </div>
   </div>
 </template>
-
-<style scoped>
-.reveal > * {
-  animation: rise 480ms ease both;
-}
-.reveal > *:nth-child(2) { animation-delay: 60ms; }
-.reveal > *:nth-child(3) { animation-delay: 120ms; }
-.reveal > *:nth-child(4) { animation-delay: 180ms; }
-@keyframes rise {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-</style>
