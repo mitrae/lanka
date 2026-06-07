@@ -2,7 +2,8 @@
 @import "@nuxt/ui";
 
 @theme {
-  --font-sans: "Inter", system-ui, sans-serif;
+  --font-sans: "Hanken Grotesque", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Hanken Grotesque", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
@@ -10,7 +11,24 @@
   min-width: 1280px;
 }
 
+/* Soft lavender→white atmosphere used by the app shell + auth/portal screens. */
+.app-bg {
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(124, 138, 255, 0.16), transparent 60%),
+    radial-gradient(1000px 520px at 95% 0%, rgba(255, 120, 120, 0.10), transparent 55%),
+    linear-gradient(180deg, #f4f5fc 0%, #ffffff 55%);
+}
+
 body {
-  @apply bg-(--ui-bg) text-(--ui-text);
+  @apply text-(--ui-text);
   min-width: 1280px;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+}
+
+/* Reusable soft card */
+.soft-card {
+  @apply rounded-3xl border border-black/5 bg-white/80 shadow-sm backdrop-blur;
 }

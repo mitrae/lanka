@@ -59,6 +59,7 @@ export interface Media {
   width: number | null
   height: number | null
   createdAt: string
+  organizationId: number | null
 }
 
 export interface MediaListRow extends Media {
@@ -112,4 +113,32 @@ export interface Assignment {
   addressId: number | null
   createdAt: string
   updatedAt: string
+}
+
+export type Role = 'super' | 'admin' | 'client'
+export interface SessionUser {
+  id: number
+  username: string
+  role: Role
+  organizationId: number | null
+}
+export interface Organization {
+  id: number
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+export interface MediaReach {
+  mediaId: number
+  filename: string
+  kind: 'video' | 'image'
+  screensScheduled: number
+  screensOnline: number
+  screensShowingNow: number
+  recentErrors: number
+}
+export interface OrgReach {
+  organization: { id: number; name: string }
+  totals: { mediaCount: number; screensReached: number; screensOnline: number; showingNow: number }
+  media: MediaReach[]
 }
