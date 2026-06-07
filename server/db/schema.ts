@@ -67,7 +67,11 @@ export const media = sqliteTable(
     height: integer('height'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
-      .default(sql`(unixepoch() * 1000)`)
+      .default(sql`(unixepoch() * 1000)`),
+    organizationId: integer('organization_id').references(
+      () => organizations.id,
+      { onDelete: 'set null' }
+    ),
   },
   (t) => ({
     sha256Idx: uniqueIndex('media_sha256_idx').on(t.sha256)
@@ -152,6 +156,60 @@ export const deviceErrors = sqliteTable(
   })
 )
 
+export const organizations = sqliteTable('organizations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`)
+})
+
+export const users = sqliteTable(
+  'users',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    username: text('username').notNull(),
+    passwordHash: text('password_hash').notNull(),
+    role: text('role', { enum: ['super', 'admin', 'client'] }).notNull(),
+    organizationId: integer('organization_id').references(() => organizations.id, {
+      onDelete: 'cascade'
+    }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => ({
+    usernameIdx: uniqueIndex('users_username_idx').on(t.username),
+    roleOrg: check(
+      'users_role_org_chk',
+      sql`(("role" = 'client' AND "organization_id" IS NOT NULL) OR ("role" IN ('super','admin') AND "organization_id" IS NULL))`
+    )
+  })
+)
+
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(), // sha256(rawCookieToken)
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => ({
+    userIdx: index('sessions_user_idx').on(t.userId)
+  })
+)
+
 // Relations (used by Drizzle query API)
 export const addressesRelations = relations(addresses, ({ many }) => ({
   groups: many(groups),
@@ -191,4 +249,23 @@ export const assignmentsRelations = relations(assignments, ({ one }) => ({
 }))
 export const deviceErrorsRelations = relations(deviceErrors, ({ one }) => ({
   device: one(devices, { fields: [deviceErrors.deviceId], references: [devices.id] })
+}))
+export const organizationsRelations = relations(organizations, ({ many }) => ({
+  users: many(users),
+  media: many(media)
+}))
+export const usersRelations = relations(users, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [users.organizationId],
+    references: [organizations.id]
+  })
+}))
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, { fields: [sessions.userId], references: [users.id] })
+}))
+export const mediaRelations = relations(media, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [media.organizationId],
+    references: [organizations.id]
+  })
 }))

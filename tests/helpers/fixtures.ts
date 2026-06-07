@@ -23,6 +23,35 @@ export async function seedDevice(
   return row
 }
 
+export async function seedOrganization(db: TestDb, name = 'Acme Ads') {
+  const [row] = await db
+    .insert(schema.organizations)
+    .values({ name })
+    .returning()
+  return row
+}
+
+export async function seedUser(
+  db: TestDb,
+  opts: {
+    username: string
+    role: 'super' | 'admin' | 'client'
+    passwordHash?: string
+    organizationId?: number | null
+  }
+) {
+  const [row] = await db
+    .insert(schema.users)
+    .values({
+      username: opts.username,
+      role: opts.role,
+      passwordHash: opts.passwordHash ?? 'scrypt$16384$8$1$x$x',
+      organizationId: opts.organizationId ?? null
+    })
+    .returning()
+  return row
+}
+
 export async function seedMedia(
   db: TestDb,
   opts: {
@@ -31,6 +60,7 @@ export async function seedMedia(
     filename?: string
     bytes?: number
     durationMs?: number | null
+    organizationId?: number | null
   }
 ) {
   const [row] = await db
@@ -45,7 +75,8 @@ export async function seedMedia(
           ? opts.durationMs
           : opts.kind === 'video'
             ? 15000
-            : null
+            : null,
+      organizationId: opts.organizationId ?? null
     })
     .returning()
   return row
