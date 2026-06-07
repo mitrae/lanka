@@ -8,7 +8,11 @@ export default defineNuxtConfig({
   css: ['~/app/assets/css/main.css'],
   dir: {
     pages: 'app/pages',
-    layouts: 'app/layouts'
+    layouts: 'app/layouts',
+    // srcDir is '.', so the default middleware dir would be ./middleware.
+    // The guard lives in app/middleware, so point Nuxt there — otherwise
+    // auth.global.ts is silently never scanned and the SPA skips the login redirect.
+    middleware: 'app/middleware'
   },
   imports: {
     dirs: ['app/composables', 'app/stores']

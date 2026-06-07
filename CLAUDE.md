@@ -19,8 +19,9 @@ Run the built app with `node .output/server/index.mjs`.
 ## Architecture gotchas (non-obvious)
 
 - **SPA mode** (`ssr: false` in nuxt.config). Pinia stores hold `_api: useApiClient()` — an object of functions — which Vue SSR's devalue serializer can't flatten. Dashboard lives behind Tailscale, never needed SSR. If re-enabling SSR, first move `_api` out of Pinia state.
-- **Nuxt directory layout**: `srcDir: '.'` + `dir.pages: 'app/pages'` + `dir.layouts: 'app/layouts'`. Do not change these. Auto-imports are explicitly wired via `imports.dirs: ['app/composables', 'app/stores']` and `components: [{ path: '~/app/components' }]`. Anything under those paths is auto-imported — no explicit import needed in SFCs.
+- **Nuxt directory layout**: `srcDir: '.'` + `dir.pages: 'app/pages'` + `dir.layouts: 'app/layouts'` + `dir.middleware: 'app/middleware'`. Do not change these. Auto-imports are explicitly wired via `imports.dirs: ['app/composables', 'app/stores']` and `components: [{ path: '~/app/components' }]`. Anything under those paths is auto-imported — no explicit import needed in SFCs. **Gotcha:** because `srcDir` is `.`, every Nuxt-scanned dir defaults to repo root (`./pages`, `./middleware`, `./plugins`, …). Anything you put under `app/` must get an explicit `dir.*` (or `imports.dirs`/`components`) entry, or **Nuxt silently never scans it** — no error, the files just don't load. This already bit `app/middleware/auth.global.ts` once: without `dir.middleware` the client auth guard never ran, so unauthenticated users were not redirected to `/login` and every dashboard write 401'd. If you add `app/plugins/`, wire `dir.plugins` too.
 - **`useApiClient` in Pinia state**: every store keeps `_api: useApiClient()` in state so tests can `$patch({ _api: mock })`. `tests/helpers/nuxt-stubs.ts` stubs `$fetch` so module load doesn't crash under Node.
+- **Auth, sessions & seeding**: a single global Nitro middleware (`server/middleware/auth.ts`) authenticates *every* request via the `lanka_session` cookie and sets `event.context.user`; `server/services/auth-guard.ts#decideAccess` is the policy. Public (no session) routes: `/api/healthz`, `/api/devices/register`, `/api/auth/*`, and the device `manifest|stream|telemetry` endpoints; non-`/api/` paths pass through (SPA assets, guarded client-side). **401 = no/expired session, 403 = wrong role.** Roles: `super`/`admin` → full dashboard; `client` → `/portal/*` only. Sessions (`server/services/sessions.ts`): the cookie holds a random token, the DB stores only its sha256 (table `sessions`), 30-day TTL; cookie is `httpOnly`+`sameSite=lax` with **no `secure` flag** (so it works over plain-http localhost dev). Client-side guard is `app/middleware/auth.global.ts` (redirects unauth→`/login`, `client`→`/portal`). **Seeding:** `server/plugins/seed.ts` runs on startup and, *only when the `users` table is empty*, creates `super`/`admin`/`client`. Passwords come from `SEED_SUPER_PASSWORD`/`SEED_ADMIN_PASSWORD`/`SEED_CLIENT_PASSWORD`; if unset, a random one is generated and **printed to the server log once** (`[seed] created <role> … generated password: …`). So a fresh dev DB with no `SEED_*` env means you must grab the password from the startup log (or set the env and delete `data/signage.db` to reseed).
 - **No `<template #header>` on pages**: earlier iterations wrapped page content with `<template #header>...</template>` intending to fill a layout slot. That syntax only works on direct children of `<NuxtLayout>`; inside `<div>` it breaks Vue's prod-build compiler with `Cannot read properties of undefined (reading 'type')`. Don't add it back — the layout's header slot is currently unused.
 - **Three-level hierarchy**: Address → Group → Device. Playlist assignments work at any level; most-specific wins (Device > Group > Address).
 - **Content-addressed media** by sha256. `playlists.version` bumps on any content-affecting edit. Devices sync = poll every 30s + SSE kick.
@@ -30,7 +31,19 @@ Run the built app with `node .output/server/index.mjs`.
 
 ## Ports (dev machine)
 
-`localhost:3000-3999` is occupied by other services on this machine. Use `PORT=5100 pnpm dev` (or any 5xxx) to start Nuxt.
+`localhost:3000-3999` is occupied by other services on this machine. Use `PORT=5100 pnpm dev` (or any 5xxx) to start Nuxt. (`.env` pins `PORT=5100`, so plain `pnpm dev` works.)
+
+## Dev login (seed accounts)
+
+Seeded on first run of an empty DB by `server/plugins/seed.ts`. Local dev sets known passwords via `SEED_*_PASSWORD` in `.env` (gitignored); the current dev value is **`lanka-dev`** for all three:
+
+| username | password    | role     | access            |
+|----------|-------------|----------|-------------------|
+| `super`  | `lanka-dev` | `super`  | full dashboard    |
+| `admin`  | `lanka-dev` | `admin`  | full dashboard    |
+| `client` | `lanka-dev` | `client` | `/portal/*` only  |
+
+**Dev-only** — production leaves `SEED_*` unset, so a random password is generated and printed to the server log once (never commit real ones). To rotate dev creds: change `SEED_*` in `.env`, delete `data/signage.db`, restart (reseeds). To set them on an existing DB without wiping it, overwrite `users.password_hash` with a `scrypt$16384$8$1$<salt_b64>$<derived_b64>` value (format per `server/services/password.ts`).
 
 ## Testing
 
@@ -41,7 +54,7 @@ Run the built app with `node .output/server/index.mjs`.
 
 ## Stack
 
-Nuxt 4 · Nuxt UI v3 (emerald on zinc, dark default) · Pinia · VueUse (via Nuxt UI) · Nitro · SQLite (better-sqlite3) · Drizzle ORM · Vitest · Docker + systemd (production). Package manager: pnpm.
+Nuxt 4 · Nuxt UI v3 (indigo on slate, light default — `app/app.config.ts` + `colorMode.preference: 'light'`) · Pinia · VueUse (via Nuxt UI) · Nitro · SQLite (better-sqlite3) · Drizzle ORM · Vitest · Docker + systemd (production). Package manager: pnpm.
 
 ## Production deployment (summary — full details in README)
 
