@@ -77,15 +77,19 @@ export function usePlayerBoot(
     sched.start()
   }
 
-  async function boot(): Promise<void> {
+  async function ensureRegistered(): Promise<void> {
     try {
       await api.register({
         deviceId: deviceId.value,
         playerVersion: PLAYER_VERSION
       })
     } catch (err) {
-      console.warn('[player] register failed; will rely on reconcile retry', err)
+      console.warn('[player] register failed; will retry on next reconcile error', err)
     }
+  }
+
+  async function boot(): Promise<void> {
+    await ensureRegistered()
 
     reconciler = createReconciler({
       api,
@@ -109,7 +113,14 @@ export function usePlayerBoot(
     reconciler.onError((e) => {
       lastError.value = e instanceof Error ? e.message : String(e)
       // Only fall back to standby if we've never played anything yet.
-      if (manifest.value === null) screen.value = 'standby'
+      if (manifest.value === null) {
+        screen.value = 'standby'
+        // A failed boot-time register leaves the server with no row for this
+        // device, so every manifest fetch 404s forever and the screen is stuck
+        // on standby. Re-register (idempotent upsert) so the reconciler's next
+        // retry can succeed instead of stranding the box.
+        void ensureRegistered()
+      }
     })
 
     // Poll the stream-state ref each event loop tick; cheap and works

@@ -1,9 +1,10 @@
 // app/composables/player/usePlayerEnv.ts
 //
-// Player-environment shim. In Plan 3 we serve media directly from the
-// Nuxt server; in Plan 5 the APK's WebViewAssetLoader exposes cached
-// files at https://appassets.androidplatform.net/media/<sha> and this
-// composable's `fileUrl` implementation will be swapped accordingly.
+// Player-environment shim. `fileUrl` returns the normal server media path on
+// every platform. The APK caches these `/media/<sha>` requests transparently
+// at the native layer (LankaWebViewClient.shouldInterceptRequest → MediaCache),
+// so no per-platform URL swap is needed here — the same code runs in the
+// kiosk WebView and in a desktop browser for QA.
 
 export interface PlayerEnv {
   fileUrl(sha256: string): string
