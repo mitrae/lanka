@@ -17,6 +17,9 @@ describe('seedInitialUsers', () => {
     expect(creds.map((c) => c.role).sort()).toEqual(['admin', 'client', 'super'])
     const users = await db.query.users.findMany()
     expect(users).toHaveLength(3)
+    expect(users.map((u) => u.email).sort()).toEqual([
+      'admin@lanka.live', 'client@lanka.live', 'super@lanka.live'
+    ])
     const client = users.find((u) => u.role === 'client')!
     expect(client.organizationId).not.toBeNull()
     expect(await verifyPassword('apw', users.find((u) => u.role === 'admin')!.passwordHash)).toBe(true)
