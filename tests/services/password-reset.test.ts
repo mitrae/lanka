@@ -27,4 +27,12 @@ describe('password reset tokens', () => {
     const token = await createResetToken(db, u.id, past)
     expect(await consumeResetToken(db, token)).toBeNull()
   })
+
+  it('stores only a hash of the token (raw token absent from the row id)', async () => {
+    const u = await seedUser(db, { email: 'a@x', role: 'admin' })
+    const token = await createResetToken(db, u.id)
+    const rows = await db.query.passwordResetTokens.findMany()
+    expect(rows[0].id).not.toEqual(token)
+    expect(rows[0].id).toMatch(/^[0-9a-f]{64}$/)
+  })
 })
