@@ -29,6 +29,7 @@ export class ResendMailer implements MailSender {
         to,
         subject: 'Reset your Lanka password',
         text: `Reset your Lanka password using this link (valid 1 hour):\n\n${resetUrl}\n\nIf you didn't request this, you can ignore this email.`,
+        // resetUrl is built server-side from APP_BASE_URL + an opaque token; no user input reaches here.
         html: `<p>Reset your Lanka password using this link (valid 1 hour):</p><p><a href="${resetUrl}">${resetUrl}</a></p><p>If you didn't request this, you can ignore this email.</p>`
       })
     })
@@ -45,8 +46,12 @@ let _mailer: MailSender | null = null
 export function useMailer(): MailSender {
   if (_mailer) return _mailer
   const config = useRuntimeConfig()
-  const apiKey = config.resendApiKey as string
-  const from = config.mailFrom as string
+  const apiKey = config.resendApiKey
+  const from = config.mailFrom
   _mailer = apiKey ? new ResendMailer(apiKey, from) : new LogMailer()
   return _mailer
+}
+
+export function _setMailer(m: MailSender | null): void {
+  _mailer = m
 }
