@@ -46,6 +46,12 @@ export default defineNuxtConfig({
       bucket: process.env.R2_BUCKET ?? '',
       accessKeyId: process.env.R2_ACCESS_KEY_ID ?? '',
       secretAccessKey: process.env.R2_SECRET_ACCESS_KEY ?? ''
+    },
+    public: {
+      // Public CDN base for media (e.g. https://media.lanka.live). Baked at
+      // build time via the Dockerfile ARG because this is an SPA (ssr:false).
+      // Empty in dev → the player falls back to the relative /media/<sha> path.
+      mediaPublicBase: process.env.MEDIA_PUBLIC_BASE ?? ''
     }
   },
   nitro: {
