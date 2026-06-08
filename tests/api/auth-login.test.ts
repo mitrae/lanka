@@ -12,20 +12,20 @@ describe('authenticateUser', () => {
   afterEach(() => close())
 
   it('returns a user + valid session token for correct credentials', async () => {
-    await seedUser(db, { username: 'admin', role: 'admin', passwordHash: await hashPassword('pw') })
-    const result = await authenticateUser(db, { username: 'admin', password: 'pw' })
+    await seedUser(db, { email: 'admin', role: 'admin', passwordHash: await hashPassword('pw') })
+    const result = await authenticateUser(db, { email: 'admin', password: 'pw' })
     expect(result).not.toBeNull()
-    expect(result!.user.username).toBe('admin')
-    expect(await getSessionUser(db, result!.token)).toMatchObject({ username: 'admin' })
+    expect(result!.user.email).toBe('admin')
+    expect(await getSessionUser(db, result!.token)).toMatchObject({ email: 'admin' })
   })
 
   it('returns null for a wrong password', async () => {
-    await seedUser(db, { username: 'admin', role: 'admin', passwordHash: await hashPassword('pw') })
-    expect(await authenticateUser(db, { username: 'admin', password: 'nope' })).toBeNull()
+    await seedUser(db, { email: 'admin', role: 'admin', passwordHash: await hashPassword('pw') })
+    expect(await authenticateUser(db, { email: 'admin', password: 'nope' })).toBeNull()
   })
 
   it('returns null for an unknown user', async () => {
-    expect(await authenticateUser(db, { username: 'ghost', password: 'x' })).toBeNull()
+    expect(await authenticateUser(db, { email: 'ghost', password: 'x' })).toBeNull()
   })
 })
 

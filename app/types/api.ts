@@ -118,7 +118,7 @@ export interface Assignment {
 export type Role = 'super' | 'admin' | 'client'
 export interface SessionUser {
   id: number
-  username: string
+  email: string
   role: Role
   organizationId: number | null
 }

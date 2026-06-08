@@ -171,7 +171,7 @@ export const users = sqliteTable(
   'users',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    username: text('username').notNull(),
+    email: text('email').notNull(),
     passwordHash: text('password_hash').notNull(),
     role: text('role', { enum: ['super', 'admin', 'client'] }).notNull(),
     organizationId: integer('organization_id').references(() => organizations.id, {
@@ -185,7 +185,7 @@ export const users = sqliteTable(
       .default(sql`(unixepoch() * 1000)`)
   },
   (t) => ({
-    usernameIdx: uniqueIndex('users_username_idx').on(t.username),
+    emailIdx: uniqueIndex('users_email_idx').on(t.email),
     roleOrg: check(
       'users_role_org_chk',
       sql`(("role" = 'client' AND "organization_id" IS NOT NULL) OR ("role" IN ('super','admin') AND "organization_id" IS NULL))`

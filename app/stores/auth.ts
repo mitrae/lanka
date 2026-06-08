@@ -25,8 +25,8 @@ export const useAuthStore = defineStore('auth', {
         this.ready = true
       }
     },
-    async login(username: string, password: string): Promise<SessionUser> {
-      const { user } = await this._api.login({ username, password })
+    async login(email: string, password: string): Promise<SessionUser> {
+      const { user } = await this._api.login({ email, password })
       this.user = user
       this.ready = true
       return user

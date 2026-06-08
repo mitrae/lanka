@@ -13,7 +13,7 @@ import {
 } from '~/server/services/sessions'
 
 const BodySchema = z.object({
-  username: z.string().min(1).max(64),
+  email: z.string().min(1).max(254),
   password: z.string().min(1).max(256)
 })
 
@@ -22,12 +22,12 @@ export async function authenticateUser(
   rawBody: unknown
 ): Promise<{ user: SessionUser; token: string } | null> {
   const body = BodySchema.parse(rawBody)
-  const [u] = await db.select().from(schema.users).where(eq(schema.users.username, body.username))
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.email, body.email))
   if (!u) return null
   if (!(await verifyPassword(body.password, u.passwordHash))) return null
   const token = await createSession(db, u.id)
   return {
-    user: { id: u.id, username: u.username, role: u.role as Role, organizationId: u.organizationId },
+    user: { id: u.id, email: u.email, role: u.role as Role, organizationId: u.organizationId },
     token
   }
 }
@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
     }
     throw err
   }
-  if (!result) throw createError({ statusCode: 401, message: 'Invalid username or password' })
+  if (!result) throw createError({ statusCode: 401, message: 'Invalid email or password' })
   setCookie(
     event,
     SESSION_COOKIE,

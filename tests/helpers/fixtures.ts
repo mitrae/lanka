@@ -34,7 +34,7 @@ export async function seedOrganization(db: TestDb, name = 'Acme Ads') {
 export async function seedUser(
   db: TestDb,
   opts: {
-    username: string
+    email: string
     role: 'super' | 'admin' | 'client'
     passwordHash?: string
     organizationId?: number | null
@@ -43,7 +43,7 @@ export async function seedUser(
   const [row] = await db
     .insert(schema.users)
     .values({
-      username: opts.username,
+      email: opts.email,
       role: opts.role,
       passwordHash: opts.passwordHash ?? 'scrypt$16384$8$1$x$x',
       organizationId: opts.organizationId ?? null

@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { isPublicRoute, decideAccess, requireRole } from '~/server/services/auth-guard'
 import type { SessionUser } from '~/server/services/sessions'
 
-const admin: SessionUser = { id: 1, username: 'a', role: 'admin', organizationId: null }
-const client: SessionUser = { id: 2, username: 'c', role: 'client', organizationId: 9 }
+const admin: SessionUser = { id: 1, email: 'a', role: 'admin', organizationId: null }
+const client: SessionUser = { id: 2, email: 'c', role: 'client', organizationId: 9 }
 
 describe('isPublicRoute — device endpoints must stay open', () => {
   const open = [

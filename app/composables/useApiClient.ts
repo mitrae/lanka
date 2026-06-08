@@ -85,7 +85,7 @@ export interface ApiClient {
   ): Promise<void>
 
   // auth
-  login(body: { username: string; password: string }): Promise<{ user: SessionUser }>
+  login(body: { email: string; password: string }): Promise<{ user: SessionUser }>
   logout(): Promise<void>
   me(): Promise<{ user: SessionUser }>
 

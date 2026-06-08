@@ -9,7 +9,7 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000 // 30 days
 export type Role = 'super' | 'admin' | 'client'
 export type SessionUser = {
   id: number
-  username: string
+  email: string
   role: Role
   organizationId: number | null
 }
@@ -43,7 +43,7 @@ export async function getSessionUser(
     .select({
       expiresAt: schema.sessions.expiresAt,
       id: schema.users.id,
-      username: schema.users.username,
+      email: schema.users.email,
       role: schema.users.role,
       organizationId: schema.users.organizationId
     })
@@ -54,7 +54,7 @@ export async function getSessionUser(
   if (row.expiresAt.getTime() <= now.getTime()) return null
   return {
     id: row.id,
-    username: row.username,
+    email: row.email,
     role: row.role as Role,
     organizationId: row.organizationId
   }

@@ -42,7 +42,7 @@ function isActive(to: string) {
   return route.path === to || (to !== '/' && route.path.startsWith(to))
 }
 
-const initials = computed(() => (auth.user?.username ?? '?').slice(0, 2).toUpperCase())
+const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCase())
 </script>
 
 <template>
@@ -120,7 +120,7 @@ const initials = computed(() => (auth.user?.username ?? '?').slice(0, 2).toUpper
             {{ initials }}
           </span>
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm font-medium leading-tight">{{ auth.user?.username }}</p>
+            <p class="truncate text-sm font-medium leading-tight">{{ auth.user?.email }}</p>
             <p class="text-xs capitalize text-(--ui-text-muted)">{{ auth.role }}</p>
           </div>
           <UButton
