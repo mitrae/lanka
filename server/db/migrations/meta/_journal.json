@@ -29,6 +29,13 @@
       "when": 1780852999995,
       "tag": "0003_rename_users_username_to_email",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1780946863015,
+      "tag": "0004_smiling_skin",
+      "breakpoints": true
     }
   ]
 }

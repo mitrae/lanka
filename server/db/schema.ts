@@ -263,6 +263,29 @@ export const usersRelations = relations(users, ({ one }) => ({
 export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] })
 }))
+
+export const passwordResetTokens = sqliteTable(
+  'password_reset_tokens',
+  {
+    id: text('id').primaryKey(), // sha256(rawToken)
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => ({
+    userIdx: index('password_reset_tokens_user_idx').on(t.userId)
+  })
+)
+
+export const passwordResetTokensRelations = relations(passwordResetTokens, ({ one }) => ({
+  user: one(users, { fields: [passwordResetTokens.userId], references: [users.id] })
+}))
+
 export const mediaRelations = relations(media, ({ one }) => ({
   organization: one(organizations, {
     fields: [media.organizationId],
