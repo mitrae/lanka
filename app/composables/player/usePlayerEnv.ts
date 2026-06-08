@@ -13,7 +13,7 @@ export interface PlayerEnv {
 export function usePlayerEnv(mediaBase = ''): PlayerEnv {
   return {
     fileUrl(sha256: string): string {
-      return mediaBase ? `${mediaBase}/${sha256}` : `/media/${sha256}`
+      return mediaBase ? `${mediaBase.replace(/\/$/, '')}/${sha256}` : `/media/${sha256}`
     }
   }
 }

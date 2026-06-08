@@ -36,7 +36,7 @@ export function usePlayerBoot(
 ): PlayerBootState {
   const api = apiOverride ?? useApiClient()
   const device = useNativeDevice()
-  const env = usePlayerEnv((useRuntimeConfig().public.mediaPublicBase as string) || '')
+  const env = usePlayerEnv(useRuntimeConfig().public.mediaPublicBase)
   const telemetry = useTelemetry(api)
 
   const deviceId = ref(device.deviceId())

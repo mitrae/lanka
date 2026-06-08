@@ -17,4 +17,10 @@ describe('usePlayerEnv.fileUrl', () => {
       'https://media.lanka.live/zz'
     )
   })
+
+  it('strips a trailing slash on the media base', () => {
+    expect(usePlayerEnv('https://media.lanka.live/').fileUrl('abc')).toBe(
+      'https://media.lanka.live/abc'
+    )
+  })
 })
