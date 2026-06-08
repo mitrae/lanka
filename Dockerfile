@@ -8,6 +8,8 @@ RUN corepack enable pnpm
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
+ARG MEDIA_PUBLIC_BASE=""
+ENV MEDIA_PUBLIC_BASE=$MEDIA_PUBLIC_BASE
 RUN pnpm build
 
 # ---- runtime ----
