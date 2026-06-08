@@ -271,6 +271,8 @@ Required env vars for production email:
 - `MAIL_FROM` — sender address, e.g. `Lanka <no-reply@lanka.live>`. The domain (`lanka.live`) must be verified in Resend (add Resend SPF/DKIM DNS records on the domain).
 - `APP_BASE_URL` — absolute base URL of the app, e.g. `https://app.lanka.live`. This is required so that emailed reset links are absolute URLs that open the correct host.
 
+Set these (plus the `R2_*` vars) as plain names in `/opt/lanka/.env`. The container build bakes `runtimeConfig` defaults at build time and excludes `.env`, so the entrypoint (`scripts/entrypoint.sh`) bridges these plain names to the `NUXT_*` runtime overrides Nitro actually reads (e.g. `APP_BASE_URL` → `NUXT_MAIL_BASE_URL`). Without that bridge they would never reach the running server. If you bypass the entrypoint, set the `NUXT_*` names directly.
+
 The nginx public block should rate-limit `POST /api/auth/forgot-password` the same way it rate-limits `POST /api/auth/login`, to prevent abuse.
 
 ### Backups

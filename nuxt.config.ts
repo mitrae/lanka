@@ -40,8 +40,12 @@ export default defineNuxtConfig({
     appVersion: process.env.npm_package_version ?? 'dev',
     resendApiKey: process.env.RESEND_API_KEY ?? '',
     mailFrom: process.env.MAIL_FROM ?? 'Lanka <no-reply@lanka.live>',
-    // Required when RESEND_API_KEY is set — empty string yields relative (broken) reset links in emails.
-    appBaseUrl: process.env.APP_BASE_URL ?? '',
+    // Absolute base URL used to build emailed password-reset links (from APP_BASE_URL,
+    // e.g. https://app.lanka.live). NOT named `appBaseUrl` on purpose: the NUXT_APP_BASE_URL
+    // runtime-override env collides with Nuxt's reserved `app.baseURL` (router base) and
+    // would re-base every route. `mailBaseUrl` ⇒ override is NUXT_MAIL_BASE_URL (see entrypoint.sh).
+    // Required when RESEND_API_KEY is set — empty string yields relative (broken) reset links.
+    mailBaseUrl: process.env.APP_BASE_URL ?? '',
     // Cloudflare R2 (S3-compatible). When all four are set, media is stored in
     // R2 instead of mediaDir; the server still proxies bytes over the tailnet.
     // Server-only (not under `public`), so credentials never reach the client.

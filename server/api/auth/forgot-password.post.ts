@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
   try {
     return await handleForgotPassword(useDb(), body, {
       mailer: useMailer(),
-      baseUrl: (config.appBaseUrl as string) || ''
+      baseUrl: (config.mailBaseUrl as string) || ''
     })
   } catch (err: any) {
     if (err instanceof z.ZodError) throw createError({ statusCode: 400, message: err.message })
