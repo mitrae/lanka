@@ -32,6 +32,16 @@ export async function authenticateUser(
   }
 }
 
+export function sessionCookieOptions(secure: boolean) {
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    path: '/',
+    maxAge: SESSION_TTL_MS / 1000,
+    secure
+  }
+}
+
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   let result: { user: SessionUser; token: string } | null
@@ -44,11 +54,11 @@ export default defineEventHandler(async (event) => {
     throw err
   }
   if (!result) throw createError({ statusCode: 401, message: 'Invalid username or password' })
-  setCookie(event, SESSION_COOKIE, result.token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: SESSION_TTL_MS / 1000
-  })
+  setCookie(
+    event,
+    SESSION_COOKIE,
+    result.token,
+    sessionCookieOptions(process.env.SESSION_COOKIE_SECURE === 'true')
+  )
   return { user: result.user }
 })

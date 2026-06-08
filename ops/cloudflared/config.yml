@@ -1,0 +1,8 @@
+# Installed to /etc/cloudflared/config.yml on the host.
+tunnel: <TUNNEL_UUID>
+credentials-file: /etc/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: app.lanka.live
+    service: http://localhost:8080
+  - service: http_status:404

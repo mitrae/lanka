@@ -8,9 +8,6 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/lanka
-Environment=LANKA_PORT=3000
-Environment=LANKA_TZ=Europe/Kyiv
-ExecStartPre=/opt/lanka/scripts/render-env.sh
 ExecStart=/usr/bin/docker compose up
 ExecStop=/usr/bin/docker compose down
 TimeoutStartSec=300
