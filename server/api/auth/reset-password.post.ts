@@ -20,12 +20,15 @@ export async function handleResetPassword(
   if (userId === null) {
     throw createError({ statusCode: 400, message: 'Invalid or expired reset link' })
   }
-  await db
-    .update(schema.users)
-    .set({ passwordHash: await hashPassword(body.password), updatedAt: new Date() })
-    .where(eq(schema.users.id, userId))
-  // Force re-login everywhere.
-  await db.delete(schema.sessions).where(eq(schema.sessions.userId, userId))
+  const passwordHash = await hashPassword(body.password)
+  // Atomic: a new password must imply all of the user's sessions are gone.
+  db.transaction((tx) => {
+    tx.update(schema.users)
+      .set({ passwordHash, updatedAt: new Date() })
+      .where(eq(schema.users.id, userId))
+      .run()
+    tx.delete(schema.sessions).where(eq(schema.sessions.userId, userId)).run()
+  })
   return { ok: true }
 }
 
