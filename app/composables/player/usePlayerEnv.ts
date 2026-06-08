@@ -10,10 +10,10 @@ export interface PlayerEnv {
   fileUrl(sha256: string): string
 }
 
-export function usePlayerEnv(): PlayerEnv {
+export function usePlayerEnv(mediaBase = ''): PlayerEnv {
   return {
     fileUrl(sha256: string): string {
-      return `/media/${sha256}`
+      return mediaBase ? `${mediaBase}/${sha256}` : `/media/${sha256}`
     }
   }
 }
