@@ -58,11 +58,15 @@ Nuxt 4 · Nuxt UI v3 (indigo on slate, light default — `app/app.config.ts` + `
 
 ## Production deployment (summary — full details in README)
 
-- `Dockerfile` multi-stage bookworm-slim, `tini` PID 1. Runtime launches via `scripts/entrypoint.sh` (runs `drizzle-kit migrate`, then `exec node .output/server/index.mjs`).
-- `docker-compose.yml` uses `network_mode: host` so Nitro can bind to the tailnet interface only (see `HOST` env var).
-- `ops/lanka.service` wraps `docker compose up`; `ExecStartPre=scripts/render-env.sh` resolves the tailnet IP on every start. `Requires=tailscaled.service` → service refuses to start without a tailnet IP (defense-in-depth against accidental public bind).
-- `ops/lanka-backup.{service,timer}` fires `scripts/backup.sh` nightly at 03:00: `sqlite3 .backup` (WAL-safe online backup) + `rsync --delete` media mirror, 7-day DB retention, optional `offsite.sh` drop-in hook.
-- `scripts/deploy.sh` is the manual upgrade: pre-backup → `git pull --ff-only` → rebuild → 30×2s healthz poll → auto-rollback on failure via `git reset --hard $PRE_HEAD`.
+- `Dockerfile` multi-stage bookworm-slim, `tini` PID 1. Accepts a `MEDIA_PUBLIC_BASE` build ARG baked into the SPA bundle at `pnpm build` time. Runtime launches via `scripts/entrypoint.sh` (runs `drizzle-kit migrate`, then `exec node .output/server/index.mjs`).
+- **The app binds `127.0.0.1:3000` only** (`HOST=127.0.0.1` in `.env`). `docker-compose.yml` uses `network_mode: host`; nginx is the sole front door.
+- **nginx (host package)** — two server blocks: (1) *public block* on `127.0.0.1:8080` — what `cloudflared` dials; 403s the device control plane (`/api/devices/register`, `/api/devices/:id/{manifest,stream,telemetry}`), rate-limits `/api/auth/login`, proxies the rest; (2) *tailnet block* on `tailscale0:80` — what the TVs hit; full proxy, no restrictions.
+- **`app.lanka.live` via Cloudflare Tunnel** (`cloudflared` outbound service, `ops/cloudflared/config.yml`). No inbound public ports on the box — the dashboard is unreachable if the tunnel is down, but the fleet keeps playing.
+- **Device control plane is tailnet-only.** The nginx public block 403s device endpoints; TVs reach the app at `http://100.x/` over WireGuard.
+- **Media served from R2 public CDN** (`media.lanka.live`). TVs fetch bytes straight from Cloudflare — the box is never in the media path. Uploads still flow through the app into `R2Store`. `SESSION_COOKIE_SECURE=true` in prod (dashboard is HTTPS at the Cloudflare edge).
+- `ops/lanka.service` wraps `docker compose up`. `scripts/render-env.sh` **has been removed** — `HOST` is the static `127.0.0.1` from `.env`. `Requires=tailscaled.service` still prevents the service from starting without the tailnet (device plane depends on it).
+- `ops/lanka-backup.{service,timer}` fires `scripts/backup.sh` nightly at 03:00: `sqlite3 .backup` (WAL-safe online backup) + `rsync --delete` media mirror (near-empty local dir — R2 is the media source of truth), 7-day DB retention, optional `offsite.sh` drop-in hook.
+- `scripts/deploy.sh` is the manual upgrade: pre-backup → `git pull --ff-only` → rebuild → 30×2s healthz poll (`http://127.0.0.1:3000/api/healthz`) → auto-rollback on failure via `git reset --hard $PRE_HEAD`.
 
 ## Docs
 

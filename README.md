@@ -142,37 +142,36 @@ Android WebView kiosk (Plan 5) or a desktop browser for QA.
 
 ## Deployment
 
-Production is a single Ubuntu 22.04+ host on a Tailscale tailnet, running the app as one Docker Compose service. All traffic reaches the host over the tailnet; the app binds to the Tailscale interface only, so it's unreachable from the public NIC even if the firewall is misconfigured.
+Production runs on a Hetzner Cloud box (Ubuntu 24.04) using a hybrid model: the Nitro app binds `127.0.0.1:3000` and is never exposed directly. nginx is the single front door with two server blocks — a **public block** on `127.0.0.1:8080` that `cloudflared` dials (returns 403 for the device control plane, rate-limits `/api/auth/login`, proxies everything else) and a **tailnet block** on `tailscale0:80` that the TVs hit. The admin dashboard is reachable at `https://app.lanka.live` via a **Cloudflare Tunnel** (outbound-only — no inbound ports open on the box). Media (videos, images) is served from a public **R2 CDN** at `https://media.lanka.live` straight to the TVs; the Hetzner box is never in the media-serving path. Uploads still flow through the app into R2.
+
+```
+Admin browser ─HTTPS─► Cloudflare edge ─tunnel─► cloudflared ─► nginx :8080 ─► app 127.0.0.1:3000
+TV (control)  ─tailscale0─► nginx 100.x:80 ─────────────────────────────────► app 127.0.0.1:3000
+TV (media)    ─HTTPS─► Cloudflare CDN (media.lanka.live, backed by R2)
+```
 
 ### Host prerequisites
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y docker.io docker-compose-plugin sqlite3 rsync curl git
+sudo apt-get install -y docker.io docker-compose-plugin sqlite3 rsync curl git nginx
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up
+# cloudflared: install via the Cloudflare apt repo (see operator runbook)
 ```
 
-### First install
+Also configure the host firewall (Hetzner Cloud Firewall + ufw): allow inbound SSH only; deny inbound 80/443 — the Cloudflare Tunnel is outbound so no public HTTP(S) port is needed.
 
-```bash
-# Check out the repo under /opt.
-sudo git clone <repo-url> /opt/lanka
-sudo chown -R root:root /opt/lanka
-sudo mkdir -p /opt/lanka/data/media /opt/lanka/backups
+### First install — overview
 
-# Install systemd units.
-sudo cp /opt/lanka/ops/lanka.service        /etc/systemd/system/
-sudo cp /opt/lanka/ops/lanka-backup.service /etc/systemd/system/
-sudo cp /opt/lanka/ops/lanka-backup.timer   /etc/systemd/system/
-sudo systemctl daemon-reload
+For the exact step-by-step commands and expected output, follow the **operator runbook** in `docs/superpowers/plans/2026-06-08-lanka-hetzner-cloudflare-deployment.md` (Phase 3, Tasks 13–17). The high-level order is:
 
-# Start the service and the backup timer.
-sudo systemctl enable --now lanka.service
-sudo systemctl enable --now lanka-backup.timer
-```
-
-Confirm: `systemctl status lanka` shows `active (running)`. Visit `http://<tailnet-ip>:3000` from another tailnet device. `http://<tailnet-ip>:3000/api/healthz` returns `{"ok":true,...}`.
+1. **Provision + packages + Tailscale + firewall** — install nginx, Docker, cloudflared; join tailnet; lock firewall to SSH-only inbound.
+2. **Cloudflare zone** — move `lanka.live` DNS from GoDaddy to Cloudflare (change nameservers); activate the zone.
+3. **Tunnel + R2** — create a named Cloudflare Tunnel (`lanka`) and add the `app.lanka.live` DNS route; create the R2 bucket `lanka-media`, attach the `media.lanka.live` custom domain, and generate an R2 API token.
+4. **Write `/opt/lanka/.env`** — set `HOST=127.0.0.1`, `SESSION_COOKIE_SECURE=true`, `MEDIA_PUBLIC_BASE=https://media.lanka.live`, the four `R2_*` vars, `SEED_*` passwords, etc.
+5. **Install configs + systemd units** — copy the nginx config (substitute the tailnet IP for the `TAILSCALE_IP` token), link `ops/nginx/lanka-proxy.conf` as a snippet, reload nginx; install `ops/cloudflared/config.yml` (substitute the tunnel UUID) and run `cloudflared service install`; copy `ops/lanka.service`, `ops/lanka-backup.{service,timer}` and `systemctl daemon-reload`.
+6. **Build + start** — `docker compose up -d --build` (bakes `MEDIA_PUBLIC_BASE` into the SPA bundle); start nginx and cloudflared. Grab seeded passwords from `docker logs lanka` if `SEED_*` were left blank.
 
 ### Upgrading
 
@@ -182,7 +181,7 @@ cd /opt/lanka
 sudo ./scripts/deploy.sh
 ```
 
-The script snapshots the DB + media before the pull, builds and restarts, then polls `/api/healthz` for up to ~90s (30 attempts × 2s sleep, 3s curl timeout). On failure it rolls the working tree back to the pre-pull HEAD and rebuilds the previous version.
+The script snapshots the DB before the pull, builds and restarts, then polls `http://127.0.0.1:3000/api/healthz` for up to ~90s (30 attempts × 2s sleep, 3s curl timeout). On failure it rolls the working tree back to the pre-pull HEAD and rebuilds the previous version. (`HOST=127.0.0.1` in `.env`, so the healthz URL resolves correctly.)
 
 ### Restore from backup
 
@@ -190,20 +189,23 @@ The script snapshots the DB + media before the pull, builds and restarts, then p
 sudo systemctl stop lanka
 sudo rm -f /opt/lanka/data/signage.db /opt/lanka/data/signage.db-wal /opt/lanka/data/signage.db-shm
 sudo cp /opt/lanka/backups/db/signage-YYYY-MM-DD.db /opt/lanka/data/signage.db
-sudo rsync -a --delete /opt/lanka/backups/media/ /opt/lanka/data/media/
 sudo systemctl start lanka
 ```
 
-DB snapshots retain 7 days; media is a current-state mirror.
-
-> When media is stored in **R2**, the nightly media-mirror rsync only copies the
-> (empty) local `MEDIA_DIR` — durability is Cloudflare's. Back up the DB as
-> usual; treat the R2 bucket as the media system of record (enable bucket
-> versioning there if you want point-in-time recovery).
+DB snapshots retain 7 days. Media lives in **R2** — R2 is the media source of truth. The nightly `rsync --delete` mirrors only the near-empty local `MEDIA_DIR`; to recover media, the R2 bucket itself is the authoritative copy (enable R2 object versioning or an offsite R2 sync for point-in-time recovery if needed).
 
 ### Offsite backups (optional, future)
 
 Drop an executable at `/opt/lanka/backups/offsite.sh`. `backup.sh` invokes it at the end of each nightly run with the backup root as `$1`. No code change needed.
+
+### Known limitations
+
+- **Cloudflare free plan caps uploads at 100 MB.** Media files larger than 100 MB
+  cannot be uploaded through `app.lanka.live` (Cloudflare returns 413). Upload large
+  media while connected to the tailnet (`http://<tailnet-ip>/media`), which bypasses
+  Cloudflare, or implement presigned direct-to-R2 uploads later.
+- **The dashboard depends on the tunnel.** If `cloudflared` is down, the dashboard is
+  unreachable — but the fleet keeps playing (control is tailnet, media is CDN).
 
 ## Operations
 
