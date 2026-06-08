@@ -1,6 +1,9 @@
 services:
   lanka:
-    build: .
+    build:
+      context: .
+      args:
+        MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-}
     container_name: lanka
     restart: unless-stopped
     network_mode: host
