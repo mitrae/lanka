@@ -80,7 +80,7 @@ pnpm db:migrate   # apply migrations to data/signage.db
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/users` | List all users (super/admin) |
+| GET | `/api/users` | List users (super sees all; admin sees clients only) |
 | POST | `/api/users` | Create a user (super/admin; admin limited to `client` role) |
 | DELETE | `/api/users/:id` | Delete a user (super/admin; admin limited to client accounts) |
 
