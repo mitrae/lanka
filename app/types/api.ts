@@ -128,6 +128,23 @@ export interface Organization {
   createdAt: string
   updatedAt: string
 }
+export interface User {
+  id: number
+  email: string
+  role: Role
+  organizationId: number | null
+  organizationName: string | null
+  createdAt: string
+}
+export interface CreateUserBody {
+  email: string
+  role: 'admin' | 'client'
+  organizationId?: number
+}
+export interface CreateUserResult {
+  user: { id: number; email: string; role: 'admin' | 'client'; organizationId: number | null }
+  generatedPassword: string
+}
 export interface MediaReach {
   mediaId: number
   filename: string

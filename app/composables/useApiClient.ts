@@ -2,6 +2,8 @@
 import type {
   Address,
   Assignment,
+  CreateUserBody,
+  CreateUserResult,
   Device,
   DeviceListRow,
   Group,
@@ -14,7 +16,8 @@ import type {
   PlaylistDetail,
   PlaylistSummary,
   RegisterResult,
-  SessionUser
+  SessionUser,
+  User
 } from '~/app/types/api'
 
 type FetchFn = typeof $fetch
@@ -93,6 +96,14 @@ export interface ApiClient {
   listOrganizations(): Promise<Organization[]>
   createOrganization(body: { name: string }): Promise<Organization>
   assignMediaOrganization(mediaId: number, body: { organizationId: number | null }): Promise<Media>
+
+  // users
+  listUsers(): Promise<User[]>
+  createUser(body: CreateUserBody): Promise<CreateUserResult>
+  deleteUser(id: number): Promise<void>
+  // password reset
+  forgotPassword(body: { email: string }): Promise<{ ok: true }>
+  resetPassword(body: { token: string; password: string }): Promise<{ ok: true }>
 
   // portal
   getPortalStats(): Promise<OrgReach>
@@ -209,6 +220,13 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     createOrganization: (body) => fetch<Organization>('/api/organizations', { method: 'POST', body }),
     assignMediaOrganization: (mediaId, body) =>
       fetch<Media>(`/api/media/${mediaId}/organization`, { method: 'PUT', body }),
+    // users
+    listUsers: () => fetch<User[]>('/api/users', { method: 'GET' }),
+    createUser: (body) => fetch<CreateUserResult>('/api/users', { method: 'POST', body }),
+    deleteUser: (id) => fetch<void>(`/api/users/${id}`, { method: 'DELETE' }),
+    // password reset
+    forgotPassword: (body) => fetch<{ ok: true }>('/api/auth/forgot-password', { method: 'POST', body }),
+    resetPassword: (body) => fetch<{ ok: true }>('/api/auth/reset-password', { method: 'POST', body }),
     // portal
     getPortalStats: () => fetch<OrgReach>('/api/portal/stats', { method: 'GET' }),
 
