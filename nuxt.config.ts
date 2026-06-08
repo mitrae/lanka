@@ -38,6 +38,9 @@ export default defineNuxtConfig({
     databaseUrl: process.env.DATABASE_URL ?? 'file:./data/signage.db',
     mediaDir: process.env.MEDIA_DIR ?? './data/media',
     appVersion: process.env.npm_package_version ?? 'dev',
+    resendApiKey: process.env.RESEND_API_KEY ?? '',
+    mailFrom: process.env.MAIL_FROM ?? 'Lanka <no-reply@lanka.live>',
+    appBaseUrl: process.env.APP_BASE_URL ?? '',
     // Cloudflare R2 (S3-compatible). When all four are set, media is stored in
     // R2 instead of mediaDir; the server still proxies bytes over the tailnet.
     // Server-only (not under `public`), so credentials never reach the client.
