@@ -210,3 +210,8 @@ custom domain serves them at the root path; adjust the public base path if it us
   (the fleet keeps playing — control is tailnet, media is CDN). Acceptable for a prototype.
 - **R2 token blast radius**: scope the token to the one bucket.
 - **CX disk**: with media on R2, the box only holds the SQLite DB + thumbnails — comfortable.
+- **Cloudflare free-plan upload cap (100 MB)**: media files larger than 100 MB cannot be
+  uploaded through `app.lanka.live` (Cloudflare returns 413). Workaround: upload large media
+  over the tailnet (`http://<tailnet-ip>/media`, which bypasses Cloudflare); the tailnet nginx
+  block allows the full 500 MB. Longer term, presigned direct-to-R2 browser uploads remove the
+  box and the tunnel from the upload path entirely. Out of scope here.
