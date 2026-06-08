@@ -1,7 +1,9 @@
 // app/composables/player/usePlayerEnv.ts
 //
 // Player-environment shim. `fileUrl` returns the normal server media path on
-// every platform. The APK caches these `/media/<sha>` requests transparently
+// every platform.
+// When a media base is configured (MEDIA_PUBLIC_BASE → runtimeConfig.public.mediaPublicBase), fileUrl returns an absolute CDN URL instead; an empty base falls back to the relative /media/<sha> path.
+// The APK caches these `/media/<sha>` requests transparently
 // at the native layer (LankaWebViewClient.shouldInterceptRequest → MediaCache),
 // so no per-platform URL swap is needed here — the same code runs in the
 // kiosk WebView and in a desktop browser for QA.

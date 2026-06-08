@@ -54,10 +54,12 @@ pnpm db:migrate   # apply migrations to data/signage.db
 
 > **Media storage backend.** By default media lives on local disk (`MEDIA_DIR`).
 > Set all four `R2_*` env vars (see `.env.example`) to store it in Cloudflare R2
-> instead. Either way the API is identical: the server serves `/media/:sha256`
-> over the tailnet — with R2 it proxies the bytes (Range included), so players
-> never touch the public internet and R2's zero egress applies. Switching
-> backends does not migrate existing objects; re-upload or copy them across.
+> instead. Either way the API is identical: the server serves `/media/:sha256`,
+> and with R2 it proxies the bytes (Range included). In the Hetzner+Cloudflare
+> production deployment, players fetch full media bytes directly from the
+> `media.lanka.live` CDN (set via `MEDIA_PUBLIC_BASE`) — the `/media/:sha` proxy
+> route is then used only for thumbnails and local-disk dev. Switching backends
+> does not migrate existing objects; re-upload or copy them across.
 
 ### Admin CRUD
 
@@ -231,7 +233,7 @@ Drop an executable at `/opt/lanka/backups/offsite.sh`. `backup.sh` invokes it at
 
 - Shell into the container: `docker exec -it lanka bash`
 - Inspect the DB from the host: `sqlite3 /opt/lanka/data/signage.db`
-- Rotate to a new tailnet IP: `sudo systemctl restart lanka` (re-runs `render-env.sh`).
+- Rotate to a new tailnet IP: re-render the nginx tailnet block and reload nginx — `sudo sed "s/TAILSCALE_IP/$(tailscale ip -4 | head -n1)/" /opt/lanka/ops/nginx/lanka.conf | sudo tee /etc/nginx/sites-available/lanka.conf` then `sudo systemctl reload nginx`.
 
 ## Next plans
 
