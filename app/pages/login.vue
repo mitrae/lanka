@@ -109,6 +109,10 @@ async function submit() {
             />
           </UFormField>
 
+          <div class="flex justify-end">
+            <NuxtLink to="/forgot-password" class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">Forgot password?</NuxtLink>
+          </div>
+
           <div
             v-if="error"
             class="flex items-center gap-2 rounded-xl bg-rose-500/10 px-3 py-2.5 text-sm font-medium text-rose-600 dark:text-rose-400"
