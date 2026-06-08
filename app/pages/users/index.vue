@@ -70,8 +70,13 @@ async function remove(u: { id: number; email: string; role: string }) {
 }
 
 async function copyPassword() {
-  if (generated.value) await navigator.clipboard.writeText(generated.value.password)
-  toast.add({ title: 'Password copied', color: 'success' })
+  if (!generated.value) return
+  try {
+    await navigator.clipboard.writeText(generated.value.password)
+    toast.add({ title: 'Password copied', color: 'success' })
+  } catch {
+    toast.add({ title: 'Copy failed', description: 'Select and copy the password manually.', color: 'warning' })
+  }
 }
 </script>
 
