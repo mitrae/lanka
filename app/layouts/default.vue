@@ -22,8 +22,11 @@ const navGroups = [
     ]
   },
   {
-    label: 'Organization',
-    items: [{ label: 'Organizations', icon: 'i-lucide-briefcase', to: '/organizations' }]
+    label: 'People',
+    items: [
+      { label: 'Users', icon: 'i-lucide-users', to: '/users' },
+      { label: 'Organizations', icon: 'i-lucide-briefcase', to: '/organizations' }
+    ]
   }
 ]
 
