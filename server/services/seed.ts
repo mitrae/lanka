@@ -6,7 +6,7 @@ import type { Role } from './sessions'
 import { hashPassword } from './password'
 
 export type SeedCredential = {
-  username: string
+  email: string
   role: Role
   password: string
   generated: boolean
@@ -19,7 +19,10 @@ function resolvePassword(envVal: string | undefined): { password: string; genera
 
 export async function seedInitialUsers(
   db: BetterSQLite3Database<typeof schema>,
-  env: { super?: string; admin?: string; client?: string } = {}
+  env: {
+    super?: string; admin?: string; client?: string
+    superEmail?: string; adminEmail?: string; clientEmail?: string
+  } = {}
 ): Promise<SeedCredential[]> {
   const existing = await db.select({ id: schema.users.id }).from(schema.users).limit(1)
   if (existing.length > 0) return []
@@ -28,15 +31,15 @@ export async function seedInitialUsers(
 
   const su = resolvePassword(env.super)
   await db.insert(schema.users).values({
-    username: 'super', role: 'super', passwordHash: await hashPassword(su.password), organizationId: null
+    email: env.superEmail ?? 'super@lanka.live', role: 'super', passwordHash: await hashPassword(su.password), organizationId: null
   })
-  creds.push({ username: 'super', role: 'super', ...su })
+  creds.push({ email: env.superEmail ?? 'super@lanka.live', role: 'super', ...su })
 
   const ad = resolvePassword(env.admin)
   await db.insert(schema.users).values({
-    username: 'admin', role: 'admin', passwordHash: await hashPassword(ad.password), organizationId: null
+    email: env.adminEmail ?? 'admin@lanka.live', role: 'admin', passwordHash: await hashPassword(ad.password), organizationId: null
   })
-  creds.push({ username: 'admin', role: 'admin', ...ad })
+  creds.push({ email: env.adminEmail ?? 'admin@lanka.live', role: 'admin', ...ad })
 
   const [org] = await db
     .insert(schema.organizations)
@@ -45,9 +48,9 @@ export async function seedInitialUsers(
 
   const cl = resolvePassword(env.client)
   await db.insert(schema.users).values({
-    username: 'client', role: 'client', passwordHash: await hashPassword(cl.password), organizationId: org.id
+    email: env.clientEmail ?? 'client@lanka.live', role: 'client', passwordHash: await hashPassword(cl.password), organizationId: org.id
   })
-  creds.push({ username: 'client', role: 'client', ...cl })
+  creds.push({ email: env.clientEmail ?? 'client@lanka.live', role: 'client', ...cl })
 
   // Give the demo client something to see: adopt all currently-unowned media.
   await db

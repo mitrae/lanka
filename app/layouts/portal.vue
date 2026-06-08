@@ -21,7 +21,7 @@ async function signOut() {
         <span class="ml-1 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400">Client</span>
       </div>
       <div class="flex items-center gap-2 text-sm text-(--ui-text-muted)">
-        <span>{{ auth.user?.username }}</span>
+        <span>{{ auth.user?.email }}</span>
         <UButton
           variant="ghost" color="neutral" size="sm"
           :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"

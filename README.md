@@ -76,6 +76,23 @@ pnpm db:migrate   # apply migrations to data/signage.db
 | GET/PATCH/DELETE | `/api/playlists/:id` | Read (with items) / rename / delete |
 | PUT | `/api/playlists/:id/items` | Bulk replace items |
 
+### Users
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/users` | List users (super sees all; admin sees clients only) |
+| POST | `/api/users` | Create a user (super/admin; admin limited to `client` role) |
+| DELETE | `/api/users/:id` | Delete a user (super/admin; admin limited to client accounts) |
+
+### Auth
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/auth/login` | Email + password login |
+| POST | `/api/auth/logout` | Destroy session |
+| POST | `/api/auth/forgot-password` | Request a password-reset email (public) |
+| POST | `/api/auth/reset-password` | Consume reset token and set new password (public) |
+
 ### Assignments (target-addressed)
 
 | Method | Path | Purpose |
@@ -142,6 +159,30 @@ Android WebView kiosk (Plan 5) or a desktop browser for QA.
 - [ ] Single video playlist → native `<video loop>`, zero-gap loop
 - [ ] Single image playlist → timer re-fires, telemetry re-posts every cycle
 
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `file:./data/signage.db` | SQLite path |
+| `MEDIA_DIR` | `./data/media` | Local media storage root |
+| `HOST` | unset (0.0.0.0) | Bind address — set to `127.0.0.1` in production |
+| `PORT` | 3000 | HTTP listen port |
+| `SESSION_COOKIE_SECURE` | unset | Set to `true` in production (HTTPS only) |
+| `MEDIA_PUBLIC_BASE` | unset | Public CDN base URL for media (e.g. `https://media.lanka.live`). Baked into SPA at build time. |
+| `R2_ENDPOINT` | unset | R2-compatible endpoint URL |
+| `R2_BUCKET` | unset | R2 bucket name |
+| `R2_ACCESS_KEY_ID` | unset | R2 access key |
+| `R2_SECRET_ACCESS_KEY` | unset | R2 secret key |
+| `RESEND_API_KEY` | unset | Resend API key — if set, password-reset emails are sent via Resend; if unset, `LogMailer` prints the reset link to the server log |
+| `MAIL_FROM` | `Lanka <no-reply@lanka.live>` | Sender address for password-reset emails |
+| `APP_BASE_URL` | unset | Absolute base URL of the app (e.g. `https://app.lanka.live`) — required so emailed reset links are absolute |
+| `SEED_SUPER_EMAIL` | `super@lanka.live` | Email address for the seeded super account |
+| `SEED_ADMIN_EMAIL` | `admin@lanka.live` | Email address for the seeded admin account |
+| `SEED_CLIENT_EMAIL` | `client@lanka.live` | Email address for the seeded client account |
+| `SEED_SUPER_PASSWORD` | (random, logged) | Password for the seeded super account |
+| `SEED_ADMIN_PASSWORD` | (random, logged) | Password for the seeded admin account |
+| `SEED_CLIENT_PASSWORD` | (random, logged) | Password for the seeded client account |
+
 ## Deployment
 
 Production runs on a Hetzner Cloud box (Ubuntu 24.04) using a hybrid model: the Nitro app binds `127.0.0.1:3000` and is never exposed directly. nginx is the single front door with two server blocks — a **public block** on `127.0.0.1:8080` that `cloudflared` dials (returns 403 for the device control plane, rate-limits `/api/auth/login`, proxies everything else) and a **tailnet block** on `tailscale0:80` that the TVs hit. The admin dashboard is reachable at `https://app.lanka.live` via a **Cloudflare Tunnel** (outbound-only — no inbound ports open on the box). Media (videos, images) is served from a public **R2 CDN** at `https://media.lanka.live` straight to the TVs; the Hetzner box is never in the media-serving path. Uploads still flow through the app into R2.
@@ -171,7 +212,7 @@ For the exact step-by-step commands and expected output, follow the **operator r
 1. **Provision + packages + Tailscale + firewall** — install nginx, Docker, cloudflared; join tailnet; lock firewall to SSH-only inbound.
 2. **Cloudflare zone** — move `lanka.live` DNS from GoDaddy to Cloudflare (change nameservers); activate the zone.
 3. **Tunnel + R2** — create a named Cloudflare Tunnel (`lanka`) and add the `app.lanka.live` DNS route; create the R2 bucket `lanka-media`, attach the `media.lanka.live` custom domain, and generate an R2 API token.
-4. **Write `/opt/lanka/.env`** — set `HOST=127.0.0.1`, `SESSION_COOKIE_SECURE=true`, `MEDIA_PUBLIC_BASE=https://media.lanka.live`, the four `R2_*` vars, `SEED_*` passwords, etc.
+4. **Write `/opt/lanka/.env`** — set `HOST=127.0.0.1`, `SESSION_COOKIE_SECURE=true`, `MEDIA_PUBLIC_BASE=https://media.lanka.live`, the four `R2_*` vars, `SEED_*` passwords, `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL`, etc.
 5. **Install configs + systemd units** — copy the nginx config (substitute the tailnet IP for the `TAILSCALE_IP` token), link `ops/nginx/lanka-proxy.conf` as a snippet, reload nginx; install `ops/cloudflared/config.yml` (substitute the tunnel UUID) and run `cloudflared service install`; copy `ops/lanka.service`, `ops/lanka-backup.{service,timer}` and `systemctl daemon-reload`.
 6. **Build + start** — `docker compose up -d --build` (bakes `MEDIA_PUBLIC_BASE` into the SPA bundle); start nginx and cloudflared. Grab seeded passwords from `docker logs lanka` if `SEED_*` were left blank.
 
@@ -220,6 +261,19 @@ Drop an executable at `/opt/lanka/backups/offsite.sh`. `backup.sh` invokes it at
 ### Health
 
 - `GET /api/healthz` returns 200 when SQLite responds to `SELECT 1` and `MEDIA_DIR` is writable. The Docker `HEALTHCHECK` polls it every 30s; `docker ps` shows the container as healthy/unhealthy. `restart: unless-stopped` recovers from crashes.
+
+### Email (password reset)
+
+Password-reset emails are sent via the [Resend](https://resend.com) HTTP API when `RESEND_API_KEY` is set. When `RESEND_API_KEY` is absent or empty, the app falls back to `LogMailer`, which prints the reset link to the server log — useful for local dev and for inspecting the link without configuring a mailer.
+
+Required env vars for production email:
+- `RESEND_API_KEY` — API key from the Resend dashboard.
+- `MAIL_FROM` — sender address, e.g. `Lanka <no-reply@lanka.live>`. The domain (`lanka.live`) must be verified in Resend (add Resend SPF/DKIM DNS records on the domain).
+- `APP_BASE_URL` — absolute base URL of the app, e.g. `https://app.lanka.live`. This is required so that emailed reset links are absolute URLs that open the correct host.
+
+Set these (plus the `R2_*` vars) as plain names in `/opt/lanka/.env`. The container build bakes `runtimeConfig` defaults at build time and excludes `.env`, so the entrypoint (`scripts/entrypoint.sh`) bridges these plain names to the `NUXT_*` runtime overrides Nitro actually reads (e.g. `APP_BASE_URL` → `NUXT_MAIL_BASE_URL`). Without that bridge they would never reach the running server. If you bypass the entrypoint, set the `NUXT_*` names directly.
+
+The nginx public block should rate-limit `POST /api/auth/forgot-password` the same way it rate-limits `POST /api/auth/login`, to prevent abuse.
 
 ### Backups
 

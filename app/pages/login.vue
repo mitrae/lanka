@@ -1,7 +1,7 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
 const auth = useAuthStore()
-const username = ref('')
+const email = ref('')
 const password = ref('')
 const error = ref<string | null>(null)
 const loading = ref(false)
@@ -10,10 +10,10 @@ async function submit() {
   error.value = null
   loading.value = true
   try {
-    const user = await auth.login(username.value, password.value)
+    const user = await auth.login(email.value, password.value)
     await navigateTo(user.role === 'client' ? '/portal' : '/')
   } catch {
-    error.value = 'Invalid username or password'
+    error.value = 'Invalid email or password'
   } finally {
     loading.value = false
   }
@@ -84,14 +84,15 @@ async function submit() {
         </p>
 
         <form class="mt-8 space-y-4" @submit.prevent="submit">
-          <UFormField label="Username">
+          <UFormField label="Email">
             <UInput
-              v-model="username"
-              name="username"
+              v-model="email"
+              name="email"
+              type="email"
               autocomplete="username"
               size="lg"
-              icon="i-lucide-user"
-              placeholder="you@team"
+              icon="i-lucide-mail"
+              placeholder="you@company.com"
               class="w-full"
             />
           </UFormField>
@@ -107,6 +108,10 @@ async function submit() {
               class="w-full"
             />
           </UFormField>
+
+          <div class="flex justify-end">
+            <NuxtLink to="/forgot-password" class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">Forgot password?</NuxtLink>
+          </div>
 
           <div
             v-if="error"

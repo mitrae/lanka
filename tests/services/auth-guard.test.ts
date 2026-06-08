@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { isPublicRoute, decideAccess, requireRole } from '~/server/services/auth-guard'
 import type { SessionUser } from '~/server/services/sessions'
 
-const admin: SessionUser = { id: 1, username: 'a', role: 'admin', organizationId: null }
-const client: SessionUser = { id: 2, username: 'c', role: 'client', organizationId: 9 }
+const admin: SessionUser = { id: 1, email: 'a', role: 'admin', organizationId: null }
+const client: SessionUser = { id: 2, email: 'c', role: 'client', organizationId: 9 }
 
 describe('isPublicRoute — device endpoints must stay open', () => {
   const open = [
@@ -25,6 +25,10 @@ describe('isPublicRoute — device endpoints must stay open', () => {
     '/api/dashboard/stream'
   ]
   it.each(closed)('treats %s as protected', (p) => expect(isPublicRoute(p)).toBe(false))
+  it('keeps the password-reset endpoints public', () => {
+    expect(isPublicRoute('/api/auth/forgot-password')).toBe(true)
+    expect(isPublicRoute('/api/auth/reset-password')).toBe(true)
+  })
 })
 
 describe('decideAccess', () => {
@@ -47,6 +51,11 @@ describe('decideAccess', () => {
   it('allows client on the portal tier, 403s admin', () => {
     expect(decideAccess('/api/portal/stats', client)).toEqual({ ok: true })
     expect(decideAccess('/api/portal/stats', admin)).toEqual({ ok: false, status: 403 })
+  })
+  it('restricts /api/users to admin/super and 403s clients', () => {
+    expect(decideAccess('/api/users', admin)).toEqual({ ok: true })
+    expect(decideAccess('/api/users', client)).toEqual({ ok: false, status: 403 })
+    expect(decideAccess('/api/users', null)).toEqual({ ok: false, status: 401 })
   })
 })
 

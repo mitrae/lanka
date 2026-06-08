@@ -3,7 +3,7 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useAuthStore } from '~/app/stores/auth'
 import type { SessionUser } from '~/app/types/api'
 
-const admin: SessionUser = { id: 1, username: 'admin', role: 'admin', organizationId: null }
+const admin: SessionUser = { id: 1, email: 'admin', role: 'admin', organizationId: null }
 
 describe('auth store', () => {
   beforeEach(() => setActivePinia(createPinia()))
