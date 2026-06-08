@@ -71,7 +71,7 @@ describe('user management API', () => {
     expect(superView.find((u) => u.role === 'client')?.organizationName).toBe(org.name)
   })
 
-  it('delete: blocks self, super targets, admin→admin, and allows super→client', async () => {
+  it('delete: blocks self, super targets, admin→admin, and allows super→client + super→admin', async () => {
     const org = await seedOrganization(db)
     const adminRow = await seedUser(db, { email: 'me@example.com', role: 'admin' })
     const superRow = await seedUser(db, { email: 'boss@example.com', role: 'super' })
@@ -89,6 +89,10 @@ describe('user management API', () => {
     await handleDeleteUser(db, asSuper(), clientRow.id)
     const remaining = await db.query.users.findMany({ where: (u, { eq }) => eq(u.id, clientRow.id) })
     expect(remaining).toHaveLength(0)
+    // allowed: super deletes an admin
+    await handleDeleteUser(db, asSuper(), otherAdmin.id)
+    const adminGone = await db.query.users.findMany({ where: (u, { eq }) => eq(u.id, otherAdmin.id) })
+    expect(adminGone).toHaveLength(0)
   })
 
   it('delete: 404 for a missing user', async () => {
