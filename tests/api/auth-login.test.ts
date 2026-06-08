@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { seedUser } from '../helpers/fixtures'
 import { hashPassword } from '~/server/services/password'
-import { authenticateUser } from '~/server/api/auth/login.post'
-import { getSessionUser } from '~/server/services/sessions'
+import { authenticateUser, sessionCookieOptions } from '~/server/api/auth/login.post'
+import { getSessionUser, SESSION_TTL_MS } from '~/server/services/sessions'
 
 describe('authenticateUser', () => {
   let db: TestDb
@@ -26,5 +26,21 @@ describe('authenticateUser', () => {
 
   it('returns null for an unknown user', async () => {
     expect(await authenticateUser(db, { username: 'ghost', password: 'x' })).toBeNull()
+  })
+})
+
+describe('sessionCookieOptions', () => {
+  it('marks the cookie Secure when asked (public HTTPS prod)', () => {
+    expect(sessionCookieOptions(true)).toEqual({
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: SESSION_TTL_MS / 1000,
+      secure: true
+    })
+  })
+
+  it('leaves the cookie insecure for plain-http dev/tailnet', () => {
+    expect(sessionCookieOptions(false).secure).toBe(false)
   })
 })
