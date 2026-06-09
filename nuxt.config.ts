@@ -59,7 +59,14 @@ export default defineNuxtConfig({
       // Public CDN base for media (e.g. https://media.lanka.live). Baked at
       // build time via the Dockerfile ARG because this is an SPA (ssr:false).
       // Empty in dev → the player falls back to the relative /media/<sha> path.
-      mediaPublicBase: process.env.MEDIA_PUBLIC_BASE ?? ''
+      mediaPublicBase: process.env.MEDIA_PUBLIC_BASE ?? '',
+      // Google OAuth public Client ID for "Sign in with Google". Public by
+      // design (not a secret). Plain GOOGLE_CLIENT_ID name — mirrors
+      // MEDIA_PUBLIC_BASE: read here at build time and baked into the SPA via
+      // the Dockerfile ARG. NOT NUXT_PUBLIC_* — SPA public values are frozen at
+      // build time, so a runtime override can't reach the client bundle.
+      // Empty ⇒ the Google button is hidden; password login is unaffected.
+      googleClientId: process.env.GOOGLE_CLIENT_ID ?? ''
     }
   },
   nitro: {

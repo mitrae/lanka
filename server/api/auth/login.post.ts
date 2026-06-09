@@ -22,7 +22,7 @@ export async function authenticateUser(
   rawBody: unknown
 ): Promise<{ user: SessionUser; token: string } | null> {
   const body = BodySchema.parse(rawBody)
-  const [u] = await db.select().from(schema.users).where(eq(schema.users.email, body.email))
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.email, body.email.toLowerCase()))
   if (!u) return null
   if (!(await verifyPassword(body.password, u.passwordHash))) return null
   const token = await createSession(db, u.id)

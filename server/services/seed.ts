@@ -29,28 +29,31 @@ export async function seedInitialUsers(
 
   const creds: SeedCredential[] = []
 
+  const superEmail = (env.superEmail ?? 'super@lanka.live').toLowerCase()
   const su = resolvePassword(env.super)
   await db.insert(schema.users).values({
-    email: env.superEmail ?? 'super@lanka.live', role: 'super', passwordHash: await hashPassword(su.password), organizationId: null
+    email: superEmail, role: 'super', passwordHash: await hashPassword(su.password), organizationId: null
   })
-  creds.push({ email: env.superEmail ?? 'super@lanka.live', role: 'super', ...su })
+  creds.push({ email: superEmail, role: 'super', ...su })
 
+  const adminEmail = (env.adminEmail ?? 'admin@lanka.live').toLowerCase()
   const ad = resolvePassword(env.admin)
   await db.insert(schema.users).values({
-    email: env.adminEmail ?? 'admin@lanka.live', role: 'admin', passwordHash: await hashPassword(ad.password), organizationId: null
+    email: adminEmail, role: 'admin', passwordHash: await hashPassword(ad.password), organizationId: null
   })
-  creds.push({ email: env.adminEmail ?? 'admin@lanka.live', role: 'admin', ...ad })
+  creds.push({ email: adminEmail, role: 'admin', ...ad })
 
   const [org] = await db
     .insert(schema.organizations)
     .values({ name: 'Demo Organization' })
     .returning()
 
+  const clientEmail = (env.clientEmail ?? 'client@lanka.live').toLowerCase()
   const cl = resolvePassword(env.client)
   await db.insert(schema.users).values({
-    email: env.clientEmail ?? 'client@lanka.live', role: 'client', passwordHash: await hashPassword(cl.password), organizationId: org.id
+    email: clientEmail, role: 'client', passwordHash: await hashPassword(cl.password), organizationId: org.id
   })
-  creds.push({ email: env.clientEmail ?? 'client@lanka.live', role: 'client', ...cl })
+  creds.push({ email: clientEmail, role: 'client', ...cl })
 
   // Give the demo client something to see: adopt all currently-unowned media.
   await db

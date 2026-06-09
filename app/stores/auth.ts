@@ -5,7 +5,7 @@ import type { Role, SessionUser } from '~/app/types/api'
 interface State {
   user: SessionUser | null
   ready: boolean
-  _api: Pick<ApiClient, 'login' | 'logout' | 'me'>
+  _api: Pick<ApiClient, 'login' | 'loginWithGoogle' | 'logout' | 'me'>
 }
 
 export const useAuthStore = defineStore('auth', {
@@ -27,6 +27,12 @@ export const useAuthStore = defineStore('auth', {
     },
     async login(email: string, password: string): Promise<SessionUser> {
       const { user } = await this._api.login({ email, password })
+      this.user = user
+      this.ready = true
+      return user
+    },
+    async loginWithGoogle(credential: string): Promise<SessionUser> {
+      const { user } = await this._api.loginWithGoogle({ credential })
       this.user = user
       this.ready = true
       return user

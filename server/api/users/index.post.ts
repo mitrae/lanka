@@ -44,7 +44,7 @@ export async function handleCreateUser(
     const [row] = await db
       .insert(schema.users)
       .values({
-        email: body.email,
+        email: body.email.toLowerCase(),
         role: body.role,
         passwordHash,
         organizationId: body.role === 'client' ? body.organizationId! : null

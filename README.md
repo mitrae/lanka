@@ -169,6 +169,7 @@ Android WebView kiosk (Plan 5) or a desktop browser for QA.
 | `PORT` | 3000 | HTTP listen port |
 | `SESSION_COOKIE_SECURE` | unset | Set to `true` in production (HTTPS only) |
 | `MEDIA_PUBLIC_BASE` | unset | Public CDN base URL for media (e.g. `https://media.lanka.live`). Baked into SPA at build time. |
+| `GOOGLE_CLIENT_ID` | unset | Public Google OAuth Client ID for "Sign in with Google". Baked into the SPA at build time (like `MEDIA_PUBLIC_BASE`). Empty → Google button hidden. No client secret is used. |
 | `R2_ENDPOINT` | unset | R2-compatible endpoint URL |
 | `R2_BUCKET` | unset | R2 bucket name |
 | `R2_ACCESS_KEY_ID` | unset | R2 access key |
@@ -212,7 +213,7 @@ For the exact step-by-step commands and expected output, follow the **operator r
 1. **Provision + packages + Tailscale + firewall** — install nginx, Docker, cloudflared; join tailnet; lock firewall to SSH-only inbound.
 2. **Cloudflare zone** — move `lanka.live` DNS from GoDaddy to Cloudflare (change nameservers); activate the zone.
 3. **Tunnel + R2** — create a named Cloudflare Tunnel (`lanka`) and add the `app.lanka.live` DNS route; create the R2 bucket `lanka-media`, attach the `media.lanka.live` custom domain, and generate an R2 API token.
-4. **Write `/opt/lanka/.env`** — set `HOST=127.0.0.1`, `SESSION_COOKIE_SECURE=true`, `MEDIA_PUBLIC_BASE=https://media.lanka.live`, the four `R2_*` vars, `SEED_*` passwords, `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL`, etc.
+4. **Write `/opt/lanka/.env`** — set `HOST=127.0.0.1`, `SESSION_COOKIE_SECURE=true`, `MEDIA_PUBLIC_BASE=https://media.lanka.live`, `GOOGLE_CLIENT_ID` (consumed at `docker compose up --build` time, like `MEDIA_PUBLIC_BASE`), the four `R2_*` vars, `SEED_*` passwords, `RESEND_API_KEY`, `MAIL_FROM`, `APP_BASE_URL`, etc.
 5. **Install configs + systemd units** — copy the nginx config (substitute the tailnet IP for the `TAILSCALE_IP` token), link `ops/nginx/lanka-proxy.conf` as a snippet, reload nginx; install `ops/cloudflared/config.yml` (substitute the tunnel UUID) and run `cloudflared service install`; copy `ops/lanka.service`, `ops/lanka-backup.{service,timer}` and `systemctl daemon-reload`.
 6. **Build + start** — `docker compose up -d --build` (bakes `MEDIA_PUBLIC_BASE` into the SPA bundle); start nginx and cloudflared. Grab seeded passwords from `docker logs lanka` if `SEED_*` were left blank.
 

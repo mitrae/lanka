@@ -10,6 +10,8 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 ARG MEDIA_PUBLIC_BASE=""
 ENV MEDIA_PUBLIC_BASE=$MEDIA_PUBLIC_BASE
+ARG GOOGLE_CLIENT_ID=""
+ENV GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 RUN pnpm build
 
 # ---- runtime ----

@@ -4,6 +4,7 @@ services:
       context: .
       args:
         MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-}
+        GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     container_name: lanka
     restart: unless-stopped
     network_mode: host
