@@ -14,7 +14,7 @@ export async function handleForgotPassword(
   deps: { mailer: MailSender; baseUrl: string }
 ): Promise<{ ok: true }> {
   const body = BodySchema.parse(rawBody)
-  const [u] = await db.select().from(schema.users).where(eq(schema.users.email, body.email))
+  const [u] = await db.select().from(schema.users).where(eq(schema.users.email, body.email.toLowerCase()))
   if (u) {
     const token = await createResetToken(db, u.id)
     const resetUrl = `${deps.baseUrl}/reset-password?token=${token}`

@@ -27,6 +27,13 @@ describe('authenticateUser', () => {
   it('returns null for an unknown user', async () => {
     expect(await authenticateUser(db, { email: 'ghost', password: 'x' })).toBeNull()
   })
+
+  it('matches case-insensitively (stored lowercase, typed mixed-case)', async () => {
+    await seedUser(db, { email: 'jane@acme.com', role: 'admin', passwordHash: await hashPassword('pw') })
+    const result = await authenticateUser(db, { email: 'Jane@Acme.COM', password: 'pw' })
+    expect(result).not.toBeNull()
+    expect(result!.user.email).toBe('jane@acme.com')
+  })
 })
 
 describe('sessionCookieOptions', () => {

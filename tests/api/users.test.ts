@@ -60,6 +60,11 @@ describe('user management API', () => {
       .rejects.toMatchObject({ statusCode: 400 })
   })
 
+  it('stores the email lowercased', async () => {
+    const result = await handleCreateUser(db, asSuper(), { email: 'Mixed.Case@Example.COM', role: 'admin' })
+    expect(result.user.email).toBe('mixed.case@example.com')
+  })
+
   it('admin sees only clients; super sees everyone', async () => {
     const org = await seedOrganization(db)
     await seedUser(db, { email: 'admin1@example.com', role: 'admin' })
