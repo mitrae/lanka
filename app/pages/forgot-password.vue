@@ -33,9 +33,11 @@ async function submit() {
       </template>
       <template v-else>
         <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.checkInboxTitle') }}</h1>
-        <p class="mt-2 text-sm text-(--ui-text-muted)">
-          {{ $t('auth.forgotSentPre') }} <span class="font-medium text-(--ui-text)">{{ email }}</span>{{ $t('auth.forgotSentPost') }}
-        </p>
+        <i18n-t keypath="auth.forgotSent" tag="p" class="mt-2 text-sm text-(--ui-text-muted)">
+          <template #email>
+            <span class="font-medium text-(--ui-text)">{{ email }}</span>
+          </template>
+        </i18n-t>
       </template>
       <NuxtLink to="/login" class="mt-8 inline-block text-sm text-indigo-600 hover:underline dark:text-indigo-400">{{ $t('auth.backToSignIn') }}</NuxtLink>
     </div>
