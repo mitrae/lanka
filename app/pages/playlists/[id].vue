@@ -8,6 +8,7 @@ import type { MediaListRow, PlaylistDetail } from '~/app/types/api'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const api = useApiClient()
@@ -35,7 +36,7 @@ async function load() {
     }))
   } catch (err: any) {
     toast.add({
-      title: 'Load failed',
+      title: t('playlists.loadFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -84,8 +85,8 @@ async function saveItems() {
     const m = mediaFor(d.mediaId)
     if (m?.kind === 'image' && !d.durationMsOverride) {
       toast.add({
-        title: 'Fix durations',
-        description: `Image "${m.filename}" needs a duration.`,
+        title: t('playlists.fixDurations'),
+        description: t('playlists.imageMissingDuration', { name: m.filename }),
         color: 'error'
       })
       return
@@ -100,10 +101,10 @@ async function saveItems() {
       }))
     })
     await load()
-    toast.add({ title: 'Saved', color: 'success' })
+    toast.add({ title: t('playlists.saved'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Save failed',
+      title: t('playlists.saveFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -118,10 +119,10 @@ async function saveName() {
     await playlistsStore.update(playlist.value.id, { name: editName.value.trim() })
     playlist.value = await api.getPlaylist(id.value)
     editingName.value = false
-    toast.add({ title: 'Renamed', color: 'success' })
+    toast.add({ title: t('playlists.renamed'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Rename failed',
+      title: t('playlists.renameFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -131,9 +132,9 @@ async function saveName() {
 async function deletePlaylist() {
   if (!playlist.value) return
   const ok = await confirm({
-    title: `Delete ${playlist.value.name}?`,
-    description: 'Removes this playlist and all its items. Assignments to this playlist will also be removed.',
-    confirmLabel: 'Delete',
+    title: t('playlists.deleteConfirmTitle', { name: playlist.value.name }),
+    description: t('playlists.deleteConfirmDescription'),
+    confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
@@ -142,7 +143,7 @@ async function deletePlaylist() {
     router.push('/playlists')
   } catch (err: any) {
     toast.add({
-      title: 'Delete failed',
+      title: t('playlists.deleteFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -156,7 +157,7 @@ async function deletePlaylist() {
       to="/playlists"
       class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
     >
-      <UIcon name="i-lucide-arrow-left" class="size-4" /> Playlists
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> {{ $t('nav.playlists') }}
     </NuxtLink>
 
     <div v-if="!playlist">
@@ -167,7 +168,7 @@ async function deletePlaylist() {
         <div class="flex items-start justify-between">
           <div>
             <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-              Playlist · <span class="font-mono">v{{ playlist.version }}</span>
+              {{ $t('playlists.playlistLabel') }} · <span class="font-mono">{{ $t('playlists.version', { n: playlist.version }) }}</span>
             </p>
             <template v-if="!editingName">
               <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ playlist.name }}</h2>
@@ -184,7 +185,7 @@ async function deletePlaylist() {
           <div class="flex gap-2">
             <template v-if="!editingName">
               <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editingName = true">
-                Rename
+                {{ $t('playlists.rename') }}
               </UButton>
               <UButton
                 variant="soft"
@@ -192,17 +193,17 @@ async function deletePlaylist() {
                 icon="i-lucide-trash-2"
                 @click="deletePlaylist"
               >
-                Delete
+                {{ $t('common.delete') }}
               </UButton>
             </template>
             <template v-else>
-              <UButton color="primary" @click="saveName">Save name</UButton>
+              <UButton color="primary" @click="saveName">{{ $t('playlists.saveName') }}</UButton>
               <UButton
                 variant="ghost"
                 color="neutral"
                 @click="editingName = false; editName = playlist!.name"
               >
-                Cancel
+                {{ $t('common.cancel') }}
               </UButton>
             </template>
           </div>
@@ -211,9 +212,9 @@ async function deletePlaylist() {
 
       <div class="mt-8 grid grid-cols-[1fr_2fr] gap-6">
         <section class="soft-card p-4">
-          <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Media library</h3>
+          <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('playlists.mediaLibrary') }}</h3>
           <p class="mt-1 text-xs text-(--ui-text-muted)">
-            Click a tile to append it to the playlist.
+            {{ $t('playlists.mediaLibraryHint') }}
           </p>
           <div class="mt-3">
             <MediaPicker @pick="addItem" />
@@ -223,7 +224,7 @@ async function deletePlaylist() {
         <section class="soft-card p-4">
           <div class="flex items-center justify-between">
             <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">
-              Items <span class="font-normal text-(--ui-text-muted)">({{ drafts.length }})</span>
+              {{ $t('playlists.itemsHeading') }} <span class="font-normal text-(--ui-text-muted)">({{ drafts.length }})</span>
             </h3>
             <UButton
               color="primary"
@@ -231,7 +232,7 @@ async function deletePlaylist() {
               :loading="saving"
               @click="saveItems"
             >
-              Save changes
+              {{ $t('playlists.saveChanges') }}
             </UButton>
           </div>
 
@@ -239,8 +240,8 @@ async function deletePlaylist() {
             v-if="drafts.length === 0"
             class="mt-4"
             icon="i-lucide-list-music"
-            title="Empty playlist"
-            description="Pick media from the left panel to add items."
+            :title="$t('playlists.emptyPlaylistTitle')"
+            :description="$t('playlists.emptyPlaylistDescription')"
           />
           <ul v-else class="mt-4 space-y-2">
             <PlaylistItemRow
