@@ -31,6 +31,15 @@ function canDelete(u: { id: number; role: string }) {
   return u.id !== auth.user?.id && u.role !== 'super'
 }
 
+function roleLabel(role: string) {
+  const map: Record<string, string> = {
+    super: t('users.roleSuper'),
+    admin: t('users.roleAdmin'),
+    client: t('users.roleClient')
+  }
+  return map[role] ?? role
+}
+
 async function add() {
   if (!email.value.trim()) return
   if (role.value === 'client' && organizationId.value == null) {
@@ -114,7 +123,7 @@ async function copyPassword() {
         <div class="min-w-0 flex-1">
           <p class="truncate font-medium text-(--ui-text-highlighted)">{{ u.email }}</p>
           <p class="text-xs text-(--ui-text-muted)">
-            <span class="capitalize">{{ u.role }}</span>
+            <span>{{ roleLabel(u.role) }}</span>
             <span v-if="u.organizationName"> · {{ u.organizationName }}</span>
           </p>
         </div>

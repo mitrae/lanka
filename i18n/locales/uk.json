@@ -228,6 +228,7 @@
     "emailLabel": "Електронна пошта",
     "roleLabel": "Роль",
     "organizationLabel": "Організація",
+    "roleSuper": "Суперкористувач",
     "roleAdmin": "Адміністратор",
     "roleClient": "Клієнт",
     "pickOrgForClient": "Оберіть організацію для клієнта",

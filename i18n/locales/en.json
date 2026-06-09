@@ -228,6 +228,7 @@
     "emailLabel": "Email",
     "roleLabel": "Role",
     "organizationLabel": "Organization",
+    "roleSuper": "Super",
     "roleAdmin": "Admin",
     "roleClient": "Client",
     "pickOrgForClient": "Pick an organization for the client",
