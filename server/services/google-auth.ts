@@ -10,6 +10,11 @@ export type GoogleIdentity = {
   emailVerified: boolean
 }
 
+export type VerifyIdTokenFn = (
+  idToken: string,
+  clientId: string
+) => Promise<GoogleIdentity | null>
+
 /**
  * Verify a Google ID token. Returns the identity on success, or `null` for ANY
  * verification failure (bad signature, wrong audience, wrong issuer, expired,
@@ -25,7 +30,7 @@ export async function verifyGoogleIdToken(
   if (!idToken || !clientId) return null
   try {
     const { OAuth2Client } = await import('google-auth-library')
-    const client = new OAuth2Client(clientId)
+    const client = new OAuth2Client({ clientId })
     const ticket = await client.verifyIdToken({ idToken, audience: clientId })
     const payload = ticket.getPayload()
     if (!payload || !payload.email) return null

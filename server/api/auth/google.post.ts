@@ -4,17 +4,12 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { createSession, SESSION_COOKIE, type Role, type SessionUser } from '~/server/services/sessions'
-import { verifyGoogleIdToken, type GoogleIdentity } from '~/server/services/google-auth'
+import { verifyGoogleIdToken, type VerifyIdTokenFn } from '~/server/services/google-auth'
 import { sessionCookieOptions } from '~/server/api/auth/login.post'
 
 const BodySchema = z.object({
   credential: z.string().min(1).max(8192)
 })
-
-export type VerifyIdTokenFn = (
-  idToken: string,
-  clientId: string
-) => Promise<GoogleIdentity | null>
 
 /**
  * Verify a Google ID token and, if it maps to an EXISTING user, mint a session.
@@ -47,7 +42,7 @@ export async function handleGoogleLogin(
 export default defineEventHandler(async (event) => {
   const body = await readBody(event)
   const config = useRuntimeConfig()
-  const clientId = (config.public.googleClientId as string) || ''
+  const clientId = config.public.googleClientId
   let result: { user: SessionUser; token: string } | null
   try {
     result = await handleGoogleLogin(useDb(), body, {
