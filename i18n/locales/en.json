@@ -32,6 +32,18 @@
     "switchToDark": "Switch to dark mode",
     "switchToLight": "Switch to light mode"
   },
+  "components": {
+    "statusDot": {
+      "online": "Online",
+      "idle": "Idle",
+      "offline": "Offline"
+    },
+    "errorFeed": {
+      "title": "Recent playback errors",
+      "pendingTitle": "Error feed pending",
+      "pendingDescription": "The /api/device-errors endpoint hasn't been added yet. Coming in a follow-up plan."
+    }
+  },
   "auth": {
     "signIn": "Sign in",
     "signInSubtitle": "Welcome back. Enter your credentials to reach the console.",

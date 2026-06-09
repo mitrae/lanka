@@ -32,6 +32,18 @@
     "switchToDark": "Перейти в темний режим",
     "switchToLight": "Перейти в світлий режим"
   },
+  "components": {
+    "statusDot": {
+      "online": "Онлайн",
+      "idle": "Очікування",
+      "offline": "Офлайн"
+    },
+    "errorFeed": {
+      "title": "Останні помилки відтворення",
+      "pendingTitle": "Стрічка помилок у розробці",
+      "pendingDescription": "Ендпоінт /api/device-errors ще не додано. З'явиться в наступному плані."
+    }
+  },
   "auth": {
     "signIn": "Увійти",
     "signInSubtitle": "З поверненням. Введіть свої дані, щоб увійти до консолі.",
