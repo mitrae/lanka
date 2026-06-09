@@ -6,6 +6,8 @@ import { useGroupsStore } from '~/app/stores/groups'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
+
 const devicesStore = useDevicesStore()
 const addressesStore = useAddressesStore()
 const groupsStore = useGroupsStore()
@@ -45,7 +47,7 @@ const visible = computed(() => {
 })
 
 function groupName(gid: number | null) {
-  if (gid === null) return 'Unclaimed'
+  if (gid === null) return t('devices.unclaimed')
   return groupsStore.list.find((g) => g.id === gid)?.name ?? `#${gid}`
 }
 
@@ -57,20 +59,20 @@ function addressForGroup(gid: number | null) {
 }
 
 function fmtAge(iso: string | null) {
-  if (!iso) return 'never'
+  if (!iso) return t('devices.never')
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60) return `${s}s ago`
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return `${Math.floor(s / 86400)}d ago`
+  if (s < 60) return t('devices.agoSeconds', { n: s })
+  if (s < 3600) return t('devices.agoMinutes', { n: Math.floor(s / 60) })
+  if (s < 86400) return t('devices.agoHours', { n: Math.floor(s / 3600) })
+  return t('devices.agoDays', { n: Math.floor(s / 86400) })
 }
 </script>
 
 <template>
   <div class="reveal">
     <PageHeader
-      title="Devices"
-      subtitle="Every screen across your network, with live status."
+      :title="$t('devices.pageTitle')"
+      :subtitle="$t('devices.pageSubtitle')"
       icon="i-lucide-tv"
     />
 
@@ -78,31 +80,31 @@ function fmtAge(iso: string | null) {
       <USelectMenu
         v-model="addressFilter"
         :items="[
-          { label: 'All addresses', value: null },
+          { label: $t('devices.allAddresses'), value: null },
           ...addressesStore.list.map((a) => ({ label: a.name, value: a.id }))
         ]"
         value-key="value"
-        placeholder="Address"
+        :placeholder="$t('devices.addressPlaceholder')"
         class="w-48"
       />
       <USelectMenu
         v-model="groupFilter"
         :items="[
-          { label: 'All groups', value: null },
+          { label: $t('devices.allGroups'), value: null },
           ...groupsStore.list.map((g) => ({ label: g.name, value: g.id }))
         ]"
         value-key="value"
-        placeholder="Group"
+        :placeholder="$t('devices.groupPlaceholder')"
         class="w-48"
       />
       <USelectMenu
         v-model="statusFilter"
         :items="[
-          { label: 'Any status', value: 'all' },
-          { label: 'Online', value: 'online' },
-          { label: 'Idle', value: 'idle' },
-          { label: 'Offline', value: 'offline' },
-          { label: 'Unclaimed', value: 'unclaimed' }
+          { label: $t('devices.anyStatus'), value: 'all' },
+          { label: $t('devices.statusOnline'), value: 'online' },
+          { label: $t('devices.statusIdle'), value: 'idle' },
+          { label: $t('devices.statusOffline'), value: 'offline' },
+          { label: $t('devices.statusUnclaimed'), value: 'unclaimed' }
         ]"
         value-key="value"
         class="w-40"
@@ -113,11 +115,11 @@ function fmtAge(iso: string | null) {
       <table class="w-full text-sm">
         <thead class="border-b border-(--ui-border) text-xs uppercase tracking-wide text-(--ui-text-muted)">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">Status</th>
-            <th class="px-4 py-3 text-left font-medium">Name</th>
-            <th class="px-4 py-3 text-left font-medium">Location</th>
-            <th class="px-4 py-3 text-left font-medium">Last seen</th>
-            <th class="px-4 py-3 text-left font-medium">Device ID</th>
+            <th class="px-4 py-3 text-left font-medium">{{ $t('devices.colStatus') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ $t('devices.colName') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ $t('devices.colLocation') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ $t('devices.colLastSeen') }}</th>
+            <th class="px-4 py-3 text-left font-medium">{{ $t('devices.colDeviceId') }}</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-(--ui-border)">
@@ -131,7 +133,7 @@ function fmtAge(iso: string | null) {
               <StatusDot :status="d.status" label />
             </td>
             <td class="px-4 py-3 font-medium text-(--ui-text-highlighted)">
-              {{ d.name ?? '(unnamed)' }}
+              {{ d.name ?? $t('devices.unnamed') }}
             </td>
             <td class="px-4 py-3 text-(--ui-text-muted)">
               {{ groupName(d.groupId) }}
@@ -151,8 +153,8 @@ function fmtAge(iso: string | null) {
       <div v-if="visible.length === 0" class="p-8">
         <EmptyState
           icon="i-lucide-tv"
-          title="No devices match"
-          description="Adjust filters, or wait for devices to self-register."
+          :title="$t('devices.emptyTitle')"
+          :description="$t('devices.emptyDescription')"
         />
       </div>
     </div>
