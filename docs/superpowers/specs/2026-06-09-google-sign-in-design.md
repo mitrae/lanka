@@ -21,7 +21,7 @@ Let existing Lanka users log into the dashboard by clicking "Sign in with Google
 
 1. **Account model:** match existing users only. Google authenticates a pre-provisioned account matched by email; it never creates one.
 2. **Flow:** Google Identity Services (GIS) ID-token. The browser obtains a signed ID-token (JWT) from Google and POSTs it to our server; the server verifies it and mints the normal session.
-3. **Credential:** public **Client ID** only (`NUXT_PUBLIC_GOOGLE_CLIENT_ID`). **No client secret** is used or stored — the redirect flow that needs one was not chosen.
+3. **Credential:** public **Client ID** only (`GOOGLE_CLIENT_ID`). **No client secret** is used or stored — the redirect flow that needs one was not chosen.
 4. **Identity matching:** by **verified email** (`email_verified === true` in the token). No schema change.
 5. **Coexistence:** password login stays exactly as-is; Google is an added button. If no Client ID is configured, the button does not render and password login is unaffected.
 6. **Roles:** applies to whoever already has an account — `super`, `admin`, and `client` alike. The resulting session is identical regardless of how the user authenticated, so all downstream role/org routing (`/` vs `/portal`) is unchanged.
@@ -46,13 +46,13 @@ Add to `runtimeConfig.public` in `nuxt.config.ts`:
 ```ts
 public: {
   mediaPublicBase: process.env.MEDIA_PUBLIC_BASE ?? '',
-  googleClientId: process.env.NUXT_PUBLIC_GOOGLE_CLIENT_ID ?? ''
+  googleClientId: process.env.GOOGLE_CLIENT_ID ?? ''
 }
 ```
 
 - Public (client-readable) by design — the Client ID is not a secret.
-- Because this is an SPA (`ssr: false`), the value is **baked at build time**. For production it must be present at `pnpm build` (Docker build ARG / build env), mirroring how `MEDIA_PUBLIC_BASE` is handled. Document this in the README deployment notes.
-- Dev: set `NUXT_PUBLIC_GOOGLE_CLIENT_ID` in `.env` (gitignored).
+- Because this is an SPA (`ssr: false`), the value is **baked at build time**. It uses the **plain** `GOOGLE_CLIENT_ID` env name (not `NUXT_PUBLIC_*`) to mirror `MEDIA_PUBLIC_BASE` exactly: read via `process.env` in `nuxt.config.ts`, and for production passed as a Docker build ARG → ENV so it's present during `pnpm build`. The `NUXT_PUBLIC_*` runtime-override convention is intentionally avoided — SPA public values are frozen at build time, so a runtime override can't reach the client bundle and would only desync client vs. server (see the `runtime-config-env-gotcha` note).
+- Dev: set `GOOGLE_CLIENT_ID` in `.env` (gitignored); Nuxt auto-loads `.env` for `nuxt dev`/`nuxt build`.
 - Empty value ⇒ button hidden ⇒ no behavior change.
 
 ## 3. Backend — `POST /api/auth/google`
@@ -130,11 +130,12 @@ Add any new Nitro auto-imports used by the handler to `tests/helpers/nuxt-stubs.
 | `app/stores/auth.ts` | `loginWithGoogle` action + `_api` type |
 | `app/composables/useApiClient.ts` | `loginWithGoogle` method |
 | `tests/**` | new service/endpoint tests; stub updates |
-| `.env.example` / README | document `NUXT_PUBLIC_GOOGLE_CLIENT_ID` + build-time bake + Google Cloud setup |
+| `.env.example` / README | document `GOOGLE_CLIENT_ID` + build-time bake + Google Cloud setup |
+| `Dockerfile`, `docker-compose.yml` | add `GOOGLE_CLIENT_ID` build ARG → ENV (mirror `MEDIA_PUBLIC_BASE`) |
 
 ## 9. Risks & mitigations
 
-- **SPA build-time bake:** a prod build without `NUXT_PUBLIC_GOOGLE_CLIENT_ID` ships a hidden button (silent). Mitigation: README note + the button-hidden fallback is intentional and safe (password login still works).
+- **SPA build-time bake:** a prod build without `GOOGLE_CLIENT_ID` (build ARG) ships a hidden button (silent). Mitigation: README note + the button-hidden fallback is intentional and safe (password login still works).
 - **Origin mismatch:** GIS refuses to render if the page origin isn't an Authorized JS origin. Mitigation: documented dev (`localhost:5100`) + prod (`app.lanka.live`) origins in §1.
 - **Email-based matching drift:** if a user's Google email differs from their Lanka email, they can't use Google (by design — they fall back to password). Future `google_sub` linking is the escalation path if this becomes painful.
 - **Audience confusion:** server verify audience must equal the frontend Client ID. Mitigation: both read the same `googleClientId` config key.
