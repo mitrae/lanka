@@ -156,6 +156,26 @@
     "noGroupsTitle": "No groups yet",
     "noGroupsDescription": "Groups subdivide an address. A clinic might have 'Lobby' and 'Cafeteria' groups."
   },
+  "groups": {
+    "pageTitle": "Groups",
+    "pageSubtitle": "Zones inside an address — a clinic's Lobby and Cafeteria, say.",
+    "allAddresses": "All addresses",
+    "filterByAddress": "Filter by address",
+    "emptyTitle": "No groups match",
+    "emptyDescription": "Create groups from an address detail page.",
+    "inAddress": "in {name}",
+    "groupLabel": "Group",
+    "devicesInGroup": "Devices in this group",
+    "noDevicesTitle": "No devices yet",
+    "noDevicesDescription": "Devices self-register and appear as unclaimed. Claim them from Overview or the Devices list.",
+    "unnamed": "(unnamed)",
+    "loadFailed": "Load failed",
+    "saved": "Saved",
+    "saveFailed": "Save failed",
+    "deleteFailed": "Delete failed",
+    "deleteConfirmTitle": "Delete {name}?",
+    "deleteConfirmDescription": "Devices in this group will become unclaimed (their group_id will be set to null)."
+  },
   "auth": {
     "signIn": "Sign in",
     "signInSubtitle": "Welcome back. Enter your credentials to reach the console.",
