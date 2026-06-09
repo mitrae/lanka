@@ -267,6 +267,14 @@
     "colErrors": "Errors",
     "emptyMedia": "No media assigned to your organization yet."
   },
+  "overview": {
+    "subtitle": "Your signage network at a glance.",
+    "statTotalDevices": "Total devices",
+    "statOnlineNow": "Online now",
+    "statOfflineLong": "Offline > 5 min",
+    "statUnclaimed": "Unclaimed",
+    "screensOnline": "Screens online"
+  },
   "auth": {
     "signIn": "Sign in",
     "signInSubtitle": "Welcome back. Enter your credentials to reach the console.",

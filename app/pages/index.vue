@@ -26,21 +26,21 @@ const stats = computed(() => {
 <template>
   <div class="reveal">
     <PageHeader
-      title="Overview"
-      subtitle="Your signage network at a glance."
+      :title="$t('nav.overview')"
+      :subtitle="$t('overview.subtitle')"
       icon="i-lucide-layout-dashboard"
     />
 
     <div class="grid grid-cols-1 gap-4 lg:grid-cols-4">
-      <StatCard label="Total devices" :value="stats.total" icon="i-lucide-tv" />
-      <StatCard label="Online now" :value="stats.online" icon="i-lucide-wifi" tone="emerald" />
-      <StatCard label="Offline > 5 min" :value="stats.offlineLong" icon="i-lucide-wifi-off" tone="rose" />
-      <StatCard label="Unclaimed" :value="stats.unclaimed" icon="i-lucide-inbox" tone="amber" />
+      <StatCard :label="$t('overview.statTotalDevices')" :value="stats.total" icon="i-lucide-tv" />
+      <StatCard :label="$t('overview.statOnlineNow')" :value="stats.online" icon="i-lucide-wifi" tone="emerald" />
+      <StatCard :label="$t('overview.statOfflineLong')" :value="stats.offlineLong" icon="i-lucide-wifi-off" tone="rose" />
+      <StatCard :label="$t('overview.statUnclaimed')" :value="stats.unclaimed" icon="i-lucide-inbox" tone="amber" />
     </div>
 
     <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
       <div class="soft-card flex items-center justify-center p-6">
-        <Donut :value="stats.online" :total="stats.total" label="Screens online" color="#22c55e" />
+        <Donut :value="stats.online" :total="stats.total" :label="$t('overview.screensOnline')" color="#22c55e" />
       </div>
       <div class="lg:col-span-2">
         <UnclaimedDevicesTray />
