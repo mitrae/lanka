@@ -6,6 +6,10 @@ const password = ref('')
 const error = ref<string | null>(null)
 const loading = ref(false)
 
+const config = useRuntimeConfig()
+const googleClientId = (config.public.googleClientId as string) || ''
+const googleBtn = ref<HTMLElement | null>(null)
+
 async function submit() {
   error.value = null
   loading.value = true
@@ -18,6 +22,61 @@ async function submit() {
     loading.value = false
   }
 }
+
+function loadGisScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const w = window as any
+    if (w.google?.accounts?.id) return resolve()
+    const existing = document.getElementById('gis-client')
+    if (existing) {
+      existing.addEventListener('load', () => resolve())
+      existing.addEventListener('error', () => reject(new Error('gis load failed')))
+      return
+    }
+    const s = document.createElement('script')
+    s.id = 'gis-client'
+    s.src = 'https://accounts.google.com/gsi/client'
+    s.async = true
+    s.defer = true
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error('gis load failed'))
+    document.head.appendChild(s)
+  })
+}
+
+async function handleGoogleCredential(response: { credential: string }) {
+  error.value = null
+  loading.value = true
+  try {
+    const user = await auth.loginWithGoogle(response.credential)
+    await navigateTo(user.role === 'client' ? '/portal' : '/')
+  } catch {
+    error.value = 'Google sign-in failed, or no Lanka account for that address'
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  if (!googleClientId) return
+  try {
+    await loadGisScript()
+    const w = window as any
+    w.google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: handleGoogleCredential
+    })
+    w.google.accounts.id.renderButton(googleBtn.value, {
+      theme: 'outline',
+      size: 'large',
+      width: 320,
+      text: 'signin_with'
+    })
+  } catch {
+    // Script blocked or origin not authorized — button just won't appear.
+    // Password login is unaffected.
+  }
+})
 </script>
 
 <template>
@@ -133,6 +192,15 @@ async function submit() {
             Sign in
           </UButton>
         </form>
+
+        <template v-if="googleClientId">
+          <div class="my-6 flex items-center gap-3 text-xs font-medium text-(--ui-text-dimmed)">
+            <span class="h-px flex-1 bg-(--ui-border)" />
+            <span>or</span>
+            <span class="h-px flex-1 bg-(--ui-border)" />
+          </div>
+          <div ref="googleBtn" class="flex justify-center" />
+        </template>
 
         <p class="mt-10 text-xs leading-relaxed text-(--ui-text-dimmed)">
           Lanka signage control plane · access is provisioned by your administrator.
