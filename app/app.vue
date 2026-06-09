@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useDevicesStore } from '~/app/stores/devices'
 import { useDashboardStream } from '~/app/composables/useDashboardStream'
+import { uk } from '@nuxt/ui/locale'
 
 useHead({
   title: 'Lanka',
@@ -17,7 +18,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <UApp>
+  <UApp :locale="uk">
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>

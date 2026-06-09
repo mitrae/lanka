@@ -31,5 +31,19 @@
     "signOut": "Sign out",
     "switchToDark": "Switch to dark mode",
     "switchToLight": "Switch to light mode"
+  },
+  "auth": {
+    "signIn": "Sign in",
+    "signInSubtitle": "Welcome back. Enter your credentials to reach the console.",
+    "emailLabel": "Email",
+    "passwordLabel": "Password",
+    "forgotPassword": "Forgot password?",
+    "invalidCredentials": "Invalid email or password",
+    "googleFailed": "Google sign-in failed, or no Lanka account for that address",
+    "or": "or",
+    "heroHeading": "Your screens, one calm console.",
+    "heroSubtitle": "Monitor, group, and program every display across your network — from one quiet control plane.",
+    "trustFooter": "Self-hosted · Tailscale-secured",
+    "provisionNote": "Lanka signage control plane · access is provisioned by your administrator."
   }
 }

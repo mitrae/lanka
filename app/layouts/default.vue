@@ -1,34 +1,33 @@
 <script setup lang="ts">
 const route = useRoute()
 const auth = useAuthStore()
+const { t } = useI18n()
 
-const navGroups = [
+const navGroups = computed(() => [
+  { items: [{ label: t('nav.overview'), icon: 'i-lucide-layout-dashboard', to: '/' }] },
   {
-    items: [{ label: 'Overview', icon: 'i-lucide-layout-dashboard', to: '/' }]
-  },
-  {
-    label: 'Network',
+    label: t('nav.network'),
     items: [
-      { label: 'Addresses', icon: 'i-lucide-building-2', to: '/addresses' },
-      { label: 'Groups', icon: 'i-lucide-folder', to: '/groups' },
-      { label: 'Devices', icon: 'i-lucide-tv', to: '/devices' }
+      { label: t('nav.addresses'), icon: 'i-lucide-building-2', to: '/addresses' },
+      { label: t('nav.groups'), icon: 'i-lucide-folder', to: '/groups' },
+      { label: t('nav.devices'), icon: 'i-lucide-tv', to: '/devices' }
     ]
   },
   {
-    label: 'Content',
+    label: t('nav.content'),
     items: [
-      { label: 'Media', icon: 'i-lucide-image', to: '/media' },
-      { label: 'Playlists', icon: 'i-lucide-list-music', to: '/playlists' }
+      { label: t('nav.media'), icon: 'i-lucide-image', to: '/media' },
+      { label: t('nav.playlists'), icon: 'i-lucide-list-music', to: '/playlists' }
     ]
   },
   {
-    label: 'People',
+    label: t('nav.people'),
     items: [
-      { label: 'Users', icon: 'i-lucide-users', to: '/users' },
-      { label: 'Organizations', icon: 'i-lucide-briefcase', to: '/organizations' }
+      { label: t('nav.users'), icon: 'i-lucide-users', to: '/users' },
+      { label: t('nav.organizations'), icon: 'i-lucide-briefcase', to: '/organizations' }
     ]
   }
-]
+])
 
 const stream = import.meta.client ? useDashboardStream() : null
 const streamState = computed(() => (stream ? stream.state.value : ('connecting' as const)))
@@ -58,7 +57,7 @@ const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCas
         </span>
         <div class="leading-tight">
           <p class="text-base font-semibold tracking-tight">Lanka</p>
-          <p class="text-[11px] text-(--ui-text-muted)">Signage control</p>
+          <p class="text-[11px] text-(--ui-text-muted)">{{ $t('nav.signageControl') }}</p>
         </div>
       </div>
 
@@ -107,7 +106,7 @@ const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCas
               }"
             />
           </span>
-          <span class="text-(--ui-text-muted)">Realtime</span>
+          <span class="text-(--ui-text-muted)">{{ $t('nav.realtime') }}</span>
           <span
             class="ml-auto font-medium capitalize"
             :class="{
@@ -129,10 +128,10 @@ const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCas
           <UButton
             variant="ghost" color="neutral" size="sm"
             :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-            :aria-label="`Switch to ${colorMode.value === 'dark' ? 'light' : 'dark'} mode`"
+            :aria-label="colorMode.value === 'dark' ? $t('nav.switchToLight') : $t('nav.switchToDark')"
             @click="toggleDark"
           />
-          <UButton variant="ghost" color="neutral" size="sm" icon="i-lucide-log-out" aria-label="Sign out" @click="signOut" />
+          <UButton variant="ghost" color="neutral" size="sm" icon="i-lucide-log-out" :aria-label="$t('nav.signOut')" @click="signOut" />
         </div>
       </div>
     </aside>
