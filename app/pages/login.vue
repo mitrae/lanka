@@ -29,8 +29,8 @@ function loadGisScript(): Promise<void> {
     if (w.google?.accounts?.id) return resolve()
     const existing = document.getElementById('gis-client')
     if (existing) {
-      existing.addEventListener('load', () => resolve())
-      existing.addEventListener('error', () => reject(new Error('gis load failed')))
+      existing.addEventListener('load', () => resolve(), { once: true })
+      existing.addEventListener('error', () => reject(new Error('gis load failed')), { once: true })
       return
     }
     const s = document.createElement('script')
@@ -61,6 +61,7 @@ onMounted(async () => {
   if (!googleClientId) return
   try {
     await loadGisScript()
+    if (!googleBtn.value) return // component unmounted during script load
     const w = window as any
     w.google.accounts.id.initialize({
       client_id: googleClientId,
