@@ -21,14 +21,14 @@ async function add() {
 <template>
   <div class="reveal">
     <PageHeader
-      title="Organizations"
-      subtitle="Companies that own media. Client accounts see stats for their org."
+      :title="$t('organizations.pageTitle')"
+      :subtitle="$t('organizations.pageSubtitle')"
       icon="i-lucide-briefcase"
     />
 
     <div class="mb-6 flex max-w-md gap-2">
-      <UInput v-model="name" placeholder="New organization name" size="lg" class="flex-1" @keyup.enter="add" />
-      <UButton color="primary" size="lg" :loading="creating" @click="add">Add</UButton>
+      <UInput v-model="name" :placeholder="$t('organizations.namePlaceholder')" size="lg" class="flex-1" @keyup.enter="add" />
+      <UButton color="primary" size="lg" :loading="creating" @click="add">{{ $t('common.add') }}</UButton>
     </div>
 
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -45,7 +45,7 @@ async function add() {
           <p class="font-mono text-xs text-(--ui-text-muted)">#{{ org.id }}</p>
         </div>
       </div>
-      <p v-if="!store.loading && store.list.length === 0" class="text-(--ui-text-muted)">No organizations yet.</p>
+      <p v-if="!store.loading && store.list.length === 0" class="text-(--ui-text-muted)">{{ $t('organizations.emptyTitle') }}</p>
     </div>
   </div>
 </template>

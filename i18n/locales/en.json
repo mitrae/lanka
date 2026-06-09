@@ -222,6 +222,34 @@
     "deleted": "Deleted",
     "deleteFailed": "Delete failed"
   },
+  "users": {
+    "pageTitle": "Users",
+    "pageSubtitle": "Create admins and client accounts. Clients see only their organization's portal.",
+    "emailLabel": "Email",
+    "roleLabel": "Role",
+    "organizationLabel": "Organization",
+    "roleAdmin": "Admin",
+    "roleClient": "Client",
+    "pickOrgForClient": "Pick an organization for the client",
+    "createFailed": "Could not create user",
+    "deleteConfirmTitle": "Delete {email}?",
+    "deleteConfirmDescription": "Their sessions end immediately. This cannot be undone.",
+    "deleteFailed": "Could not delete user",
+    "deleteAriaLabel": "Delete {email}",
+    "emptyTitle": "No users yet.",
+    "accountCreatedTitle": "Account created",
+    "accountCreatedBody": "Share this one-time password with {email}. It is shown only once — they can change it later via \"Forgot password\".",
+    "copyPassword": "Copy",
+    "passwordCopied": "Password copied",
+    "copyFailed": "Copy failed",
+    "copyFailedDescription": "Select and copy the password manually."
+  },
+  "organizations": {
+    "pageTitle": "Organizations",
+    "pageSubtitle": "Companies that own media. Client accounts see stats for their org.",
+    "namePlaceholder": "New organization name",
+    "emptyTitle": "No organizations yet."
+  },
   "auth": {
     "signIn": "Sign in",
     "signInSubtitle": "Welcome back. Enter your credentials to reach the console.",
