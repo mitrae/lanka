@@ -149,7 +149,7 @@
     "groupCreated": "Групу створено",
     "deleteFailed": "Помилка видалення",
     "deleteConfirmTitle": "Видалити {name}?",
-    "deleteConfirmDescription": "Видаляє цю адресу та каскадно всі групи. Пристрої в цих групах стануть незакріпленими.",
+    "deleteConfirmDescription": "Видаляє цю адресу разом з усіма групами. Пристрої в цих групах стануть незакріпленими.",
     "groupsInAddress": "Групи в цій адресі",
     "newGroupPlaceholder": "Назва нової групи (напр. Хол)",
     "addGroup": "Додати групу",
