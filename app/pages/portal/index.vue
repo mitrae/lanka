@@ -53,7 +53,7 @@ onMounted(async () => {
             <tr v-for="m in stats.media" :key="m.mediaId" class="border-b border-(--ui-border) last:border-0">
               <td class="px-5 py-3">
                 <span class="font-medium text-(--ui-text-highlighted)">{{ m.filename }}</span>
-                <span class="ml-2 rounded-full bg-(--ui-bg-accented) px-2 py-0.5 text-xs text-(--ui-text-muted)">{{ m.kind }}</span>
+                <span class="ml-2 rounded-full bg-(--ui-bg-accented) px-2 py-0.5 text-xs text-(--ui-text-muted)">{{ m.kind === 'video' ? $t('components.playlistItemRow.video') : $t('components.playlistItemRow.image') }}</span>
               </td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensScheduled }}</td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensOnline }}</td>
