@@ -89,6 +89,7 @@ export interface ApiClient {
 
   // auth
   login(body: { email: string; password: string }): Promise<{ user: SessionUser }>
+  loginWithGoogle(body: { credential: string }): Promise<{ user: SessionUser }>
   logout(): Promise<void>
   me(): Promise<{ user: SessionUser }>
 
@@ -213,6 +214,7 @@ export function createApiClient(fetch: FetchFn): ApiClient {
 
     // auth
     login: (body) => fetch<{ user: SessionUser }>('/api/auth/login', { method: 'POST', body }),
+    loginWithGoogle: (body) => fetch<{ user: SessionUser }>('/api/auth/google', { method: 'POST', body }),
     logout: () => fetch<void>('/api/auth/logout', { method: 'POST' }),
     me: () => fetch<{ user: SessionUser }>('/api/auth/me', { method: 'GET' }),
     // organizations
