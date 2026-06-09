@@ -1,6 +1,5 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
-const { t } = useI18n()
 const api = useApiClient()
 const email = ref('')
 const sent = ref(false)
