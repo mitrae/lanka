@@ -644,13 +644,15 @@ In `app/pages/login.vue`, immediately after the closing `</form>` tag (currently
         </template>
 ```
 
-- [ ] **Step 3: Typecheck the page**
+- [ ] **Step 3: Check for NEW type errors only**
 
-Run:
+⚠️ `pnpm typecheck` is **not a clean gate** in this repo: there are ~381 pre-existing `vue-tsc` errors and `nuxt.config.ts` sets `typeCheck: false` (the project relies on Vitest + `nuxt build`, not `vue-tsc`). Do **not** try to make `pnpm typecheck` pass, and do **not** fix unrelated errors.
+
+Instead confirm this change introduces **no new** errors in the file you touched:
 ```bash
-pnpm typecheck
+pnpm typecheck 2>&1 | grep -E "app/pages/login\.vue" || echo "no new errors in login.vue"
 ```
-Expected: PASS — no type errors. (`useRuntimeConfig`, `ref`, `onMounted`, `navigateTo` are Nuxt auto-imports.)
+Expected: `no new errors in login.vue` (the only acceptable output). `useRuntimeConfig`, `ref`, `onMounted`, `navigateTo` are Nuxt auto-imports. The real compile gate is `pnpm build` in Task 9.
 
 - [ ] **Step 4: Manual smoke (dev) — button renders with a Client ID**
 
@@ -761,13 +763,13 @@ pnpm test
 ```
 Expected: PASS — all suites including `tests/services/google-auth.test.ts` and the updated `tests/stores/auth.test.ts`.
 
-- [ ] **Step 2: Typecheck**
+- [ ] **Step 2: No NEW type errors from this work**
 
-Run:
+⚠️ `pnpm typecheck` has ~381 pre-existing errors and `typeCheck: false` is set — it is not a clean gate (see Task 7 Step 3). Confirm none of the files this feature created/changed appear in the typecheck output:
 ```bash
-pnpm typecheck
+pnpm typecheck 2>&1 | grep -E "server/services/google-auth\.ts|server/api/auth/google\.post\.ts|app/stores/auth\.ts|app/composables/useApiClient\.ts|app/pages/login\.vue" || echo "no new type errors in feature files"
 ```
-Expected: PASS — no type errors (notably the extended `_api` Pick and `login.vue`).
+Expected: `no new type errors in feature files`. (Sanity-check the count is unchanged vs. baseline if unsure: `git stash` → count → `git stash pop` → count.)
 
 - [ ] **Step 3: Production build smoke (bake works)**
 
