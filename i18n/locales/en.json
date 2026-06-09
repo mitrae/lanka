@@ -44,6 +44,22 @@
     "heroHeading": "Your screens, one calm console.",
     "heroSubtitle": "Monitor, group, and program every display across your network — from one quiet control plane.",
     "trustFooter": "Self-hosted · Tailscale-secured",
-    "provisionNote": "Lanka signage control plane · access is provisioned by your administrator."
+    "provisionNote": "Lanka signage control plane · access is provisioned by your administrator.",
+    "forgotTitle": "Forgot your password?",
+    "forgotSubtitle": "Enter your email and we'll send a reset link.",
+    "sendResetLink": "Send reset link",
+    "checkInboxTitle": "Check your inbox",
+    "forgotSentPre": "If an account exists for",
+    "forgotSentPost": ", a reset link is on its way. The link is valid for one hour.",
+    "backToSignIn": "← Back to sign in",
+    "resetTitle": "Set a new password",
+    "passwordUpdated": "Password updated. Redirecting to sign in…",
+    "resetLinkMissing": "This reset link is missing or malformed. Request a new one.",
+    "requestNewLink": "Request a new link",
+    "newPasswordLabel": "New password",
+    "newPasswordPlaceholder": "At least 8 characters",
+    "passwordTooShort": "Password must be at least 8 characters.",
+    "resetLinkInvalid": "This reset link is invalid or has expired. Request a new one.",
+    "updatePassword": "Update password"
   }
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
+const { t } = useI18n()
 const api = useApiClient()
 const email = ref('')
 const sent = ref(false)
@@ -21,22 +22,22 @@ async function submit() {
   <div class="canvas-bg flex min-h-screen items-center justify-center p-8">
     <div class="reveal w-full max-w-sm">
       <template v-if="!sent">
-        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">Forgot your password?</h1>
-        <p class="mt-2 text-sm text-(--ui-text-muted)">Enter your email and we'll send a reset link.</p>
+        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.forgotTitle') }}</h1>
+        <p class="mt-2 text-sm text-(--ui-text-muted)">{{ $t('auth.forgotSubtitle') }}</p>
         <form class="mt-8 space-y-4" @submit.prevent="submit">
-          <UFormField label="Email">
+          <UFormField :label="$t('auth.emailLabel')">
             <UInput v-model="email" type="email" name="email" autocomplete="username" size="lg" icon="i-lucide-mail" placeholder="you@company.com" class="w-full" />
           </UFormField>
-          <UButton type="submit" block size="lg" color="primary" :loading="loading">Send reset link</UButton>
+          <UButton type="submit" block size="lg" color="primary" :loading="loading">{{ $t('auth.sendResetLink') }}</UButton>
         </form>
       </template>
       <template v-else>
-        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">Check your inbox</h1>
+        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.checkInboxTitle') }}</h1>
         <p class="mt-2 text-sm text-(--ui-text-muted)">
-          If an account exists for <span class="font-medium text-(--ui-text)">{{ email }}</span>, a reset link is on its way. The link is valid for one hour.
+          {{ $t('auth.forgotSentPre') }} <span class="font-medium text-(--ui-text)">{{ email }}</span>{{ $t('auth.forgotSentPost') }}
         </p>
       </template>
-      <NuxtLink to="/login" class="mt-8 inline-block text-sm text-indigo-600 hover:underline dark:text-indigo-400">← Back to sign in</NuxtLink>
+      <NuxtLink to="/login" class="mt-8 inline-block text-sm text-indigo-600 hover:underline dark:text-indigo-400">{{ $t('auth.backToSignIn') }}</NuxtLink>
     </div>
   </div>
 </template>
