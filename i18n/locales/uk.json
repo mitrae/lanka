@@ -1,0 +1,35 @@
+{
+  "common": {
+    "save": "Зберегти",
+    "cancel": "Скасувати",
+    "delete": "Видалити",
+    "create": "Створити",
+    "edit": "Редагувати",
+    "add": "Додати",
+    "close": "Закрити",
+    "confirm": "Підтвердити",
+    "back": "Назад",
+    "loading": "Завантаження…",
+    "selectPlaceholder": "Вибрати…",
+    "searchPlaceholder": "Пошук…",
+    "cannotBeUndone": "Цю дію не можна скасувати."
+  },
+  "nav": {
+    "overview": "Огляд",
+    "network": "Мережа",
+    "addresses": "Адреси",
+    "groups": "Групи",
+    "devices": "Пристрої",
+    "content": "Контент",
+    "media": "Медіа",
+    "playlists": "Плейлисти",
+    "people": "Люди",
+    "users": "Користувачі",
+    "organizations": "Організації",
+    "signageControl": "Керування екранами",
+    "realtime": "У реальному часі",
+    "signOut": "Вийти",
+    "switchToDark": "Перейти в темний режим",
+    "switchToLight": "Перейти в світлий режим"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "create": "Create",
+    "edit": "Edit",
+    "add": "Add",
+    "close": "Close",
+    "confirm": "Confirm",
+    "back": "Back",
+    "loading": "Loading…",
+    "selectPlaceholder": "Select…",
+    "searchPlaceholder": "Search…",
+    "cannotBeUndone": "This cannot be undone."
+  },
+  "nav": {
+    "overview": "Overview",
+    "network": "Network",
+    "addresses": "Addresses",
+    "groups": "Groups",
+    "devices": "Devices",
+    "content": "Content",
+    "media": "Media",
+    "playlists": "Playlists",
+    "people": "People",
+    "users": "Users",
+    "organizations": "Organizations",
+    "signageControl": "Signage control",
+    "realtime": "Realtime",
+    "signOut": "Sign out",
+    "switchToDark": "Switch to dark mode",
+    "switchToLight": "Switch to light mode"
+  }
+}

@@ -4,7 +4,7 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   ssr: false,
   srcDir: '.',
-  modules: ['@nuxt/ui', '@nuxt/fonts', '@nuxtjs/color-mode', '@pinia/nuxt'],
+  modules: ['@nuxt/ui', '@nuxt/fonts', '@nuxtjs/color-mode', '@pinia/nuxt', '@nuxtjs/i18n'],
   css: ['~/app/assets/css/main.css'],
   dir: {
     pages: 'app/pages',
@@ -18,6 +18,17 @@ export default defineNuxtConfig({
     dirs: ['app/composables', 'app/stores']
   },
   components: [{ path: '~/app/components', pathPrefix: false }],
+  i18n: {
+    strategy: 'no_prefix',          // leave every URL unchanged — auth-guard path checks rely on this
+    defaultLocale: 'uk',
+    detectBrowserLanguage: false,   // always Ukrainian, never sniff the browser
+    vueI18n: 'i18n.config.ts',      // resolved inside the i18n/ restructureDir
+    locales: [
+      { code: 'uk', name: 'Українська', file: 'uk.json' },
+      { code: 'en', name: 'English', file: 'en.json' }
+    ]
+    // langDir defaults to 'locales', resolved inside the i18n/ restructureDir → <root>/i18n/locales/
+  },
   colorMode: {
     preference: 'light',
     fallback: 'light',
