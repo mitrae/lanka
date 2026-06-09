@@ -6,6 +6,7 @@ import { useApiClient } from '~/app/composables/useApiClient'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const devicesStore = useDevicesStore()
@@ -29,7 +30,7 @@ async function load() {
     await groupsStore.refresh()
   } catch (err: any) {
     toast.add({
-      title: 'Load failed',
+      title: t('devices.loadFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -47,10 +48,10 @@ async function save() {
     })
     device.value = updated
     editing.value = false
-    toast.add({ title: 'Saved', color: 'success' })
+    toast.add({ title: t('devices.saved'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Save failed',
+      title: t('devices.saveFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -59,10 +60,11 @@ async function save() {
 
 async function remove() {
   if (!device.value) return
+  const name = device.value.name ?? device.value.id
   const ok = await confirm({
-    title: `Delete ${device.value.name ?? device.value.id}?`,
-    description: 'Removes this device record. The APK on the TV will re-register on next boot.',
-    confirmLabel: 'Delete',
+    title: t('devices.deleteConfirmTitle', { name }),
+    description: t('devices.deleteConfirmDescription'),
+    confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
@@ -71,7 +73,7 @@ async function remove() {
     router.push('/devices')
   } catch (err: any) {
     toast.add({
-      title: 'Delete failed',
+      title: t('devices.deleteFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -82,10 +84,10 @@ async function reload() {
   if (!device.value) return
   try {
     await devicesStore.reloadDevice(device.value.id)
-    toast.add({ title: 'Reload signal sent', color: 'success' })
+    toast.add({ title: t('devices.reloadSignalSent'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Reload failed',
+      title: t('devices.reloadFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -99,7 +101,7 @@ async function reload() {
       to="/devices"
       class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
     >
-      <UIcon name="i-lucide-arrow-left" class="size-4" /> Devices
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> {{ $t('devices.backToDevices') }}
     </NuxtLink>
 
     <div v-if="!device">
@@ -114,31 +116,31 @@ async function reload() {
             </div>
             <div>
               <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-                Device
+                {{ $t('devices.deviceLabel') }}
               </p>
               <template v-if="!editing">
                 <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">
-                  {{ device.name ?? '(unnamed)' }}
+                  {{ device.name ?? $t('devices.unnamed') }}
                 </h2>
                 <p class="mt-1 font-mono text-xs text-(--ui-text-muted)">
                   {{ device.id }}
                 </p>
                 <p class="mt-2 text-sm text-(--ui-text-muted)">
-                  Player v{{ device.playerVersion ?? '?' }} ·
+                  {{ $t('devices.playerVersion', { version: device.playerVersion ?? '?' }) }} ·
                   {{
                     device.lastSeenAt
-                      ? `last seen ${new Date(device.lastSeenAt).toLocaleString()}`
-                      : 'never seen'
+                      ? $t('devices.lastSeenAt', { time: new Date(device.lastSeenAt).toLocaleString() })
+                      : $t('devices.neverSeen')
                   }}
                 </p>
               </template>
               <template v-else>
                 <div class="mt-1 flex w-80 flex-col gap-2">
-                  <UInput v-model="editName" placeholder="Name" />
+                  <UInput v-model="editName" :placeholder="$t('devices.namePlaceholder')" />
                   <USelectMenu
                     v-model="editGroupId"
                     :items="[
-                      { label: '— Unclaimed —', value: null },
+                      { label: $t('devices.unclaimedOption'), value: null },
                       ...groupsStore.list.map((g) => ({ label: g.name, value: g.id }))
                     ]"
                     value-key="value"
@@ -150,10 +152,10 @@ async function reload() {
           <div class="flex gap-2">
             <template v-if="!editing">
               <UButton variant="soft" color="neutral" icon="i-lucide-refresh-cw" @click="reload">
-                Reload player
+                {{ $t('devices.reloadPlayer') }}
               </UButton>
               <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editing = true">
-                Edit
+                {{ $t('common.edit') }}
               </UButton>
               <UButton
                 variant="soft"
@@ -161,11 +163,11 @@ async function reload() {
                 icon="i-lucide-trash-2"
                 @click="remove"
               >
-                Delete
+                {{ $t('common.delete') }}
               </UButton>
             </template>
             <template v-else>
-              <UButton color="primary" @click="save">Save</UButton>
+              <UButton color="primary" @click="save">{{ $t('common.save') }}</UButton>
               <UButton
                 variant="ghost"
                 color="neutral"
@@ -175,7 +177,7 @@ async function reload() {
                   editGroupId = device!.groupId
                 "
               >
-                Cancel
+                {{ $t('common.cancel') }}
               </UButton>
             </template>
           </div>
@@ -183,10 +185,9 @@ async function reload() {
       </section>
 
       <section class="soft-card mt-8 p-6">
-        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Direct playlist assignment</h3>
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('devices.playlistSectionTitle') }}</h3>
         <p class="mt-1 text-xs text-(--ui-text-muted)">
-          Overrides group- and address-level assignment for this device only.
-          Clear to fall back to inherited.
+          {{ $t('devices.playlistSectionDescription') }}
         </p>
         <!-- Note: currentPlaylistId requires a query to assignments; we pass null for v1 -->
         <AssignmentPicker

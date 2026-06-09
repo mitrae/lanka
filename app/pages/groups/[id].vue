@@ -7,6 +7,8 @@ import { useApiClient } from '~/app/composables/useApiClient'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
+
 const route = useRoute()
 const router = useRouter()
 const groupsStore = useGroupsStore()
@@ -34,7 +36,7 @@ onMounted(async () => {
     editAddressId.value = g.addressId
   } catch (err: any) {
     toast.add({
-      title: 'Load failed',
+      title: t('groups.loadFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -54,10 +56,10 @@ async function save() {
     })
     group.value = updated
     editing.value = false
-    toast.add({ title: 'Saved', color: 'success' })
+    toast.add({ title: t('groups.saved'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Save failed',
+      title: t('groups.saveFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -67,10 +69,9 @@ async function save() {
 async function remove() {
   if (!group.value) return
   const ok = await confirm({
-    title: `Delete ${group.value.name}?`,
-    description:
-      'Devices in this group will become unclaimed (their group_id will be set to null).',
-    confirmLabel: 'Delete',
+    title: t('groups.deleteConfirmTitle', { name: group.value.name }),
+    description: t('groups.deleteConfirmDescription'),
+    confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
@@ -79,7 +80,7 @@ async function remove() {
     router.push('/groups')
   } catch (err: any) {
     toast.add({
-      title: 'Delete failed',
+      title: t('groups.deleteFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -93,7 +94,7 @@ async function remove() {
       to="/groups"
       class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
     >
-      <UIcon name="i-lucide-arrow-left" class="size-4" /> Groups
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> {{ $t('groups.pageTitle') }}
     </NuxtLink>
 
     <div v-if="!group">
@@ -108,12 +109,12 @@ async function remove() {
             </div>
             <div>
               <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-                Group
+                {{ $t('groups.groupLabel') }}
               </p>
               <template v-if="!editing">
                 <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ group.name }}</h2>
                 <p class="mt-1 text-sm text-(--ui-text-muted)">
-                  in {{ addressesStore.list.find((a) => a.id === group!.addressId)?.name ?? '?' }}
+                  {{ $t('groups.inAddress', { name: addressesStore.list.find((a) => a.id === group!.addressId)?.name ?? '?' }) }}
                 </p>
               </template>
               <template v-else>
@@ -131,7 +132,7 @@ async function remove() {
           <div class="flex gap-2">
             <template v-if="!editing">
               <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editing = true">
-                Edit
+                {{ $t('common.edit') }}
               </UButton>
               <UButton
                 variant="soft"
@@ -139,11 +140,11 @@ async function remove() {
                 icon="i-lucide-trash-2"
                 @click="remove"
               >
-                Delete
+                {{ $t('common.delete') }}
               </UButton>
             </template>
             <template v-else>
-              <UButton color="primary" @click="save">Save</UButton>
+              <UButton color="primary" @click="save">{{ $t('common.save') }}</UButton>
               <UButton
                 variant="ghost"
                 color="neutral"
@@ -153,7 +154,7 @@ async function remove() {
                   editAddressId = group!.addressId
                 "
               >
-                Cancel
+                {{ $t('common.cancel') }}
               </UButton>
             </template>
           </div>
@@ -161,13 +162,13 @@ async function remove() {
       </section>
 
       <section class="mt-8">
-        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Devices in this group</h3>
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('groups.devicesInGroup') }}</h3>
         <EmptyState
           v-if="devicesStore.list.length === 0"
           class="mt-4"
           icon="i-lucide-tv"
-          title="No devices yet"
-          description="Devices self-register and appear as unclaimed. Claim them from Overview or the Devices list."
+          :title="$t('groups.noDevicesTitle')"
+          :description="$t('groups.noDevicesDescription')"
         />
         <ul v-else class="mt-4 space-y-2.5">
           <li
@@ -177,7 +178,7 @@ async function remove() {
           >
             <NuxtLink :to="`/devices/${d.id}`" class="flex items-center gap-3.5 p-4">
               <StatusDot :status="d.status" />
-              <span class="font-medium text-(--ui-text-highlighted)">{{ d.name ?? 'Unnamed' }}</span>
+              <span class="font-medium text-(--ui-text-highlighted)">{{ d.name ?? $t('groups.unnamed') }}</span>
               <code class="ml-auto max-w-xs truncate font-mono text-xs text-(--ui-text-dimmed)">
                 {{ d.id }}
               </code>

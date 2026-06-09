@@ -7,13 +7,13 @@
 <template>
   <section class="soft-card overflow-hidden">
     <header class="border-b border-(--ui-border) px-5 py-3">
-      <h2 class="text-sm font-semibold">Recent playback errors</h2>
+      <h2 class="text-sm font-semibold">{{ $t('components.errorFeed.title') }}</h2>
     </header>
     <div class="p-5">
       <EmptyState
         icon="i-lucide-clock-alert"
-        title="Error feed pending"
-        description="The /api/device-errors endpoint hasn't been added yet. Coming in a follow-up plan."
+        :title="$t('components.errorFeed.pendingTitle')"
+        :description="$t('components.errorFeed.pendingDescription')"
       />
     </div>
   </section>

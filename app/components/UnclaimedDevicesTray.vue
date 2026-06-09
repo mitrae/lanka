@@ -7,6 +7,7 @@ import { useGroupsStore } from '~/app/stores/groups'
 const devicesStore = useDevicesStore()
 const groupsStore = useGroupsStore()
 const toast = useToast()
+const { t } = useI18n()
 
 const unclaimed = computed<DeviceListRow[]>(() =>
   devicesStore.list.filter((d) => d.groupId === null)
@@ -31,7 +32,7 @@ async function claim(row: DeviceListRow) {
   const state = form.value[row.id] ?? { name: '', groupId: null }
   if (!state.name || state.groupId === null) {
     toast.add({
-      title: 'Enter a name and pick a group',
+      title: t('components.unclaimedDevicesTray.claimValidation'),
       color: 'warning'
     })
     return
@@ -41,10 +42,10 @@ async function claim(row: DeviceListRow) {
       name: state.name,
       groupId: state.groupId
     })
-    toast.add({ title: `Claimed as "${state.name}"`, color: 'success' })
+    toast.add({ title: t('components.unclaimedDevicesTray.claimedAs', { name: state.name }), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Claim failed',
+      title: t('components.unclaimedDevicesTray.claimFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -55,16 +56,16 @@ async function claim(row: DeviceListRow) {
 <template>
   <section class="soft-card overflow-hidden">
     <header class="flex items-center justify-between border-b border-(--ui-border) px-5 py-3">
-      <h2 class="text-sm font-semibold">Unclaimed devices</h2>
+      <h2 class="text-sm font-semibold">{{ $t('components.unclaimedDevicesTray.title') }}</h2>
       <span class="text-xs text-(--ui-text-muted)">
-        {{ unclaimed.length }} pending
+        {{ $t('components.unclaimedDevicesTray.pending', unclaimed.length, { named: { n: unclaimed.length } }) }}
       </span>
     </header>
     <div v-if="unclaimed.length === 0" class="p-5">
       <EmptyState
         icon="i-lucide-inbox"
-        title="All devices are claimed"
-        description="Devices that self-register will appear here."
+        :title="$t('components.unclaimedDevicesTray.allClaimed')"
+        :description="$t('components.unclaimedDevicesTray.allClaimedDescription')"
       />
     </div>
     <ul v-else class="divide-y divide-(--ui-border)">
@@ -78,7 +79,7 @@ async function claim(row: DeviceListRow) {
         </code>
         <UInput
           :model-value="(form[row.id] ||= { name: '', groupId: null }).name"
-          placeholder="Name (e.g. TV-Lobby-1)"
+          :placeholder="$t('components.unclaimedDevicesTray.namePlaceholder')"
           size="sm"
           class="w-48"
           @update:model-value="(val) => (form[row.id] ||= { name: '', groupId: null }).name = String(val)"
@@ -87,7 +88,7 @@ async function claim(row: DeviceListRow) {
           :model-value="(form[row.id] ||= { name: '', groupId: null }).groupId"
           :items="groupsOf(row)"
           value-key="value"
-          placeholder="Group"
+          :placeholder="$t('components.unclaimedDevicesTray.groupPlaceholder')"
           size="sm"
           class="w-48"
           @update:model-value="(val) => (form[row.id] ||= { name: '', groupId: null }).groupId = val as number"
@@ -98,7 +99,7 @@ async function claim(row: DeviceListRow) {
           icon="i-lucide-check"
           @click="claim(row)"
         >
-          Claim
+          {{ $t('components.unclaimedDevicesTray.claim') }}
         </UButton>
       </li>
     </ul>

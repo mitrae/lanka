@@ -2,6 +2,14 @@
 <script setup lang="ts">
 import type { DeviceStatus } from '~/app/types/api'
 defineProps<{ status: DeviceStatus; label?: boolean }>()
+
+const { t } = useI18n()
+
+const statusLabel = computed<Record<DeviceStatus, string>>(() => ({
+  online: t('components.statusDot.online'),
+  idle: t('components.statusDot.idle'),
+  offline: t('components.statusDot.offline'),
+}))
 </script>
 
 <template>
@@ -14,6 +22,6 @@ defineProps<{ status: DeviceStatus; label?: boolean }>()
         'bg-rose-500': status === 'offline'
       }"
     />
-    <span v-if="label" class="capitalize">{{ status }}</span>
+    <span v-if="label">{{ statusLabel[status] }}</span>
   </span>
 </template>

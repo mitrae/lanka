@@ -5,6 +5,8 @@ import type { MediaListRow } from '~/app/types/api'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
+
 const store = useMediaStore()
 const confirm = useConfirm()
 const toast = useToast()
@@ -16,21 +18,20 @@ onMounted(() => store.refresh())
 async function remove(m: MediaListRow) {
   const used = m.usedInPlaylists > 0
   const ok = await confirm({
-    title: `Delete ${m.filename}?`,
+    title: t('media.deleteConfirmTitle', { name: m.filename }),
     description: used
-      ? `This file is used in ${m.usedInPlaylists} playlist(s). ` +
-        `Deleting will remove those entries and bump each playlist version.`
-      : 'Removes the file and its thumbnail permanently.',
-    confirmLabel: 'Delete',
+      ? t('media.deleteConfirmUsed', m.usedInPlaylists, { n: m.usedInPlaylists })
+      : t('media.deleteConfirmUnused'),
+    confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
   try {
     await store.delete(m.id, { force: used })
-    toast.add({ title: 'Deleted', color: 'success' })
+    toast.add({ title: t('media.deleted'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Delete failed',
+      title: t('media.deleteFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -41,13 +42,13 @@ async function remove(m: MediaListRow) {
 <template>
   <div class="reveal">
     <PageHeader
-      title="Media"
-      subtitle="Upload videos and images. Playlists reference media from this library."
+      :title="$t('nav.media')"
+      :subtitle="$t('media.pageSubtitle')"
       icon="i-lucide-image"
     >
       <template #actions>
         <UButton color="primary" icon="i-lucide-upload" @click="showUpload = true">
-          Upload
+          {{ $t('media.upload') }}
         </UButton>
       </template>
     </PageHeader>
@@ -56,11 +57,11 @@ async function remove(m: MediaListRow) {
     <EmptyState
       v-else-if="store.list.length === 0"
       icon="i-lucide-image"
-      title="No media yet"
-      description="Upload videos or images to start building playlists."
+      :title="$t('media.emptyTitle')"
+      :description="$t('media.emptyDescription')"
     >
       <UButton color="primary" icon="i-lucide-upload" @click="showUpload = true">
-        Upload your first file
+        {{ $t('media.uploadFirstFile') }}
       </UButton>
     </EmptyState>
     <div v-else class="grid grid-cols-4 gap-4">

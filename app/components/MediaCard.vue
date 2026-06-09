@@ -53,7 +53,7 @@ function fmtDuration(ms: number | null) {
           color="neutral"
           variant="soft"
         >
-          Used in {{ media.usedInPlaylists }}
+          {{ $t('components.mediaCard.usedIn', { n: media.usedInPlaylists }) }}
         </UBadge>
       </div>
     </div>

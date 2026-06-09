@@ -3,6 +3,7 @@ import { usePlaylistsStore } from '~/app/stores/playlists'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
 const store = usePlaylistsStore()
 const toast = useToast()
 const creating = ref(false)
@@ -16,11 +17,11 @@ async function createPlaylist() {
     const p = await store.create({ name: newName.value.trim() })
     newName.value = ''
     creating.value = false
-    toast.add({ title: 'Playlist created', color: 'success' })
+    toast.add({ title: t('playlists.created'), color: 'success' })
     navigateTo(`/playlists/${p.id}`)
   } catch (err: any) {
     toast.add({
-      title: 'Create failed',
+      title: t('playlists.createFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -31,8 +32,8 @@ async function createPlaylist() {
 <template>
   <div class="reveal">
     <PageHeader
-      title="Playlists"
-      subtitle="Ordered lists of media that TVs loop. Assign to a device, group, or address."
+      :title="$t('playlists.pageTitle')"
+      :subtitle="$t('playlists.pageSubtitle')"
       icon="i-lucide-list-music"
     >
       <template #actions>
@@ -42,7 +43,7 @@ async function createPlaylist() {
           icon="i-lucide-plus"
           @click="creating = true"
         >
-          New playlist
+          {{ $t('playlists.newPlaylist') }}
         </UButton>
       </template>
     </PageHeader>
@@ -53,18 +54,18 @@ async function createPlaylist() {
     >
       <UInput
         v-model="newName"
-        placeholder="Playlist name (e.g. Summer Promo)"
+        :placeholder="$t('playlists.namePlaceholder')"
         class="max-w-md flex-1"
         autofocus
         @keyup.enter="createPlaylist"
       />
-      <UButton color="primary" @click="createPlaylist">Create & edit</UButton>
+      <UButton color="primary" @click="createPlaylist">{{ $t('playlists.createAndEdit') }}</UButton>
       <UButton
         variant="ghost"
         color="neutral"
         @click="creating = false; newName = ''"
       >
-        Cancel
+        {{ $t('common.cancel') }}
       </UButton>
     </div>
 
@@ -72,11 +73,11 @@ async function createPlaylist() {
     <EmptyState
       v-else-if="store.list.length === 0"
       icon="i-lucide-list-music"
-      title="No playlists yet"
-      description="Create a playlist and add media items to it."
+      :title="$t('playlists.emptyTitle')"
+      :description="$t('playlists.emptyDescription')"
     >
       <UButton color="primary" icon="i-lucide-plus" @click="creating = true">
-        Create playlist
+        {{ $t('playlists.createPlaylist') }}
       </UButton>
     </EmptyState>
     <ul v-else class="space-y-2.5">
@@ -92,9 +93,9 @@ async function createPlaylist() {
           <div class="min-w-0 flex-1">
             <p class="font-medium text-(--ui-text-highlighted)">{{ p.name }}</p>
             <p class="text-xs text-(--ui-text-muted)">
-              {{ p.itemCount }} item{{ p.itemCount === 1 ? '' : 's' }}
-              · {{ p.assignmentCount }} assignment{{ p.assignmentCount === 1 ? '' : 's' }}
-              · <span class="font-mono">v{{ p.version }}</span>
+              {{ $t('playlists.itemCount', p.itemCount, { n: p.itemCount }) }}
+              · {{ $t('playlists.assignmentCount', p.assignmentCount, { n: p.assignmentCount }) }}
+              · <span class="font-mono">{{ $t('playlists.version', { n: p.version }) }}</span>
             </p>
           </div>
           <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />

@@ -6,6 +6,7 @@ import { useApiClient } from '~/app/composables/useApiClient'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const addressesStore = useAddressesStore()
@@ -28,7 +29,7 @@ onMounted(async () => {
     await groupsStore.refresh({ addressId: id.value })
   } catch (err: any) {
     toast.add({
-      title: 'Load failed',
+      title: t('addresses.loadFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -43,10 +44,10 @@ async function save() {
     })
     address.value = updated
     editing.value = false
-    toast.add({ title: 'Saved', color: 'success' })
+    toast.add({ title: t('addresses.saved'), color: 'success' })
   } catch (err: any) {
     toast.add({
-      title: 'Save failed',
+      title: t('addresses.saveFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -60,11 +61,11 @@ async function createGroup() {
       addressId: address.value.id,
       name: newGroupName.value.trim()
     })
-    toast.add({ title: 'Group created', color: 'success' })
+    toast.add({ title: t('addresses.groupCreated'), color: 'success' })
     newGroupName.value = ''
   } catch (err: any) {
     toast.add({
-      title: 'Create failed',
+      title: t('addresses.createFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -75,10 +76,9 @@ const confirm = useConfirm()
 async function remove() {
   if (!address.value) return
   const ok = await confirm({
-    title: `Delete ${address.value.name}?`,
-    description:
-      'Removes this address and cascades to all groups. Devices in those groups will become unclaimed.',
-    confirmLabel: 'Delete',
+    title: t('addresses.deleteConfirmTitle', { name: address.value.name }),
+    description: t('addresses.deleteConfirmDescription'),
+    confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
@@ -87,7 +87,7 @@ async function remove() {
     router.push('/addresses')
   } catch (err: any) {
     toast.add({
-      title: 'Delete failed',
+      title: t('addresses.deleteFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -101,7 +101,7 @@ async function remove() {
       to="/addresses"
       class="mb-5 inline-flex items-center gap-1.5 text-sm text-(--ui-text-muted) transition-colors hover:text-(--ui-text)"
     >
-      <UIcon name="i-lucide-arrow-left" class="size-4" /> Addresses
+      <UIcon name="i-lucide-arrow-left" class="size-4" /> {{ $t('nav.addresses') }}
     </NuxtLink>
 
     <div v-if="!address">
@@ -116,7 +116,7 @@ async function remove() {
             </div>
             <div>
               <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
-                Address
+                {{ $t('addresses.addressLabel') }}
               </p>
               <template v-if="!editing">
                 <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ address.name }}</h2>
@@ -142,7 +142,7 @@ async function remove() {
                 icon="i-lucide-pencil"
                 @click="editing = true"
               >
-                Rename
+                {{ $t('addresses.rename') }}
               </UButton>
               <UButton
                 variant="soft"
@@ -150,17 +150,17 @@ async function remove() {
                 icon="i-lucide-trash-2"
                 @click="remove"
               >
-                Delete
+                {{ $t('common.delete') }}
               </UButton>
             </template>
             <template v-else>
-              <UButton color="primary" @click="save">Save</UButton>
+              <UButton color="primary" @click="save">{{ $t('common.save') }}</UButton>
               <UButton
                 variant="ghost"
                 color="neutral"
                 @click="editing = false; editName = address!.name"
               >
-                Cancel
+                {{ $t('common.cancel') }}
               </UButton>
             </template>
           </div>
@@ -168,16 +168,16 @@ async function remove() {
       </section>
 
       <section class="mt-8">
-        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">Groups in this address</h3>
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('addresses.groupsInAddress') }}</h3>
         <div class="mt-4 flex items-center gap-2">
           <UInput
             v-model="newGroupName"
-            placeholder="New group name (e.g. Lobby)"
+            :placeholder="$t('addresses.newGroupPlaceholder')"
             class="max-w-md flex-1"
             @keyup.enter="createGroup"
           />
           <UButton color="primary" icon="i-lucide-plus" @click="createGroup">
-            Add group
+            {{ $t('addresses.addGroup') }}
           </UButton>
         </div>
 
@@ -185,8 +185,8 @@ async function remove() {
           v-if="groupsStore.list.length === 0 && !groupsStore.loading"
           class="mt-4"
           icon="i-lucide-folder"
-          title="No groups yet"
-          description="Groups subdivide an address. A clinic might have 'Lobby' and 'Cafeteria' groups."
+          :title="$t('addresses.noGroupsTitle')"
+          :description="$t('addresses.noGroupsDescription')"
         />
         <ul v-else class="mt-4 space-y-2.5">
           <li

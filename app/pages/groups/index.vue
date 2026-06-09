@@ -5,6 +5,8 @@ import { useAddressesStore } from '~/app/stores/addresses'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
+
 const groupsStore = useGroupsStore()
 const addressesStore = useAddressesStore()
 const route = useRoute()
@@ -29,7 +31,7 @@ onMounted(async () => {
 })
 
 const addressItems = computed(() => [
-  { label: 'All addresses', value: null },
+  { label: t('groups.allAddresses'), value: null },
   ...addressesStore.list.map((a) => ({ label: a.name, value: a.id }))
 ])
 
@@ -41,8 +43,8 @@ function addressName(id: number) {
 <template>
   <div class="reveal">
     <PageHeader
-      title="Groups"
-      subtitle="Zones inside an address — a clinic's Lobby and Cafeteria, say."
+      :title="$t('groups.pageTitle')"
+      :subtitle="$t('groups.pageSubtitle')"
       icon="i-lucide-folder"
     >
       <template #actions>
@@ -50,7 +52,7 @@ function addressName(id: number) {
           v-model="addressFilter"
           :items="addressItems"
           value-key="value"
-          placeholder="Filter by address"
+          :placeholder="$t('groups.filterByAddress')"
           class="w-64"
         />
       </template>
@@ -63,8 +65,8 @@ function addressName(id: number) {
     <EmptyState
       v-else-if="groupsStore.list.length === 0"
       icon="i-lucide-folder"
-      title="No groups match"
-      description="Create groups from an address detail page."
+      :title="$t('groups.emptyTitle')"
+      :description="$t('groups.emptyDescription')"
     />
     <ul v-else class="space-y-2.5">
       <li
@@ -79,7 +81,7 @@ function addressName(id: number) {
           <div class="min-w-0 flex-1">
             <p class="font-medium text-(--ui-text-highlighted)">{{ g.name }}</p>
             <p class="text-xs text-(--ui-text-muted)">
-              in {{ addressName(g.addressId) }}
+              {{ $t('groups.inAddress', { name: addressName(g.addressId) }) }}
             </p>
           </div>
           <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />

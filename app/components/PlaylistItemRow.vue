@@ -57,12 +57,12 @@ defineEmits<{
         {{ media?.filename ?? `media #${item.mediaId}` }}
       </p>
       <p class="mt-1 text-xs text-(--ui-text-muted)">
-        {{ media?.kind === 'video' ? 'Video' : 'Image' }}
+        {{ media?.kind === 'video' ? $t('components.playlistItemRow.video') : $t('components.playlistItemRow.image') }}
       </p>
     </div>
     <div class="flex flex-col gap-1 items-end">
       <label class="flex items-center gap-2 text-xs text-(--ui-text-muted)">
-        Duration (s)
+        {{ $t('components.playlistItemRow.durationLabel') }}
         <UInput
           :model-value="item.durationMsOverride !== null ? item.durationMsOverride / 1000 : ''"
           @update:model-value="
@@ -75,7 +75,7 @@ defineEmits<{
           type="number"
           size="xs"
           :disabled="media?.kind === 'video'"
-          :placeholder="media?.kind === 'video' ? 'native' : '10'"
+          :placeholder="media?.kind === 'video' ? $t('components.playlistItemRow.durationPlaceholderNative') : $t('components.playlistItemRow.durationPlaceholderDefault')"
           class="w-20"
         />
       </label>
@@ -86,7 +86,7 @@ defineEmits<{
         size="xs"
         @click="$emit('remove')"
       >
-        Remove
+        {{ $t('components.playlistItemRow.remove') }}
       </UButton>
     </div>
   </li>

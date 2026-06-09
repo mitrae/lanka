@@ -23,7 +23,7 @@ const filtered = computed(() => {
   <div>
     <UInput
       v-model="search"
-      placeholder="Search media…"
+      :placeholder="$t('components.mediaPicker.searchPlaceholder')"
       icon="i-lucide-search"
       class="w-full"
     />

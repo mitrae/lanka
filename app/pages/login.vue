@@ -1,5 +1,6 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
+const { t } = useI18n()
 const auth = useAuthStore()
 const email = ref('')
 const password = ref('')
@@ -17,7 +18,7 @@ async function submit() {
     const user = await auth.login(email.value, password.value)
     await navigateTo(user.role === 'client' ? '/portal' : '/')
   } catch {
-    error.value = 'Invalid email or password'
+    error.value = t('auth.invalidCredentials')
   } finally {
     loading.value = false
   }
@@ -51,7 +52,7 @@ async function handleGoogleCredential(response: { credential: string }) {
     const user = await auth.loginWithGoogle(response.credential)
     await navigateTo(user.role === 'client' ? '/portal' : '/')
   } catch {
-    error.value = 'Google sign-in failed, or no Lanka account for that address'
+    error.value = t('auth.googleFailed')
   } finally {
     loading.value = false
   }
@@ -116,15 +117,15 @@ onMounted(async () => {
       <div class="relative space-y-10">
         <div class="max-w-sm">
           <h2 class="text-4xl font-bold leading-[1.1] tracking-tight">
-            Your screens,<br >one calm console.
+            {{ $t('auth.heroHeading') }}
           </h2>
           <p class="mt-4 text-sm leading-relaxed text-indigo-200/80">
-            Monitor, group, and program every display across your network — from one quiet control plane.
+            {{ $t('auth.heroSubtitle') }}
           </p>
         </div>
         <div class="flex items-center gap-2 text-xs font-medium text-indigo-200/70">
           <UIcon name="i-lucide-shield-check" class="size-4" />
-          <span>Self-hosted · Tailscale-secured</span>
+          <span>{{ $t('auth.trustFooter') }}</span>
         </div>
       </div>
     </aside>
@@ -138,13 +139,13 @@ onMounted(async () => {
           <span class="text-xl font-semibold tracking-tight">Lanka</span>
         </div>
 
-        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">Sign in</h1>
+        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.signIn') }}</h1>
         <p class="mt-2 text-sm text-(--ui-text-muted)">
-          Welcome back. Enter your credentials to reach the console.
+          {{ $t('auth.signInSubtitle') }}
         </p>
 
         <form class="mt-8 space-y-4" @submit.prevent="submit">
-          <UFormField label="Email">
+          <UFormField :label="$t('auth.emailLabel')">
             <UInput
               v-model="email"
               name="email"
@@ -156,7 +157,7 @@ onMounted(async () => {
               class="w-full"
             />
           </UFormField>
-          <UFormField label="Password">
+          <UFormField :label="$t('auth.passwordLabel')">
             <UInput
               v-model="password"
               type="password"
@@ -170,7 +171,7 @@ onMounted(async () => {
           </UFormField>
 
           <div class="flex justify-end">
-            <NuxtLink to="/forgot-password" class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">Forgot password?</NuxtLink>
+            <NuxtLink to="/forgot-password" class="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-400">{{ $t('auth.forgotPassword') }}</NuxtLink>
           </div>
 
           <div
@@ -190,21 +191,21 @@ onMounted(async () => {
             trailing-icon="i-lucide-arrow-right"
             class="mt-2"
           >
-            Sign in
+            {{ $t('auth.signIn') }}
           </UButton>
         </form>
 
         <template v-if="googleClientId">
           <div class="my-6 flex items-center gap-3 text-xs font-medium text-(--ui-text-dimmed)">
             <span class="h-px flex-1 bg-(--ui-border)" />
-            <span>or</span>
+            <span>{{ $t('auth.or') }}</span>
             <span class="h-px flex-1 bg-(--ui-border)" />
           </div>
           <div ref="googleBtn" class="flex justify-center" />
         </template>
 
         <p class="mt-10 text-xs leading-relaxed text-(--ui-text-dimmed)">
-          Lanka signage control plane · access is provisioned by your administrator.
+          {{ $t('auth.provisionNote') }}
         </p>
       </div>
     </section>
