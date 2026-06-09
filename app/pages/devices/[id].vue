@@ -126,7 +126,7 @@ async function reload() {
                   {{ device.id }}
                 </p>
                 <p class="mt-2 text-sm text-(--ui-text-muted)">
-                  Player v{{ device.playerVersion ?? '?' }} ·
+                  {{ $t('devices.playerVersion', { version: device.playerVersion ?? '?' }) }} ·
                   {{
                     device.lastSeenAt
                       ? $t('devices.lastSeenAt', { time: new Date(device.lastSeenAt).toLocaleString() })

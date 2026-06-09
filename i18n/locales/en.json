@@ -115,6 +115,7 @@
     "emptyDescription": "Adjust filters, or wait for devices to self-register.",
     "backToDevices": "Devices",
     "deviceLabel": "Device",
+    "playerVersion": "Player v{version}",
     "lastSeenAt": "last seen {time}",
     "neverSeen": "never seen",
     "namePlaceholder": "Name",

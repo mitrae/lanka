@@ -115,6 +115,7 @@
     "emptyDescription": "Змініть фільтри або зачекайте, поки пристрої зареєструються.",
     "backToDevices": "Пристрої",
     "deviceLabel": "Пристрій",
+    "playerVersion": "Плеєр v{version}",
     "lastSeenAt": "востаннє онлайн {time}",
     "neverSeen": "ще не з'являвся",
     "namePlaceholder": "Назва",
