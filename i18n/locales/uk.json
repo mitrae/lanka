@@ -42,6 +42,49 @@
       "title": "Останні помилки відтворення",
       "pendingTitle": "Стрічка помилок у розробці",
       "pendingDescription": "Ендпоінт /api/device-errors ще не додано. З'явиться в наступному плані."
+    },
+    "mediaCard": {
+      "usedIn": "Використовується в {n}"
+    },
+    "mediaPicker": {
+      "searchPlaceholder": "Пошук медіа…"
+    },
+    "mediaUploadDialog": {
+      "title": "Завантажити медіа",
+      "description": "Відео та зображення. Максимум 500 МБ на файл. Дублікати дедуплікуються за sha256.",
+      "dropHint": "Перетягніть файли сюди, або {browse}",
+      "browse": "виберіть",
+      "uploadFailed": "Помилка завантаження: {name}",
+      "uploadedFiles": "{n} файл завантажено | {n} файли завантажено | {n} файлів завантажено",
+      "uploadButton": "Завантажити",
+      "uploadButtonCount": "Завантажити ({n})"
+    },
+    "assignmentPicker": {
+      "noDirectAssignment": "— Без прямого призначення —",
+      "assignmentCleared": "Призначення скасовано",
+      "assignmentUpdated": "Призначення оновлено",
+      "updateFailed": "Помилка оновлення",
+      "apply": "Застосувати"
+    },
+    "playlistItemRow": {
+      "video": "Відео",
+      "image": "Зображення",
+      "durationLabel": "Тривалість (с)",
+      "durationPlaceholderNative": "native",
+      "durationPlaceholderDefault": "10",
+      "remove": "Видалити"
+    },
+    "unclaimedDevicesTray": {
+      "title": "Незакріплені пристрої",
+      "pending": "{n} очікує | {n} очікують | {n} очікують",
+      "allClaimed": "Усі пристрої закріплено",
+      "allClaimedDescription": "Пристрої, що самостійно реєструються, з'являться тут.",
+      "namePlaceholder": "Назва (напр. TV-Lobby-1)",
+      "groupPlaceholder": "Група",
+      "claim": "Закріпити",
+      "claimValidation": "Введіть назву та оберіть групу",
+      "claimedAs": "Закріплено як \"{name}\"",
+      "claimFailed": "Помилка закріплення"
     }
   },
   "auth": {

@@ -42,6 +42,49 @@
       "title": "Recent playback errors",
       "pendingTitle": "Error feed pending",
       "pendingDescription": "The /api/device-errors endpoint hasn't been added yet. Coming in a follow-up plan."
+    },
+    "mediaCard": {
+      "usedIn": "Used in {n}"
+    },
+    "mediaPicker": {
+      "searchPlaceholder": "Search media…"
+    },
+    "mediaUploadDialog": {
+      "title": "Upload media",
+      "description": "Videos and images. Max 500 MB per file. Duplicate content is deduplicated by sha256.",
+      "dropHint": "Drop files here, or {browse}",
+      "browse": "browse",
+      "uploadFailed": "Upload failed: {name}",
+      "uploadedFiles": "{n} file uploaded | {n} files uploaded | {n} files uploaded",
+      "uploadButton": "Upload",
+      "uploadButtonCount": "Upload ({n})"
+    },
+    "assignmentPicker": {
+      "noDirectAssignment": "— No direct assignment —",
+      "assignmentCleared": "Assignment cleared",
+      "assignmentUpdated": "Assignment updated",
+      "updateFailed": "Update failed",
+      "apply": "Apply"
+    },
+    "playlistItemRow": {
+      "video": "Video",
+      "image": "Image",
+      "durationLabel": "Duration (s)",
+      "durationPlaceholderNative": "native",
+      "durationPlaceholderDefault": "10",
+      "remove": "Remove"
+    },
+    "unclaimedDevicesTray": {
+      "title": "Unclaimed devices",
+      "pending": "{n} pending | {n} pending | {n} pending",
+      "allClaimed": "All devices are claimed",
+      "allClaimedDescription": "Devices that self-register will appear here.",
+      "namePlaceholder": "Name (e.g. TV-Lobby-1)",
+      "groupPlaceholder": "Group",
+      "claim": "Claim",
+      "claimValidation": "Enter a name and pick a group",
+      "claimedAs": "Claimed as \"{name}\"",
+      "claimFailed": "Claim failed"
     }
   },
   "auth": {

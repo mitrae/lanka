@@ -10,6 +10,7 @@ const emit = defineEmits<{
 
 const store = useMediaStore()
 const toast = useToast()
+const { t } = useI18n()
 const files = ref<File[]>([])
 const uploading = ref(false)
 const dragOver = ref(false)
@@ -49,7 +50,7 @@ async function upload() {
       ok++
     } catch (err: any) {
       toast.add({
-        title: `Upload failed: ${f.name}`,
+        title: t('components.mediaUploadDialog.uploadFailed', { name: f.name }),
         description: err.data?.message ?? err.message,
         color: 'error'
       })
@@ -58,7 +59,7 @@ async function upload() {
   uploading.value = false
   if (ok > 0) {
     toast.add({
-      title: `Uploaded ${ok} file${ok > 1 ? 's' : ''}`,
+      title: t('components.mediaUploadDialog.uploadedFiles', ok, { named: { n: ok } }),
       color: 'success'
     })
     emit('uploaded')
@@ -76,9 +77,9 @@ async function upload() {
   >
     <template #content>
       <div class="p-6">
-        <h3 class="text-base font-semibold">Upload media</h3>
+        <h3 class="text-base font-semibold">{{ $t('components.mediaUploadDialog.title') }}</h3>
         <p class="mt-1 text-sm text-(--ui-text-muted)">
-          Videos and images. Max 500 MB per file. Duplicate content is deduplicated by sha256.
+          {{ $t('components.mediaUploadDialog.description') }}
         </p>
 
         <div
@@ -92,19 +93,20 @@ async function upload() {
           @drop="onDrop"
         >
           <UIcon name="i-lucide-upload-cloud" class="mx-auto size-8 text-(--ui-text-muted)" />
-          <p class="mt-2 text-sm">
-            Drop files here, or
-            <label class="cursor-pointer text-primary-500 hover:underline">
-              browse
-              <input
-                type="file"
-                multiple
-                accept="video/*,image/*"
-                class="hidden"
-                @change="onPick"
-              />
-            </label>
-          </p>
+          <i18n-t keypath="components.mediaUploadDialog.dropHint" tag="p" class="mt-2 text-sm">
+            <template #browse>
+              <label class="cursor-pointer text-primary-500 hover:underline">
+                {{ $t('components.mediaUploadDialog.browse') }}
+                <input
+                  type="file"
+                  multiple
+                  accept="video/*,image/*"
+                  class="hidden"
+                  @change="onPick"
+                />
+              </label>
+            </template>
+          </i18n-t>
         </div>
 
         <ul v-if="files.length > 0" class="mt-4 max-h-64 space-y-2 overflow-y-auto">
@@ -135,7 +137,7 @@ async function upload() {
 
         <div class="mt-6 flex justify-end gap-2">
           <UButton variant="ghost" @click="emit('update:modelValue', false)">
-            Cancel
+            {{ $t('common.cancel') }}
           </UButton>
           <UButton
             color="primary"
@@ -143,7 +145,7 @@ async function upload() {
             :disabled="files.length === 0"
             @click="upload"
           >
-            Upload {{ files.length > 0 ? `(${files.length})` : '' }}
+            {{ files.length > 0 ? $t('components.mediaUploadDialog.uploadButtonCount', { n: files.length }) : $t('components.mediaUploadDialog.uploadButton') }}
           </UButton>
         </div>
       </div>

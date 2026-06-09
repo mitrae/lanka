@@ -13,6 +13,7 @@ const emit = defineEmits<{ (e: 'changed'): void }>()
 const playlistsStore = usePlaylistsStore()
 const api = useApiClient()
 const toast = useToast()
+const { t } = useI18n()
 
 const selected = ref<number | null>(props.currentPlaylistId)
 
@@ -26,7 +27,7 @@ watch(
 )
 
 const items = computed(() => [
-  { label: '— No direct assignment —', value: null },
+  { label: t('components.assignmentPicker.noDirectAssignment'), value: null },
   ...playlistsStore.list.map((p) => ({ label: p.name, value: p.id }))
 ])
 
@@ -44,7 +45,7 @@ async function apply() {
           await api.unassignAddress(props.targetId as number)
           break
       }
-      toast.add({ title: 'Assignment cleared', color: 'success' })
+      toast.add({ title: t('components.assignmentPicker.assignmentCleared'), color: 'success' })
     } else {
       switch (props.target) {
         case 'device':
@@ -63,12 +64,12 @@ async function apply() {
           })
           break
       }
-      toast.add({ title: 'Assignment updated', color: 'success' })
+      toast.add({ title: t('components.assignmentPicker.assignmentUpdated'), color: 'success' })
     }
     emit('changed')
   } catch (err: any) {
     toast.add({
-      title: 'Update failed',
+      title: t('components.assignmentPicker.updateFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -89,7 +90,7 @@ async function apply() {
       :disabled="selected === props.currentPlaylistId"
       @click="apply"
     >
-      Apply
+      {{ $t('components.assignmentPicker.apply') }}
     </UButton>
   </div>
 </template>
