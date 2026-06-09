@@ -210,6 +210,18 @@
     "emptyPlaylistTitle": "Empty playlist",
     "emptyPlaylistDescription": "Pick media from the left panel to add items."
   },
+  "media": {
+    "pageSubtitle": "Upload videos and images. Playlists reference media from this library.",
+    "upload": "Upload",
+    "emptyTitle": "No media yet",
+    "emptyDescription": "Upload videos or images to start building playlists.",
+    "uploadFirstFile": "Upload your first file",
+    "deleteConfirmTitle": "Delete {name}?",
+    "deleteConfirmUsed": "This file is used in {n} playlist. Deleting will remove those entries and bump each playlist version. | This file is used in {n} playlists. Deleting will remove those entries and bump each playlist version. | This file is used in {n} playlists. Deleting will remove those entries and bump each playlist version.",
+    "deleteConfirmUnused": "Removes the file and its thumbnail permanently.",
+    "deleted": "Deleted",
+    "deleteFailed": "Delete failed"
+  },
   "auth": {
     "signIn": "Sign in",
     "signInSubtitle": "Welcome back. Enter your credentials to reach the console.",
