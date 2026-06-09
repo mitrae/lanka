@@ -777,11 +777,17 @@ Run:
 ```bash
 GOOGLE_CLIENT_ID=test-cid.apps.googleusercontent.com pnpm build
 ```
-Expected: build succeeds. Optionally confirm the value was baked:
+Expected: build succeeds.
+
+⚠️ **Where the value lands:** this is an SPA served by the nitro node server, which injects `runtimeConfig.public` into the served HTML payload at request time. The value is therefore baked into `.output/server/chunks/nitro/nitro.mjs` (server runtime-config defaults) and delivered to the browser at runtime — it is **NOT** a literal in the static `.output/public/_nuxt/*.js` chunks (those only *reference* the key, e.g. `googleClientId||""`), same as `mediaPublicBase`. So do NOT grep `.output/public` for it. Confirm the bake two ways:
 ```bash
-grep -rl "test-cid.apps.googleusercontent.com" .output/public >/dev/null && echo "baked into SPA" || echo "NOT baked — investigate"
+grep -l "test-cid.apps.googleusercontent.com" .output/server/chunks/nitro/nitro.mjs && echo "baked into server runtime config"
+# and prove it's delivered to the browser:
+DATABASE_URL="file:/tmp/gauth-verify.db" HOST=127.0.0.1 PORT=5199 SEED_SUPER_PASSWORD=x SEED_ADMIN_PASSWORD=x SEED_CLIENT_PASSWORD=x node .output/server/index.mjs &
+sleep 3 && curl -s http://127.0.0.1:5199/ | grep -o "test-cid.apps.googleusercontent.com" && echo "delivered to browser"
+kill %1
 ```
-Expected: `baked into SPA`.
+Expected: both `baked into server runtime config` and `delivered to browser`.
 
 - [ ] **Step 4: Confirm clean tree**
 
