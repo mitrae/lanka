@@ -251,6 +251,22 @@
     "namePlaceholder": "Назва нової організації",
     "emptyTitle": "Поки немає організацій."
   },
+  "portal": {
+    "clientBadge": "Клієнт",
+    "subtitle": "Охоплення вашого контенту в мережі.",
+    "loadFailed": "Не вдалося завантажити статистику",
+    "yourStats": "Ваша статистика",
+    "statMediaItems": "Медіафайли",
+    "statScreensReached": "Охоплено екранів",
+    "statOnlineNow": "Онлайн зараз",
+    "statShowingNow": "Показує зараз",
+    "colMedia": "Медіа",
+    "colScheduled": "Заплановано",
+    "colOnline": "Онлайн",
+    "colShowingNow": "Показує зараз",
+    "colErrors": "Помилки",
+    "emptyMedia": "Поки немає медіа, призначених вашій організації."
+  },
   "auth": {
     "signIn": "Увійти",
     "signInSubtitle": "З поверненням. Введіть свої дані, щоб увійти до консолі.",

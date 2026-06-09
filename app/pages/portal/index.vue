@@ -2,6 +2,7 @@
 import type { OrgReach } from '~/app/types/api'
 definePageMeta({ layout: 'portal' })
 
+const { t } = useI18n()
 const api = useApiClient()
 const stats = ref<OrgReach | null>(null)
 const loading = ref(true)
@@ -11,7 +12,7 @@ onMounted(async () => {
   try {
     stats.value = await api.getPortalStats()
   } catch (e: any) {
-    error.value = e?.message ?? 'Failed to load stats'
+    error.value = e?.message ?? t('portal.loadFailed')
   } finally {
     loading.value = false
   }
@@ -21,31 +22,31 @@ onMounted(async () => {
 <template>
   <div class="reveal pt-4">
     <PageHeader
-      :title="stats?.organization.name ?? 'Your stats'"
-      subtitle="Reach of your content across the network."
+      :title="stats?.organization.name ?? $t('portal.yourStats')"
+      :subtitle="$t('portal.subtitle')"
       icon="i-lucide-bar-chart-3"
     />
 
-    <p v-if="loading" class="text-(--ui-text-muted)">Loading…</p>
+    <p v-if="loading" class="text-(--ui-text-muted)">{{ $t('common.loading') }}</p>
     <p v-else-if="error" class="text-rose-500">{{ error }}</p>
 
     <template v-else-if="stats">
       <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Media items" :value="stats.totals.mediaCount" icon="i-lucide-image" />
-        <StatCard label="Screens reached" :value="stats.totals.screensReached" icon="i-lucide-tv" tone="blue" />
-        <StatCard label="Online now" :value="stats.totals.screensOnline" icon="i-lucide-wifi" tone="emerald" />
-        <StatCard label="Showing now" :value="stats.totals.showingNow" icon="i-lucide-play" tone="amber" />
+        <StatCard :label="$t('portal.statMediaItems')" :value="stats.totals.mediaCount" icon="i-lucide-image" />
+        <StatCard :label="$t('portal.statScreensReached')" :value="stats.totals.screensReached" icon="i-lucide-tv" tone="blue" />
+        <StatCard :label="$t('portal.statOnlineNow')" :value="stats.totals.screensOnline" icon="i-lucide-wifi" tone="emerald" />
+        <StatCard :label="$t('portal.statShowingNow')" :value="stats.totals.showingNow" icon="i-lucide-play" tone="amber" />
       </div>
 
       <div class="soft-card mt-8 overflow-hidden">
         <table class="w-full text-sm">
           <thead class="text-left text-xs uppercase tracking-wide text-(--ui-text-muted)">
             <tr class="border-b border-(--ui-border)">
-              <th class="px-5 py-3 font-medium">Media</th>
-              <th class="px-5 py-3 font-medium tabular-nums">Scheduled</th>
-              <th class="px-5 py-3 font-medium tabular-nums">Online</th>
-              <th class="px-5 py-3 font-medium tabular-nums">Showing now</th>
-              <th class="px-5 py-3 font-medium tabular-nums">Errors</th>
+              <th class="px-5 py-3 font-medium">{{ $t('portal.colMedia') }}</th>
+              <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colScheduled') }}</th>
+              <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colOnline') }}</th>
+              <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colShowingNow') }}</th>
+              <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colErrors') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -60,7 +61,7 @@ onMounted(async () => {
               <td class="px-5 py-3 tabular-nums" :class="m.recentErrors ? 'text-rose-500' : ''">{{ m.recentErrors }}</td>
             </tr>
             <tr v-if="stats.media.length === 0">
-              <td colspan="5" class="px-5 py-8 text-center text-(--ui-text-muted)">No media assigned to your organization yet.</td>
+              <td colspan="5" class="px-5 py-8 text-center text-(--ui-text-muted)">{{ $t('portal.emptyMedia') }}</td>
             </tr>
           </tbody>
         </table>

@@ -18,17 +18,17 @@ async function signOut() {
           <UIcon name="i-lucide-radio-tower" class="size-5" />
         </span>
         <span class="text-lg font-semibold tracking-tight">Lanka</span>
-        <span class="ml-1 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400">Client</span>
+        <span class="ml-1 rounded-full bg-indigo-500/10 px-2.5 py-0.5 text-xs font-medium text-indigo-600 dark:text-indigo-400">{{ $t('portal.clientBadge') }}</span>
       </div>
       <div class="flex items-center gap-2 text-sm text-(--ui-text-muted)">
         <span>{{ auth.user?.email }}</span>
         <UButton
           variant="ghost" color="neutral" size="sm"
           :icon="colorMode.value === 'dark' ? 'i-lucide-sun' : 'i-lucide-moon'"
-          :aria-label="`Switch to ${colorMode.value === 'dark' ? 'light' : 'dark'} mode`"
+          :aria-label="colorMode.value === 'dark' ? $t('nav.switchToLight') : $t('nav.switchToDark')"
           @click="toggleDark"
         />
-        <UButton variant="ghost" color="neutral" size="sm" icon="i-lucide-log-out" aria-label="Sign out" @click="signOut" />
+        <UButton variant="ghost" color="neutral" size="sm" icon="i-lucide-log-out" :aria-label="$t('nav.signOut')" @click="signOut" />
       </div>
     </header>
     <main class="mx-auto max-w-6xl px-6 pb-16 sm:px-10">
