@@ -15,7 +15,10 @@ export interface PlayerEnv {
 export function usePlayerEnv(mediaBase = ''): PlayerEnv {
   return {
     fileUrl(sha256: string): string {
-      return mediaBase ? `${mediaBase.replace(/\/$/, '')}/${sha256}` : `/media/${sha256}`
+      // R2Store keys full media under the `media/` prefix (server/services/r2-store.ts),
+      // and the server proxy route is `/media/<sha>` — so both the CDN and the
+      // fallback paths must include the `/media/` segment.
+      return mediaBase ? `${mediaBase.replace(/\/$/, '')}/media/${sha256}` : `/media/${sha256}`
     }
   }
 }
