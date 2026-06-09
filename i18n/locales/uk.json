@@ -70,7 +70,7 @@
       "video": "Відео",
       "image": "Зображення",
       "durationLabel": "Тривалість (с)",
-      "durationPlaceholderNative": "native",
+      "durationPlaceholderNative": "авто",
       "durationPlaceholderDefault": "10",
       "remove": "Видалити"
     },
