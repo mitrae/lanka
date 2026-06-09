@@ -28,6 +28,9 @@
     "organizations": "Організації",
     "signageControl": "Керування екранами",
     "realtime": "У реальному часі",
+    "streamConnected": "Підключено",
+    "streamConnecting": "Підключення…",
+    "streamDisconnected": "Відключено",
     "signOut": "Вийти",
     "switchToDark": "Перейти в темний режим",
     "switchToLight": "Перейти в світлий режим"

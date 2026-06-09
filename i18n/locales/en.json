@@ -28,6 +28,9 @@
     "organizations": "Organizations",
     "signageControl": "Signage control",
     "realtime": "Realtime",
+    "streamConnected": "Connected",
+    "streamConnecting": "Connecting",
+    "streamDisconnected": "Disconnected",
     "signOut": "Sign out",
     "switchToDark": "Switch to dark mode",
     "switchToLight": "Switch to light mode"

@@ -45,6 +45,24 @@ function isActive(to: string) {
 }
 
 const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCase())
+
+function streamLabel(s: string) {
+  const map: Record<string, string> = {
+    connected: t('nav.streamConnected'),
+    connecting: t('nav.streamConnecting'),
+    disconnected: t('nav.streamDisconnected')
+  }
+  return map[s] ?? s
+}
+
+function roleLabel(r: string) {
+  const map: Record<string, string> = {
+    super: t('users.roleSuper'),
+    admin: t('users.roleAdmin'),
+    client: t('users.roleClient')
+  }
+  return map[r] ?? r
+}
 </script>
 
 <template>
@@ -108,13 +126,13 @@ const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCas
           </span>
           <span class="text-(--ui-text-muted)">{{ $t('nav.realtime') }}</span>
           <span
-            class="ml-auto font-medium capitalize"
+            class="ml-auto font-medium"
             :class="{
               'text-emerald-600 dark:text-emerald-400': streamState === 'connected',
               'text-amber-600 dark:text-amber-400': streamState === 'connecting',
               'text-rose-500': streamState === 'disconnected'
             }"
-          >{{ streamState }}</span>
+          >{{ streamLabel(streamState) }}</span>
         </div>
 
         <div class="soft-card flex items-center gap-2.5 p-2.5">
@@ -123,7 +141,7 @@ const initials = computed(() => (auth.user?.email ?? '?').slice(0, 2).toUpperCas
           </span>
           <div class="min-w-0 flex-1">
             <p class="truncate text-sm font-medium leading-tight">{{ auth.user?.email }}</p>
-            <p class="text-xs capitalize text-(--ui-text-muted)">{{ auth.role }}</p>
+            <p class="text-xs text-(--ui-text-muted)">{{ roleLabel(auth.role ?? '') }}</p>
           </div>
           <UButton
             variant="ghost" color="neutral" size="sm"
