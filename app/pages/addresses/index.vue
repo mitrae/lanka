@@ -4,6 +4,7 @@ import { useAddressesStore } from '~/app/stores/addresses'
 
 definePageMeta({ layout: 'default' })
 
+const { t } = useI18n()
 const store = useAddressesStore()
 const toast = useToast()
 const creating = ref(false)
@@ -15,12 +16,12 @@ async function createAddress() {
   if (!newName.value.trim()) return
   try {
     await store.create({ name: newName.value.trim() })
-    toast.add({ title: 'Address created', color: 'success' })
+    toast.add({ title: t('addresses.created'), color: 'success' })
     newName.value = ''
     creating.value = false
   } catch (err: any) {
     toast.add({
-      title: 'Create failed',
+      title: t('addresses.createFailed'),
       description: err.data?.message ?? err.message,
       color: 'error'
     })
@@ -31,8 +32,8 @@ async function createAddress() {
 <template>
   <div class="reveal">
     <PageHeader
-      title="Addresses"
-      subtitle="Physical locations. Each address can contain multiple groups."
+      :title="$t('addresses.pageTitle')"
+      :subtitle="$t('addresses.pageSubtitle')"
       icon="i-lucide-building-2"
     >
       <template #actions>
@@ -42,7 +43,7 @@ async function createAddress() {
           color="primary"
           @click="creating = true"
         >
-          New address
+          {{ $t('addresses.newAddress') }}
         </UButton>
       </template>
     </PageHeader>
@@ -53,18 +54,18 @@ async function createAddress() {
     >
       <UInput
         v-model="newName"
-        placeholder="Address name (e.g. Mechnikova Clinic)"
+        :placeholder="$t('addresses.namePlaceholder')"
         class="flex-1"
         autofocus
         @keyup.enter="createAddress"
       />
-      <UButton color="primary" @click="createAddress">Create</UButton>
+      <UButton color="primary" @click="createAddress">{{ $t('common.create') }}</UButton>
       <UButton
         color="neutral"
         variant="ghost"
         @click="creating = false; newName = ''"
       >
-        Cancel
+        {{ $t('common.cancel') }}
       </UButton>
     </div>
 
@@ -75,8 +76,8 @@ async function createAddress() {
     <EmptyState
       v-else-if="store.list.length === 0"
       icon="i-lucide-building-2"
-      title="No addresses yet"
-      description="Create your first address to start organizing devices."
+      :title="$t('addresses.emptyTitle')"
+      :description="$t('addresses.emptyDescription')"
     />
     <ul v-else class="space-y-2.5">
       <li
