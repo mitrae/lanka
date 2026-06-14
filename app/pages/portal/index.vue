@@ -13,6 +13,7 @@ let timer: ReturnType<typeof setInterval> | null = null
 async function refresh() {
   try {
     stats.value = await api.getPortalStats()
+    error.value = null
   } catch (e: any) {
     error.value = e?.message ?? t('portal.loadFailed')
   } finally {
