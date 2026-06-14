@@ -23,6 +23,8 @@ export async function handleListMedia(
       width: schema.media.width,
       height: schema.media.height,
       createdAt: schema.media.createdAt,
+      organizationId: schema.media.organizationId,
+      playCount: schema.media.playCount,
       usedInPlaylists: sql<number>`count(DISTINCT ${schema.playlistItems.playlistId})`
     })
     .from(schema.media)
