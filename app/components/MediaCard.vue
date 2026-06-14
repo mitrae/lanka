@@ -5,13 +5,6 @@ import type { MediaListRow } from '~/app/types/api'
 const props = defineProps<{ media: MediaListRow }>()
 const emit = defineEmits<{ (e: 'delete', m: MediaListRow): void; (e: 'select', m: MediaListRow): void }>()
 
-function fmtBytes(n: number) {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`
-  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`
-}
-
 function fmtDuration(ms: number | null) {
   if (!ms) return ''
   const s = Math.round(ms / 1000)
@@ -44,7 +37,7 @@ function fmtDuration(ms: number | null) {
       </p>
       <div class="mt-1 flex items-center justify-between text-xs text-(--ui-text-muted)">
         <span>
-          {{ fmtBytes(media.bytes) }}
+          {{ formatBytes(media.bytes) }}
           <template v-if="media.durationMs"> · {{ fmtDuration(media.durationMs) }}</template>
         </span>
         <div class="flex items-center gap-1">
@@ -62,13 +55,14 @@ function fmtDuration(ms: number | null) {
             color="primary"
             variant="soft"
           >
-            {{ media.playCount }}▶
+            <UIcon name="i-lucide-play" class="size-3" />
+            {{ media.playCount }}
           </UBadge>
           <UIcon
             v-if="media.organizationId != null"
             name="i-lucide-building-2"
             class="size-3.5 text-(--ui-text-muted)"
-            title="Assigned to organization"
+            :title="$t('media.assignedToOrg')"
           />
         </div>
       </div>

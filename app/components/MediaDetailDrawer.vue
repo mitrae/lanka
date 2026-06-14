@@ -19,19 +19,11 @@ async function load() {
   detail.value = await api.getMediaDetail(props.mediaId)
 }
 
-function humanBytes(n: number) {
-  const u = ['B', 'KB', 'MB', 'GB']
-  let i = 0
-  let b = n
-  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++ }
-  return `${b.toFixed(i ? 1 : 0)} ${u[i]}`
-}
-
 async function assignOrg(organizationId: number | null) {
   if (!detail.value) return
   try {
-    await api.assignMediaOrganization(detail.value.id, { organizationId })
-    detail.value.organizationId = organizationId
+    const updated = await api.assignMediaOrganization(detail.value.id, { organizationId })
+    detail.value.organizationId = updated.organizationId
     emit('changed')
     toast.add({ title: t('media.orgUpdated'), color: 'success' })
   } catch (e: any) {
@@ -66,7 +58,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           <dt class="text-(--ui-text-muted)">{{ $t('media.type') }}</dt>
           <dd>{{ detail.mimeType }}</dd>
           <dt class="text-(--ui-text-muted)">{{ $t('media.size') }}</dt>
-          <dd>{{ humanBytes(detail.bytes) }}</dd>
+          <dd>{{ formatBytes(detail.bytes) }}</dd>
           <template v-if="detail.width">
             <dt class="text-(--ui-text-muted)">{{ $t('media.dimensions') }}</dt>
             <dd>{{ detail.width }}×{{ detail.height }}</dd>
@@ -111,6 +103,9 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             <li v-if="detail.playlists.length === 0" class="text-(--ui-text-muted)">{{ $t('media.notUsed') }}</li>
           </ul>
         </div>
+      </div>
+      <div v-else class="flex items-center justify-center py-12 text-(--ui-text-muted)">
+        <UIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
       </div>
     </template>
   </USlideover>

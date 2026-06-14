@@ -241,7 +241,8 @@
     "usedInPlaylists": "Used in playlists",
     "notUsed": "Not used in any playlist",
     "orgUpdated": "Organization updated",
-    "orgUpdateFailed": "Failed to update organization"
+    "orgUpdateFailed": "Failed to update organization",
+    "assignedToOrg": "Assigned to organization"
   },
   "users": {
     "pageTitle": "Users",
