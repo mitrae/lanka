@@ -14,7 +14,10 @@ object KioskFlags {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(false)
-            window.insetsController?.apply {
+            // Access via decorView (forces installDecor) — window.insetsController
+            // NPEs on some ROMs when the decor view isn't created yet (called
+            // before setContentView). Reapplied on focus in onWindowFocusChanged.
+            window.decorView.windowInsetsController?.apply {
                 hide(WindowInsets.Type.systemBars())
                 systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
