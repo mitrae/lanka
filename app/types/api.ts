@@ -60,10 +60,15 @@ export interface Media {
   height: number | null
   createdAt: string
   organizationId: number | null
+  playCount: number
 }
 
 export interface MediaListRow extends Media {
   usedInPlaylists: number
+}
+
+export interface MediaDetail extends MediaListRow {
+  playlists: { id: number; name: string }[]
 }
 
 export interface PlaylistItem {
@@ -153,9 +158,18 @@ export interface MediaReach {
   screensOnline: number
   screensShowingNow: number
   recentErrors: number
+  playCount: number
 }
 export interface OrgReach {
   organization: { id: number; name: string }
   totals: { mediaCount: number; screensReached: number; screensOnline: number; showingNow: number }
   media: MediaReach[]
+}
+
+/** Rich now-playing status returned by GET /api/devices/:id/status */
+export interface DeviceNowPlaying {
+  online: boolean
+  lastSeenAt: number | null
+  currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
+  playlistName: string | null
 }

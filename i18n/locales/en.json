@@ -133,7 +133,11 @@
     "deleteConfirmTitle": "Delete {name}?",
     "deleteConfirmDescription": "Removes this device record. The APK on the TV will re-register on next boot.",
     "playlistSectionTitle": "Direct playlist assignment",
-    "playlistSectionDescription": "Overrides group- and address-level assignment for this device only. Clear to fall back to inherited."
+    "playlistSectionDescription": "Overrides group- and address-level assignment for this device only. Clear to fall back to inherited.",
+    "nowPlaying": "Now playing",
+    "online": "Online",
+    "offline": "Offline",
+    "nothingPlaying": "Nothing playing"
   },
   "addresses": {
     "pageTitle": "Addresses",

@@ -6,9 +6,11 @@ import type {
   CreateUserResult,
   Device,
   DeviceListRow,
+  DeviceNowPlaying,
   Group,
   Manifest,
   Media,
+  MediaDetail,
   MediaListRow,
   Organization,
   OrgReach,
@@ -47,6 +49,7 @@ export interface ApiClient {
     unclaimed?: boolean
   }): Promise<DeviceListRow[]>
   getDevice(id: string): Promise<Device>
+  getDeviceStatus(id: string): Promise<DeviceNowPlaying>
   updateDevice(
     id: string,
     body: { name?: string | null; groupId?: number | null }
@@ -71,6 +74,7 @@ export interface ApiClient {
   // media
   listMedia(): Promise<MediaListRow[]>
   getMedia(id: number): Promise<Media>
+  getMediaDetail(id: number): Promise<MediaDetail>
   deleteMedia(id: number, opts?: { force?: boolean }): Promise<void>
   uploadMedia(body: FormData): Promise<Media>
 
@@ -160,6 +164,8 @@ export function createApiClient(fetch: FetchFn): ApiClient {
       fetch<DeviceListRow[]>('/api/devices', { method: 'GET', query }),
     getDevice: (id) =>
       fetch<Device>(`/api/devices/${id}`, { method: 'GET' }),
+    getDeviceStatus: (id) =>
+      fetch<DeviceNowPlaying>(`/api/devices/${id}/status`, { method: 'GET' }),
     updateDevice: (id, body) =>
       fetch<Device>(`/api/devices/${id}`, { method: 'PATCH', body }),
     deleteDevice: (id) =>
@@ -190,6 +196,7 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     // media
     listMedia: () => fetch<MediaListRow[]>('/api/media', { method: 'GET' }),
     getMedia: (id) => fetch<Media>(`/api/media/${id}`, { method: 'GET' }),
+    getMediaDetail: (id) => fetch<MediaDetail>(`/api/media/${id}`, { method: 'GET' }),
     deleteMedia: (id, opts = {}) =>
       fetch<void>(`/api/media/${id}`, {
         method: 'DELETE',
