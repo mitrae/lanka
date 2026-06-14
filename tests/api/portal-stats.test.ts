@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { seedOrganization, seedMedia } from '../helpers/fixtures'
 import { handlePortalStats } from '~/server/api/portal/stats.get'
+import * as schema from '~/server/db/schema'
 
 describe('handlePortalStats', () => {
   let db: TestDb
@@ -27,5 +29,13 @@ describe('handlePortalStats', () => {
     await expect(
       handlePortalStats(db, { id: 1, email: 'c', role: 'client', organizationId: 999 })
     ).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('includes playCount in each media row', async () => {
+    const org = await seedOrganization(db, 'Counts')
+    const m = await seedMedia(db, { sha256: 'pc1', kind: 'video', organizationId: org.id })
+    await db.update(schema.media).set({ playCount: 7 }).where(eq(schema.media.id, m.id))
+    const res = await handlePortalStats(db, { id: 1, email: 'c', role: 'client', organizationId: org.id })
+    expect(res.media[0].playCount).toBe(7)
   })
 })

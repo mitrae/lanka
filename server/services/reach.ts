@@ -9,6 +9,7 @@ export type MediaReach = {
   mediaId: number
   filename: string
   kind: 'video' | 'image'
+  playCount: number
   screensScheduled: number
   screensOnline: number
   screensShowingNow: number
@@ -85,6 +86,7 @@ export async function computeOrgReach(
       mediaId: m.id,
       filename: m.filename,
       kind: m.kind as 'video' | 'image',
+      playCount: m.playCount,
       screensScheduled: a.scheduled.size,
       screensOnline: a.online.size,
       screensShowingNow: a.now.size,
