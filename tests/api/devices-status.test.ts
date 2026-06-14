@@ -46,4 +46,8 @@ describe('GET /api/devices/:id/status handler', () => {
     const s = await handleDeviceStatus(db, 'dev-1')
     expect(s.online).toBe(false)
   })
+
+  it('404s on unknown device', async () => {
+    await expect(handleDeviceStatus(db, 'ghost')).rejects.toMatchObject({ statusCode: 404 })
+  })
 })

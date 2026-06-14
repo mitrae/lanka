@@ -29,4 +29,8 @@ describe('media list + detail enrichment', () => {
     expect(detail.organizationId).toBeNull()
     expect(detail.playlists).toEqual([{ id: pl.id, name: 'P1' }])
   })
+
+  it('detail 404s on unknown id', async () => {
+    await expect(handleGetMedia(db, 9999)).rejects.toMatchObject({ statusCode: 404 })
+  })
 })

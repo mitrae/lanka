@@ -3,6 +3,9 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 
+// ~3 missed manifest polls (poll cadence is 30s) before we call a device
+// offline. Intentionally more lenient than the device-list view's online tier
+// in devices/index.get.ts — do not unify into a shared constant here.
 const ONLINE_WINDOW_MS = 90_000
 
 export type DeviceStatus = {
@@ -19,7 +22,7 @@ export async function handleDeviceStatus(
   const [device] = await db.select().from(schema.devices).where(eq(schema.devices.id, deviceId))
   if (!device) throw createError({ statusCode: 404, message: `Device ${deviceId} not found` })
 
-  const lastSeenAt = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : null
+  const lastSeenAt = device.lastSeenAt?.getTime() ?? null
   const online = lastSeenAt !== null && Date.now() - lastSeenAt < ONLINE_WINDOW_MS
 
   let currentItem: DeviceStatus['currentItem'] = null
