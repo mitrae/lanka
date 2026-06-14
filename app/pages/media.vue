@@ -12,6 +12,7 @@ const confirm = useConfirm()
 const toast = useToast()
 
 const showUpload = ref(false)
+const selectedId = ref<number | null>(null)
 
 onMounted(() => store.refresh())
 
@@ -69,6 +70,7 @@ async function remove(m: MediaListRow) {
         v-for="m in store.list"
         :key="m.id"
         :media="m"
+        @select="selectedId = m.id"
         @delete="remove"
       />
     </div>
@@ -76,6 +78,12 @@ async function remove(m: MediaListRow) {
     <MediaUploadDialog
       v-model="showUpload"
       @uploaded="store.refresh()"
+    />
+
+    <MediaDetailDrawer
+      :media-id="selectedId"
+      @update:open="selectedId = null"
+      @changed="store.refresh()"
     />
   </div>
 </template>

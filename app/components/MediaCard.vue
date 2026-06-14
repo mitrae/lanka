@@ -2,8 +2,8 @@
 <script setup lang="ts">
 import type { MediaListRow } from '~/app/types/api'
 
-defineProps<{ media: MediaListRow }>()
-defineEmits<{ (e: 'delete', m: MediaListRow): void }>()
+const props = defineProps<{ media: MediaListRow }>()
+const emit = defineEmits<{ (e: 'delete', m: MediaListRow): void; (e: 'select', m: MediaListRow): void }>()
 
 function fmtBytes(n: number) {
   if (n < 1024) return `${n} B`
@@ -20,7 +20,7 @@ function fmtDuration(ms: number | null) {
 </script>
 
 <template>
-  <div class="group relative overflow-hidden soft-card hover-lift">
+  <div class="group relative overflow-hidden soft-card hover-lift cursor-pointer" @click="emit('select', props.media)">
     <div class="aspect-video bg-zinc-900">
       <img
         v-if="media.thumbnailBytes"
@@ -47,14 +47,30 @@ function fmtDuration(ms: number | null) {
           {{ fmtBytes(media.bytes) }}
           <template v-if="media.durationMs"> · {{ fmtDuration(media.durationMs) }}</template>
         </span>
-        <UBadge
-          v-if="media.usedInPlaylists > 0"
-          size="sm"
-          color="neutral"
-          variant="soft"
-        >
-          {{ $t('components.mediaCard.usedIn', { n: media.usedInPlaylists }) }}
-        </UBadge>
+        <div class="flex items-center gap-1">
+          <UBadge
+            v-if="media.usedInPlaylists > 0"
+            size="sm"
+            color="neutral"
+            variant="soft"
+          >
+            {{ $t('components.mediaCard.usedIn', { n: media.usedInPlaylists }) }}
+          </UBadge>
+          <UBadge
+            v-if="media.playCount > 0"
+            size="sm"
+            color="primary"
+            variant="soft"
+          >
+            {{ media.playCount }}▶
+          </UBadge>
+          <UIcon
+            v-if="media.organizationId != null"
+            name="i-lucide-building-2"
+            class="size-3.5 text-(--ui-text-muted)"
+            title="Assigned to organization"
+          />
+        </div>
       </div>
     </div>
     <div class="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">
@@ -63,7 +79,7 @@ function fmtDuration(ms: number | null) {
         color="error"
         variant="soft"
         size="xs"
-        @click="$emit('delete', media)"
+        @click.stop="emit('delete', props.media)"
       />
     </div>
   </div>
