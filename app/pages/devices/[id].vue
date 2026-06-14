@@ -1,5 +1,6 @@
 <!-- app/pages/devices/[id].vue -->
 <script setup lang="ts">
+import type { DeviceNowPlaying } from '~/app/types/api'
 import { useDevicesStore } from '~/app/stores/devices'
 import { useGroupsStore } from '~/app/stores/groups'
 import { useApiClient } from '~/app/composables/useApiClient'
@@ -17,6 +18,14 @@ const confirm = useConfirm()
 
 const id = computed(() => String(route.params.id))
 const device = ref<Awaited<ReturnType<typeof api.getDevice>> | null>(null)
+
+const status = ref<DeviceNowPlaying | null>(null)
+let statusTimer: ReturnType<typeof setInterval> | null = null
+async function refreshStatus() {
+  try { status.value = await api.getDeviceStatus(id.value) } catch { /* keep last */ }
+}
+onMounted(() => { refreshStatus(); statusTimer = setInterval(refreshStatus, 5000) })
+onBeforeUnmount(() => { if (statusTimer) clearInterval(statusTimer) })
 
 const editing = ref(false)
 const editName = ref('')
@@ -183,6 +192,8 @@ async function reload() {
           </div>
         </div>
       </section>
+
+      <NowPlayingCard :status="status" class="mt-8" />
 
       <section class="soft-card mt-8 p-6">
         <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('devices.playlistSectionTitle') }}</h3>
