@@ -1,0 +1,1 @@
+ALTER TABLE `media` ADD `play_count` integer DEFAULT 0 NOT NULL;

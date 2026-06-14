@@ -62,6 +62,7 @@ export const media = sqliteTable(
     mimeType: text('mime_type').notNull().default('application/octet-stream'),
     bytes: integer('bytes').notNull(),
     thumbnailBytes: integer('thumbnail_bytes'),
+    playCount: integer('play_count').notNull().default(0),
     durationMs: integer('duration_ms'),
     width: integer('width'),
     height: integer('height'),

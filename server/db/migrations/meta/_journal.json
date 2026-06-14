@@ -36,6 +36,13 @@
       "when": 1780946863015,
       "tag": "0004_smiling_skin",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1781465034523,
+      "tag": "0005_fluffy_boomer",
+      "breakpoints": true
     }
   ]
 }
