@@ -110,4 +110,28 @@ describe('POST /api/devices/:id/telemetry handler', () => {
     const rows = await db.select().from(schema.deviceErrors)
     expect(rows).toHaveLength(0)
   })
+
+  it('increments media.play_count on a real item start', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    const [m] = await db.select().from(schema.media).where(eq(schema.media.id, item.mediaId))
+    expect(m.playCount).toBe(1)
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    const [m2] = await db.select().from(schema.media).where(eq(schema.media.id, item.mediaId))
+    expect(m2.playCount).toBe(2)
+  })
+
+  it('does NOT count a failed item (error present)', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id, error: { message: 'decode failed' } })
+    const [m] = await db.select().from(schema.media).where(eq(schema.media.id, item.mediaId))
+    expect(m.playCount).toBe(0)
+  })
+
+  it('does NOT count a clear (currentItemId null)', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: null })
+    const [m] = await db.select().from(schema.media).where(eq(schema.media.id, item.mediaId))
+    expect(m.playCount).toBe(0)
+  })
 })

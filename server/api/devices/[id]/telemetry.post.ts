@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
@@ -38,6 +38,13 @@ export async function handleTelemetry(
         statusCode: 400,
         message: `Unknown playlist item: ${body.currentItemId}`
       })
+    }
+    // A non-null currentItemId without an error is a real play start → count it.
+    if (!body.error) {
+      await db
+        .update(schema.media)
+        .set({ playCount: sql`${schema.media.playCount} + 1` })
+        .where(eq(schema.media.id, item.mediaId))
     }
   }
 
