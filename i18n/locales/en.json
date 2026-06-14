@@ -227,7 +227,21 @@
     "deleteConfirmUsed": "This file is used in {n} playlist. Deleting will remove those entries and bump each playlist version. | This file is used in {n} playlists. Deleting will remove those entries and bump each playlist version. | This file is used in {n} playlists. Deleting will remove those entries and bump each playlist version.",
     "deleteConfirmUnused": "Removes the file and its thumbnail permanently.",
     "deleted": "Deleted",
-    "deleteFailed": "Delete failed"
+    "deleteFailed": "Delete failed",
+    "details": "Media details",
+    "plays": "Plays",
+    "type": "Type",
+    "size": "Size",
+    "dimensions": "Dimensions",
+    "duration": "Duration",
+    "uploaded": "Uploaded",
+    "organization": "Organization",
+    "noOrganization": "No organization",
+    "clearOrganization": "Clear",
+    "usedInPlaylists": "Used in playlists",
+    "notUsed": "Not used in any playlist",
+    "orgUpdated": "Organization updated",
+    "orgUpdateFailed": "Failed to update organization"
   },
   "users": {
     "pageTitle": "Users",
@@ -272,6 +286,7 @@
     "colOnline": "Online",
     "colShowingNow": "Showing now",
     "colErrors": "Errors",
+    "colPlays": "Plays",
     "emptyMedia": "No media assigned to your organization yet."
   },
   "overview": {

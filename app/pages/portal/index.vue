@@ -8,7 +8,9 @@ const stats = ref<OrgReach | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
 
-onMounted(async () => {
+let timer: ReturnType<typeof setInterval> | null = null
+
+async function refresh() {
   try {
     stats.value = await api.getPortalStats()
   } catch (e: any) {
@@ -16,7 +18,14 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+}
+
+onMounted(() => {
+  refresh()
+  timer = setInterval(refresh, 5000)
 })
+
+onBeforeUnmount(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
@@ -47,6 +56,7 @@ onMounted(async () => {
               <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colOnline') }}</th>
               <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colShowingNow') }}</th>
               <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colErrors') }}</th>
+              <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colPlays') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -59,9 +69,10 @@ onMounted(async () => {
               <td class="px-5 py-3 tabular-nums">{{ m.screensOnline }}</td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensShowingNow }}</td>
               <td class="px-5 py-3 tabular-nums" :class="m.recentErrors ? 'text-rose-500' : ''">{{ m.recentErrors }}</td>
+              <td class="px-5 py-3 tabular-nums">{{ m.playCount }}</td>
             </tr>
             <tr v-if="stats.media.length === 0">
-              <td colspan="5" class="px-5 py-8 text-center text-(--ui-text-muted)">{{ $t('portal.emptyMedia') }}</td>
+              <td colspan="6" class="px-5 py-8 text-center text-(--ui-text-muted)">{{ $t('portal.emptyMedia') }}</td>
             </tr>
           </tbody>
         </table>
