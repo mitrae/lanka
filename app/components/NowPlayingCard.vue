@@ -1,3 +1,4 @@
+<!-- app/components/NowPlayingCard.vue -->
 <script setup lang="ts">
 import type { DeviceNowPlaying } from '~/app/types/api'
 const props = defineProps<{ status: DeviceNowPlaying | null }>()

@@ -67,7 +67,7 @@ export interface MediaListRow extends Media {
   usedInPlaylists: number
 }
 
-export interface MediaDetail extends MediaListRow {
+export interface MediaDetail extends Media {
   playlists: { id: number; name: string }[]
 }
 
