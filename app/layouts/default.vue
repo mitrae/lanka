@@ -26,6 +26,12 @@ const navGroups = computed(() => [
       { label: t('nav.users'), icon: 'i-lucide-users', to: '/users' },
       { label: t('nav.organizations'), icon: 'i-lucide-briefcase', to: '/organizations' }
     ]
+  },
+  {
+    label: t('nav.system'),
+    items: [
+      { label: t('nav.apk'), icon: 'i-lucide-package', to: '/apk' }
+    ]
   }
 ])
 

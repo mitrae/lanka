@@ -33,7 +33,9 @@
     "streamDisconnected": "Disconnected",
     "signOut": "Sign out",
     "switchToDark": "Switch to dark mode",
-    "switchToLight": "Switch to light mode"
+    "switchToLight": "Switch to light mode",
+    "system": "System",
+    "apk": "APK"
   },
   "components": {
     "statusDot": {
@@ -297,6 +299,27 @@
     "statOfflineLong": "Offline > 5 min",
     "statUnclaimed": "Unclaimed",
     "screensOnline": "Screens online"
+  },
+  "apk": {
+    "pageTitle": "APK Releases",
+    "pageSubtitle": "Manage kiosk APK builds. Upload a release and push OTA updates to devices.",
+    "uploadCard": "Upload new release",
+    "versionPlaceholder": "Version (e.g. 1.2.3)",
+    "chooseApk": "Choose APK…",
+    "enterVersionFirst": "Enter a version label first",
+    "uploaded": "APK uploaded",
+    "uploadFailed": "Upload failed",
+    "releasesCard": "Releases ({n})",
+    "colVersion": "Version",
+    "colSize": "Size",
+    "colSha256": "SHA-256",
+    "colUploaded": "Uploaded",
+    "download": "Download",
+    "delete": "Delete",
+    "deleted": "Deleted",
+    "deleteFailed": "Delete failed",
+    "emptyTitle": "No releases yet",
+    "emptyDescription": "Upload an APK build to make it available for OTA updates."
   },
   "auth": {
     "signIn": "Sign in",

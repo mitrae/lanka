@@ -173,3 +173,22 @@ export interface DeviceNowPlaying {
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }
+
+export interface ApkRelease {
+  id: number
+  version: string
+  sha256: string
+  size: number
+  uploadedAt: string | number
+}
+
+export interface DeviceCommand {
+  id: number
+  deviceId: string
+  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request'
+  payload: string | null
+  status: 'pending' | 'sent' | 'acked' | 'failed'
+  result: string | null
+  createdAt: string | number
+  updatedAt: string | number
+}

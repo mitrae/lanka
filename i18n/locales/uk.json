@@ -33,7 +33,9 @@
     "streamDisconnected": "Відключено",
     "signOut": "Вийти",
     "switchToDark": "Перейти в темний режим",
-    "switchToLight": "Перейти в світлий режим"
+    "switchToLight": "Перейти в світлий режим",
+    "system": "Система",
+    "apk": "APK"
   },
   "components": {
     "statusDot": {
@@ -297,6 +299,27 @@
     "statOfflineLong": "Офлайн > 5 хв",
     "statUnclaimed": "Незакріплені",
     "screensOnline": "Екрани онлайн"
+  },
+  "apk": {
+    "pageTitle": "APK-релізи",
+    "pageSubtitle": "Керування збірками кіоску. Завантажте реліз і надсилайте OTA-оновлення на пристрої.",
+    "uploadCard": "Завантажити новий реліз",
+    "versionPlaceholder": "Версія (наприклад, 1.2.3)",
+    "chooseApk": "Вибрати APK…",
+    "enterVersionFirst": "Спочатку введіть назву версії",
+    "uploaded": "APK завантажено",
+    "uploadFailed": "Помилка завантаження",
+    "releasesCard": "Релізи ({n})",
+    "colVersion": "Версія",
+    "colSize": "Розмір",
+    "colSha256": "SHA-256",
+    "colUploaded": "Завантажено",
+    "download": "Завантажити",
+    "delete": "Видалити",
+    "deleted": "Видалено",
+    "deleteFailed": "Помилка видалення",
+    "emptyTitle": "Поки немає релізів",
+    "emptyDescription": "Завантажте збірку APK, щоб зробити її доступною для OTA-оновлень."
   },
   "auth": {
     "signIn": "Увійти",

@@ -1,10 +1,12 @@
 // app/composables/useApiClient.ts
 import type {
   Address,
+  ApkRelease,
   Assignment,
   CreateUserBody,
   CreateUserResult,
   Device,
+  DeviceCommand,
   DeviceListRow,
   DeviceNowPlaying,
   Group,
@@ -110,6 +112,16 @@ export interface ApiClient {
   // password reset
   forgotPassword(body: { email: string }): Promise<{ ok: true }>
   resetPassword(body: { token: string; password: string }): Promise<{ ok: true }>
+
+  // APK releases
+  listApkReleases(): Promise<ApkRelease[]>
+  uploadApk(form: FormData): Promise<ApkRelease>
+  deleteApkRelease(id: number): Promise<void>
+  apkDownloadUrl(id: number): string
+
+  // device commands
+  enqueueCommand(deviceId: string, body: { cmd: string; releaseId?: number }): Promise<{ commandId: number }>
+  listDeviceCommands(deviceId: string): Promise<DeviceCommand[]>
 
   // portal
   getPortalStats(): Promise<OrgReach>
@@ -237,6 +249,18 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     // password reset
     forgotPassword: (body) => fetch<{ ok: true }>('/api/auth/forgot-password', { method: 'POST', body }),
     resetPassword: (body) => fetch<{ ok: true }>('/api/auth/reset-password', { method: 'POST', body }),
+    // APK releases
+    listApkReleases: () => fetch<ApkRelease[]>('/api/apk', { method: 'GET' }),
+    uploadApk: (form) => fetch<ApkRelease>('/api/apk/upload', { method: 'POST', body: form }),
+    deleteApkRelease: (id) => fetch<void>(`/api/apk/${id}`, { method: 'DELETE' }),
+    apkDownloadUrl: (id) => `/api/apk/${id}/download`,
+
+    // device commands
+    enqueueCommand: (deviceId, body) =>
+      fetch<{ commandId: number }>(`/api/devices/${deviceId}/commands`, { method: 'POST', body }),
+    listDeviceCommands: (deviceId) =>
+      fetch<DeviceCommand[]>(`/api/devices/${deviceId}/commands`, { method: 'GET' }),
+
     // portal
     getPortalStats: () => fetch<OrgReach>('/api/portal/stats', { method: 'GET' }),
 
