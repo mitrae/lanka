@@ -25,7 +25,9 @@ export function useTelemetry(api: ApiClient): Telemetry {
       error?: { sha256?: string; message: string }
     }
   ): void {
-    api.postTelemetry(deviceId, body).catch((err) => {
+    const nfs = (globalThis as any).NativeFS
+    const apkVersion: string | undefined = nfs?.getAppVersion?.()
+    api.postTelemetry(deviceId, { ...body, ...(apkVersion ? { apkVersion } : {}) }).catch((err) => {
       console.warn('[player] telemetry post failed', err)
     })
   }

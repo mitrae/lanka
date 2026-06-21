@@ -15,6 +15,7 @@ import {
   type ReconcilerHandle,
   type StreamState
 } from './useReconciler'
+import { createCommandChannel, type CommandChannelHandle } from './useCommandChannel'
 import {
   createPlayerScheduler,
   type SchedulerHandle
@@ -51,6 +52,7 @@ export function usePlayerBoot(
   const syncing = ref(false)
 
   let reconciler: ReconcilerHandle | null = null
+  let channel: CommandChannelHandle | null = null
 
   function mountScheduler(m: Manifest): void {
     // Tear down any existing scheduler first so its timers are cancelled.
@@ -153,6 +155,13 @@ export function usePlayerBoot(
     await reconciler.reconcile()
     reconciler.openStream()
     reconciler.startPolling()
+
+    channel = createCommandChannel({
+      deviceId: deviceId.value,
+      nativeFS,
+      onReload: () => device.reload()
+    })
+    channel.open()
   }
 
   void boot()
@@ -162,6 +171,8 @@ export function usePlayerBoot(
     scheduler.value = null
     reconciler?.close()
     reconciler = null
+    channel?.close()
+    channel = null
   })
 
   return {

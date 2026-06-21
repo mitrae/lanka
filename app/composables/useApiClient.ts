@@ -67,6 +67,7 @@ export interface ApiClient {
     deviceId: string,
     body: {
       currentItemId: number | null
+      apkVersion?: string
       error?: { sha256?: string; message: string }
     }
   ): Promise<void>
