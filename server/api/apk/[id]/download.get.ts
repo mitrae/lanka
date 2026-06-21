@@ -4,10 +4,6 @@ import { useDb } from '~/server/db/client'
 import { useMediaStore } from '~/server/services/media-store-singleton'
 
 export default defineEventHandler(async (event) => {
-  const user = event.context.user
-  if (!user || !['super', 'admin'].includes(user.role)) {
-    throw createError({ statusCode: 403 })
-  }
   const idParam = getRouterParam(event, 'id')
   const id = Number(idParam)
   if (!id) throw createError({ statusCode: 400, message: 'Invalid id' })
