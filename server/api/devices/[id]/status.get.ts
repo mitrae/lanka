@@ -11,6 +11,7 @@ const ONLINE_WINDOW_MS = 90_000
 export type DeviceStatus = {
   online: boolean
   lastSeenAt: number | null
+  apkVersion: string | null
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }
@@ -45,7 +46,7 @@ export async function handleDeviceStatus(
       playlistName = row.playlistName
     }
   }
-  return { online, lastSeenAt, currentItem, playlistName }
+  return { online, lastSeenAt, apkVersion: device.apkVersion ?? null, currentItem, playlistName }
 }
 
 export default defineEventHandler(async (event) => {

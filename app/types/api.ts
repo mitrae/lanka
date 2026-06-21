@@ -170,6 +170,7 @@ export interface OrgReach {
 export interface DeviceNowPlaying {
   online: boolean
   lastSeenAt: number | null
+  apkVersion?: string | null
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }
