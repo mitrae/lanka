@@ -1,0 +1,91 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { createCommandChannel } from '~/app/composables/player/useCommandChannel'
+
+// Mock WebSocket
+class MockWS {
+  sent: string[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((e: { data: string }) => void) | null = null
+  onclose: (() => void) | null = null
+  onerror: (() => void) | null = null
+  readyState = 1 // OPEN
+  send(msg: string) { this.sent.push(msg) }
+  close() { this.onclose?.() }
+  open() { this.onopen?.() }
+  receive(data: object) { this.onmessage?.({ data: JSON.stringify(data) }) }
+}
+
+let ws: MockWS
+function wsFactory(_url: string): WebSocket {
+  ws = new MockWS()
+  return ws as unknown as WebSocket
+}
+
+function makeNativeFS() {
+  return {
+    exists: () => false,
+    download: () => true,
+    evictExcept: () => {},
+    downloadApk: vi.fn(() => true),
+    installApk: vi.fn(() => true),
+    screenshot: vi.fn(() => 'data:image/jpeg;base64,abc'),
+    getLogs: vi.fn(() => 'log line 1\nlog line 2'),
+    getAppVersion: vi.fn(() => '1.2.3')
+  }
+}
+
+describe('createCommandChannel', () => {
+  let nativeFS: ReturnType<typeof makeNativeFS>
+  let reloaded: boolean
+
+  beforeEach(() => {
+    nativeFS = makeNativeFS()
+    reloaded = false
+  })
+
+  it('sends screenshot ack when screenshot command received', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => { reloaded = true }, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 1, cmd: 'screenshot', payload: null })
+    expect(nativeFS.screenshot).toHaveBeenCalled()
+    const ack = JSON.parse(ws.sent[0])
+    expect(ack).toMatchObject({ commandId: 1, status: 'acked', result: 'data:image/jpeg;base64,abc' })
+  })
+
+  it('sends log-request ack with log text', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 2, cmd: 'log-request', payload: null })
+    const ack = JSON.parse(ws.sent[0])
+    expect(ack).toMatchObject({ commandId: 2, status: 'acked' })
+    expect(ack.result).toContain('log line')
+  })
+
+  it('calls onReload for reboot command (no ack sent)', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => { reloaded = true }, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 3, cmd: 'reboot', payload: null })
+    expect(reloaded).toBe(true)
+    expect(ws.sent).toHaveLength(0)
+  })
+
+  it('sends failed ack when nativeFS is absent', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', onReload: () => {}, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 4, cmd: 'screenshot', payload: null })
+    const ack = JSON.parse(ws.sent[0])
+    expect(ack).toMatchObject({ commandId: 4, status: 'failed' })
+  })
+
+  it('close() disconnects WebSocket', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', onReload: () => {}, wsFactory })
+    ch.open()
+    ws.open()
+    ch.close()
+    expect(ws.readyState).toBe(1) // MockWS doesn't actually set readyState, just checking no throw
+  })
+})

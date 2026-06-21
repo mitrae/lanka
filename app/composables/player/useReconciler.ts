@@ -15,6 +15,17 @@ export interface NativeFSBridge {
   download(sha256: string, url: string): boolean
   /** Deletes cached files whose sha256 is not in the JSON-encoded array. */
   evictExcept(sha256ListJson: string): void
+  // Plan 7 — remote management
+  /** Downloads an APK from url to local cache. Returns true on success. */
+  downloadApk(url: string, sha256: string): boolean
+  /** Triggers OTA install; result comes back async via window.__otaResult(commandId, status). */
+  installApk(sha256: string, commandId: number): boolean
+  /** Captures a screenshot and returns a data-URI string. */
+  screenshot(): string
+  /** Returns recent device log lines as a plain-text string. */
+  getLogs(): string
+  /** Returns the currently installed APK version string. */
+  getAppVersion(): string
 }
 
 export interface ReconcilerDeps {
