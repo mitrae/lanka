@@ -43,6 +43,13 @@
       "when": 1781465034523,
       "tag": "0005_fluffy_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1782061984216,
+      "tag": "0006_lonely_namorita",
+      "breakpoints": true
     }
   ]
 }

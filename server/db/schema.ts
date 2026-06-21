@@ -49,7 +49,8 @@ export const devices = sqliteTable('devices', {
     .default(sql`(unixepoch() * 1000)`),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
     .notNull()
-    .default(sql`(unixepoch() * 1000)`)
+    .default(sql`(unixepoch() * 1000)`),
+  apkVersion: text('apk_version')
 })
 
 export const media = sqliteTable(
@@ -157,6 +158,42 @@ export const deviceErrors = sqliteTable(
   })
 )
 
+export const apkReleases = sqliteTable('apk_releases', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  version: text('version').notNull(),
+  sha256: text('sha256').notNull().unique(),
+  size: integer('size').notNull(),
+  uploadedAt: integer('uploaded_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`),
+  uploadedBy: integer('uploaded_by').references(() => users.id, { onDelete: 'set null' })
+})
+
+export const deviceCommands = sqliteTable(
+  'device_commands',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    deviceId: text('device_id')
+      .notNull()
+      .references(() => devices.id, { onDelete: 'cascade' }),
+    cmd: text('cmd', { enum: ['ota', 'reboot', 'screenshot', 'log-request'] }).notNull(),
+    payload: text('payload'),
+    status: text('status', { enum: ['pending', 'sent', 'acked', 'failed'] })
+      .notNull()
+      .default('pending'),
+    result: text('result'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => ({
+    deviceStatusIdx: index('device_commands_device_status_idx').on(t.deviceId, t.status)
+  })
+)
+
 export const organizations = sqliteTable('organizations', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
@@ -250,6 +287,12 @@ export const assignmentsRelations = relations(assignments, ({ one }) => ({
 }))
 export const deviceErrorsRelations = relations(deviceErrors, ({ one }) => ({
   device: one(devices, { fields: [deviceErrors.deviceId], references: [devices.id] })
+}))
+export const apkReleasesRelations = relations(apkReleases, ({ one }) => ({
+  uploadedBy: one(users, { fields: [apkReleases.uploadedBy], references: [users.id] })
+}))
+export const deviceCommandsRelations = relations(deviceCommands, ({ one }) => ({
+  device: one(devices, { fields: [deviceCommands.deviceId], references: [devices.id] })
 }))
 export const organizationsRelations = relations(organizations, ({ many }) => ({
   users: many(users),
