@@ -44,3 +44,6 @@ function notInTests(name: string) {
 ;(globalThis as any).getCookie = notInTests('getCookie')
 ;(globalThis as any).setCookie = notInTests('setCookie')
 ;(globalThis as any).deleteCookie = notInTests('deleteCookie')
+;(globalThis as any).defineWebSocketHandler = (handler: unknown) => handler
+;(globalThis as any).setHeader = notInTests('setHeader')
+;(globalThis as any).readMultipartFormData = notInTests('readMultipartFormData')

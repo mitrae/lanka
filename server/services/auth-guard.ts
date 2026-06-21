@@ -1,7 +1,7 @@
 import type { Role, SessionUser } from './sessions'
 
 const PUBLIC_EXACT = new Set<string>(['/api/healthz', '/api/devices/register'])
-const PUBLIC_DEVICE_RE = /^\/api\/devices\/[^/]+\/(manifest|stream|telemetry)$/
+const PUBLIC_DEVICE_RE = /^\/api\/devices\/[^/]+\/(manifest|stream|telemetry|ws)$/
 
 export function isPublicRoute(path: string): boolean {
   const clean = path.split('?')[0]
