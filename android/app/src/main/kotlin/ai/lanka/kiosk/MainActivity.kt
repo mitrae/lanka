@@ -29,13 +29,19 @@ class MainActivity : Activity() {
         webView = findViewById(R.id.web)
         configureWebView()
 
+        OtaResultBus.setListener { commandId, status ->
+            runOnUiThread {
+                webView.evaluateJavascript("window.__otaResult($commandId, '$status')", null)
+            }
+        }
+
         playerUrl = "${BuildConfig.LANKA_SERVER_URL}/player?deviceId=${deviceId()}"
         webView.loadUrl(playerUrl)
     }
 
     private fun configureWebView() {
         webView.setBackgroundColor(Color.BLACK)
-        webView.addJavascriptInterface(NativeFSBridge(MediaCache.get(this)), "NativeFS")
+        webView.addJavascriptInterface(NativeFSBridge(MediaCache.get(this), this, webView), "NativeFS")
         webView.webViewClient = LankaWebViewClient(
             onMainFrameError = { scheduleReload() },
             onPageOk = { reloadAttempt = 0 },
@@ -103,6 +109,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        OtaResultBus.clearListener()
         mainHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
