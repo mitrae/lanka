@@ -2,6 +2,7 @@ package ai.lanka.kiosk
 
 import android.content.Context
 import android.net.Uri
+import android.os.StatFs
 import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -26,16 +27,73 @@ import java.util.concurrent.Executors
  * always valid — no invalidation needed. Disk use is bounded by a simple LRU
  * size cap (oldest-touched files evicted first).
  */
-class MediaCache private constructor(context: Context) {
+class MediaCache private constructor(private val dir: File) {
 
-    private val dir = File(context.filesDir, "media-cache").apply { mkdirs() }
     private val io = Executors.newFixedThreadPool(2)
     private val inFlight = ConcurrentHashMap.newKeySet<String>()
 
+    private constructor(context: Context) : this(File(context.filesDir, "media-cache"))
+
     init {
+        dir.mkdirs()
         // Drop any temp files left behind by a download interrupted in a prior run.
         dir.listFiles { f -> f.name.endsWith(TMP_SUFFIX) }?.forEach { it.delete() }
     }
+
+    fun exists(sha256: String): Boolean = File(dir, sha256).let { it.exists() && it.length() > 0L }
+
+    fun fileUrl(sha256: String): String = "file://${File(dir, sha256).absolutePath}"
+
+    /**
+     * Downloads [url] into the cache under [sha256], blocking until complete.
+     * No-op if the file is already cached. Cleans up the partial [TMP_SUFFIX] file
+     * immediately on any failure and re-throws so the caller can log/fall-back.
+     */
+    fun downloadSync(sha256: String, url: String) {
+        if (exists(sha256)) return
+        val tmp = File(dir, "$sha256$TMP_SUFFIX")
+        try {
+            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 15_000
+                readTimeout = 60_000
+                instanceFollowRedirects = true
+            }
+            try {
+                if (conn.responseCode !in 200..299) throw Exception("HTTP ${conn.responseCode}")
+                // Storage guard: skip if we know we don't have enough space.
+                // Guard is intentionally skipped when available == 0L (StatFs
+                // unavailable in JVM tests / emulator) — let the write fail
+                // naturally in that case so tmp cleanup still runs.
+                val contentLength = conn.contentLengthLong
+                val available = free()
+                if (available > 0L && contentLength > 0L && available < contentLength) {
+                    Log.w(TAG, "skip $sha256: need ${contentLength}B, have ${available}B")
+                    return
+                }
+                val mime = conn.contentType
+                conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                if (tmp.renameTo(File(dir, sha256))) {
+                    if (mime != null) File(dir, "$sha256$TYPE_SUFFIX").writeText(mime)
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
+    }
+
+    fun evictExcept(keepSha256s: Set<String>) {
+        dir.listFiles { f ->
+            f.isFile && !f.name.endsWith(TYPE_SUFFIX) && !f.name.endsWith(TMP_SUFFIX)
+        }?.filter { it.name !in keepSha256s }?.forEach { f ->
+            f.delete()
+            File(dir, "${f.name}$TYPE_SUFFIX").delete()
+        }
+    }
+
+    fun free(): Long = try { StatFs(dir.path).availableBytes } catch (e: Exception) { 0L }
 
     /** A cached/range response, or null to let the WebView load the request normally. */
     fun intercept(request: WebResourceRequest): WebResourceResponse? {
@@ -205,6 +263,9 @@ class MediaCache private constructor(context: Context) {
             instance ?: synchronized(this) {
                 instance ?: MediaCache(context.applicationContext).also { instance = it }
             }
+
+        /** For unit tests only — constructs a cache backed by an arbitrary directory. */
+        internal fun forTesting(dir: File): MediaCache = MediaCache(dir)
 
         private fun sniff(file: File): String {
             val b = ByteArray(12)

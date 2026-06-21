@@ -32,19 +32,21 @@ original production design.
 
 ### On-device media cache
 
-9. **Caches media on local storage** so videos replay from disk instead of
-   re-fetching over the tailnet every loop. `LankaWebViewClient.shouldInterceptRequest`
-   (→ `MediaCache`) transparently intercepts `/media/<sha256>` requests:
-   - **cache hit** → served from `filesDir/media-cache/<sha>` with full HTTP
-     Range support (so `<video>` seeks/loops play locally, no network);
-   - **cache miss** → request goes to the network as usual and the file is
-     downloaded in the background for the next loop.
+9. **Pre-downloads media before playback** via the `NativeFS` JavaScript bridge
+   (`NativeFSBridge.kt` → `window.NativeFS`). When a new playlist version arrives:
+   - The player reconciler calls `NativeFS.download(sha256, cdnUrl)` for each
+     uncached item — blocking until done — then emits the manifest.
+   - `usePlayerEnv.fileUrl` returns a `file://` local path when the file is
+     cached, so the player reads from disk with no network involvement.
+   - `NativeFS.evictExcept(sha256List)` removes files no longer in the playlist.
+   - **Storage guard**: download is skipped (falls back to streaming) if
+     `StatFs.availableBytes` is known and smaller than the file's `Content-Length`.
 
-   Media is content-addressed (immutable), so cached files never go stale. Disk
-   is bounded by a **2 GB LRU cap** (`MediaCache.MAX_BYTES`); least-recently-used
-   files are evicted first. The web player is unchanged — it requests the same
-   `/media/<sha>` URLs, so the cache is invisible to it (and a desktop browser
-   simply always uses the network for QA).
+10. **Transparent cache-aside interceptor** (`MediaCache`) remains as a safety
+    net: any `/media/<sha256>` request that reaches the network is cached in the
+    background with full HTTP Range support (so `<video>` seeks work from disk on
+    subsequent loops). Media is content-addressed — cached files never go stale.
+    Disk is bounded by a **2 GB LRU cap**.
 
 ## Prerequisites (build host)
 
@@ -135,12 +137,69 @@ keystore means every box must uninstall/reinstall (a different signature can't
 - **Sleep/wake (goal 3) is not implemented** — an unprivileged app can't power
   the TV panel off (HDMI-CEC is privileged); see the audit notes for the
   scheduled-blank-screen + smart-plug approach.
-- **Media cache is best-effort, not a prefetch.** The *first* loop of each new
-  item still streams from the server (then it's cached); there's no upfront
-  download of the whole playlist. Cap is a fixed 2 GB LRU — a playlist larger
-  than that degrades to per-loop network for the overflow.
+- **Syncing overlay doesn't render during downloads.** `NativeFS.download()` is
+  synchronous from JavaScript's perspective and blocks the JS thread, so Vue
+  cannot flush DOM updates while downloads run. The `syncing` reactive state is
+  wired but has no visible effect until async downloads are implemented.
+- **Cache LRU cap is 2 GB.** A playlist larger than that degrades the overflow
+  items to per-loop streaming via the cache-aside interceptor.
 - **Cleartext HTTP allowed** (`usesCleartextTraffic="true"`) so plain
   `http://` server URLs work over the tailnet without TLS.
+
+## Manual QA checklist — offline media cache
+
+Run after installing a fresh APK build with `NativeFSBridge` wired:
+
+1. **NativeFS bridge present**
+   ```bash
+   # Open chrome://inspect, select the WebView, run in console:
+   typeof window.NativeFS   # → "object"
+   window.NativeFS.free()   # → positive number (bytes available)
+   ```
+
+2. **Files downloaded after playlist assignment**
+   - Assign a playlist via the dashboard.
+   - Wait for the player to load content (~5–30 s depending on file sizes).
+   ```bash
+   adb shell ls /data/data/ai.lanka.kiosk/files/media-cache/
+   # → sha256 filenames (64 hex chars) for each media item
+   ```
+
+3. **Player uses local file:// URLs after download**
+   - In WebView console: `window.NativeFS.exists('<sha256>')` → `true`
+   - `window.NativeFS.fileUrl('<sha256>')` → `file:///data/…/media-cache/<sha>`
+
+4. **Offline playback** — disconnect WiFi after first sync
+   - Turn off WiFi on the TV (or disconnect the router).
+   - Verify content keeps playing without interruption.
+   - Re-enable WiFi; verify player is still functional.
+
+5. **Eviction on playlist change**
+   - Assign a different playlist.
+   - After the new files download, verify old sha256 files are gone:
+   ```bash
+   adb shell ls /data/data/ai.lanka.kiosk/files/media-cache/
+   # → only sha256s from the new playlist
+   ```
+
+6. **Storage guard** (manual, requires a near-full device)
+   - Fill internal storage to near capacity, then assign a new playlist.
+   - Check logcat for `LankaCache skipping download`: the player falls back
+     to streaming for items it couldn't cache.
+   ```bash
+   adb logcat -s LankaCache:W
+   ```
+
+7. **No stale .tmp files after clean run**
+   ```bash
+   adb shell ls /data/data/ai.lanka.kiosk/files/media-cache/ | grep '\.tmp'
+   # → empty
+   ```
+
+8. **No stale .tmp files after forced kill during download**
+   - During active download, run `adb shell am force-stop ai.lanka.kiosk`.
+   - Relaunch: `adb shell am start -n ai.lanka.kiosk/.MainActivity`
+   - After relaunch, verify `.tmp` files are cleaned up by `MediaCache.init`.
 
 ## Uninstall
 

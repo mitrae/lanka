@@ -8,9 +8,22 @@ export type StreamState = 'connecting' | 'connected' | 'disconnected'
 
 type EventSourceFactory = (url: string) => EventSource
 
+/** Subset of window.NativeFS used by the reconciler. */
+export interface NativeFSBridge {
+  exists(sha256: string): boolean
+  /** Downloads url to local cache. Returns true on success, false on failure. */
+  download(sha256: string, url: string): boolean
+  /** Deletes cached files whose sha256 is not in the JSON-encoded array. */
+  evictExcept(sha256ListJson: string): void
+}
+
 export interface ReconcilerDeps {
   api: ApiClient
   deviceId: string
+  /** Android APK NativeFS bridge. When present, media is pre-downloaded before manifest emit. */
+  nativeFS?: NativeFSBridge
+  /** Returns the network URL for a sha256 — used as download source. Must not include a NativeFS check. */
+  cdnUrl?: (sha256: string) => string
   eventSourceFactory?: EventSourceFactory
   onReload?: () => void
 }
@@ -22,6 +35,8 @@ export interface ReconcilerHandle {
   close(): void
   onManifest(fn: (m: Manifest | null) => void): () => void
   onError(fn: (e: unknown) => void): () => void
+  /** Fires true when a download sync starts, false when it ends. */
+  onSyncing(fn: (syncing: boolean) => void): () => void
   getStreamState(): StreamState
 }
 
@@ -52,12 +67,16 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
 
   const manifestHandlers = new Set<(m: Manifest | null) => void>()
   const errorHandlers = new Set<(e: unknown) => void>()
+  const syncingHandlers = new Set<(syncing: boolean) => void>()
 
   function emitManifest(m: Manifest | null): void {
     for (const fn of manifestHandlers) fn(m)
   }
   function emitError(e: unknown): void {
     for (const fn of errorHandlers) fn(e)
+  }
+  function emitSyncing(syncing: boolean): void {
+    for (const fn of syncingHandlers) fn(syncing)
   }
 
   function clearRetryTimer(): void {
@@ -86,6 +105,19 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
       if (!shouldReconcile(last, key)) return
       last = key
       hasEmitted = true
+      // Pre-download uncached items when the Android NativeFS bridge is present.
+      if (deps.nativeFS && deps.cdnUrl) {
+        const sha256s = m.items.map(i => i.sha256)
+        const uncached = sha256s.filter(s => !deps.nativeFS!.exists(s))
+        if (uncached.length > 0) {
+          emitSyncing(true)
+          for (const sha256 of uncached) {
+            deps.nativeFS!.download(sha256, deps.cdnUrl!(sha256))
+          }
+          emitSyncing(false)
+        }
+        deps.nativeFS!.evictExcept(JSON.stringify(sha256s))
+      }
       emitManifest(m)
     } catch (err) {
       emitError(err)
@@ -138,6 +170,7 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
     streamState = 'disconnected'
     manifestHandlers.clear()
     errorHandlers.clear()
+    syncingHandlers.clear()
   }
 
   return {
@@ -152,6 +185,10 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
     onError(fn) {
       errorHandlers.add(fn)
       return () => errorHandlers.delete(fn)
+    },
+    onSyncing(fn) {
+      syncingHandlers.add(fn)
+      return () => syncingHandlers.delete(fn)
     },
     getStreamState() {
       return streamState

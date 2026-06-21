@@ -11,6 +11,7 @@ import { usePlayerEnv, type PlayerEnv } from './usePlayerEnv'
 import { useTelemetry } from './useTelemetry'
 import {
   createReconciler,
+  type NativeFSBridge,
   type ReconcilerHandle,
   type StreamState
 } from './useReconciler'
@@ -29,6 +30,8 @@ export interface PlayerBootState {
   env: PlayerEnv
   deviceId: Ref<string>
   lastError: Ref<string | null>
+  /** True while the NativeFS bridge is pre-downloading media for a new playlist. */
+  syncing: Ref<boolean>
 }
 
 export function usePlayerBoot(
@@ -45,6 +48,7 @@ export function usePlayerBoot(
   const manifest = shallowRef<Manifest | null>(null)
   const scheduler = shallowRef<SchedulerHandle | null>(null)
   const lastError = ref<string | null>(null)
+  const syncing = ref(false)
 
   let reconciler: ReconcilerHandle | null = null
 
@@ -91,9 +95,19 @@ export function usePlayerBoot(
   async function boot(): Promise<void> {
     await ensureRegistered()
 
+    const mediaBase = useRuntimeConfig().public.mediaPublicBase as string
+    const nativeFS = (globalThis as any).NativeFS as NativeFSBridge | undefined
+    const cdnUrl = nativeFS
+      ? (sha256: string) => mediaBase
+        ? `${mediaBase.replace(/\/$/, '')}/media/${sha256}`
+        : `/media/${sha256}`
+      : undefined
+
     reconciler = createReconciler({
       api,
       deviceId: deviceId.value,
+      nativeFS,
+      cdnUrl,
       onReload: () => device.reload()
     })
 
@@ -109,6 +123,9 @@ export function usePlayerBoot(
       }
       mountScheduler(m)
       screen.value = 'playing'
+    })
+    reconciler.onSyncing((s) => {
+      syncing.value = s
     })
     reconciler.onError((e) => {
       lastError.value = e instanceof Error ? e.message : String(e)
@@ -154,6 +171,7 @@ export function usePlayerBoot(
     scheduler,
     env,
     deviceId,
-    lastError
+    lastError,
+    syncing
   }
 }

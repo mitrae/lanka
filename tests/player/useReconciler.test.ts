@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createReconciler } from '~/app/composables/player/useReconciler'
 import type { ApiClient } from '~/app/composables/useApiClient'
-import type { Manifest } from '~/app/types/api'
+import type { Manifest, ManifestItem } from '~/app/types/api'
+import type { NativeFSBridge } from '~/app/composables/player/useReconciler'
 
 type Listener = (event: { data: string }) => void
 
@@ -42,14 +43,21 @@ function fakeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   } as unknown as ApiClient
 }
 
-const m = (playlistId: number, version: number): Manifest => ({
+const m = (playlistId: number, version: number, items?: ManifestItem[]): Manifest => ({
   playlistId,
   playlistName: `P${playlistId}`,
   version,
-  items: [
-    { id: 1, type: 'video', sha256: 'sha1', durationMs: 5000 }
-  ]
+  items: items ?? [{ id: 1, type: 'video', sha256: 'sha1', durationMs: 5000 }]
 })
+
+function fakeNativeFS(cachedSha256s: string[] = []): NativeFSBridge {
+  const cached = new Set(cachedSha256s)
+  return {
+    exists: vi.fn((sha256: string) => cached.has(sha256)),
+    download: vi.fn((sha256: string, _url: string) => { cached.add(sha256); return true }),
+    evictExcept: vi.fn(),
+  }
+}
 
 describe('createReconciler', () => {
   beforeEach(() => {
@@ -242,5 +250,128 @@ describe('createReconciler', () => {
     r.startPolling()
     r.close()
     expect(FakeEventSource.lastInstance!.closed).toBe(true)
+  })
+})
+
+describe('createReconciler — NativeFS pre-download', () => {
+  beforeEach(() => {
+    FakeEventSource.lastInstance = null
+    vi.useFakeTimers()
+  })
+
+  const items: ManifestItem[] = [
+    { id: 1, type: 'video', sha256: 'aaa', durationMs: 5000 },
+    { id: 2, type: 'image', sha256: 'bbb', durationMs: 3000 },
+  ]
+
+  it('downloads uncached items before emitting manifest', async () => {
+    const nativeFS = fakeNativeFS([])  // nothing cached
+    const cdnUrl = vi.fn((sha: string) => `https://cdn.example.com/media/${sha}`)
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const got: Array<Manifest | null> = []
+    const r = createReconciler({
+      api, deviceId: 'tv-1', nativeFS, cdnUrl,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onManifest(man => got.push(man))
+
+    await r.reconcile()
+
+    expect(nativeFS.download).toHaveBeenCalledWith('aaa', 'https://cdn.example.com/media/aaa')
+    expect(nativeFS.download).toHaveBeenCalledWith('bbb', 'https://cdn.example.com/media/bbb')
+    expect(got.length).toBe(1)
+  })
+
+  it('skips download for already-cached items', async () => {
+    const nativeFS = fakeNativeFS(['aaa'])  // aaa already cached
+    const cdnUrl = vi.fn((sha: string) => `https://cdn/${sha}`)
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const r = createReconciler({
+      api, deviceId: 'tv-1', nativeFS, cdnUrl,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onManifest(() => {})
+
+    await r.reconcile()
+
+    expect(nativeFS.download).not.toHaveBeenCalledWith('aaa', expect.any(String))
+    expect(nativeFS.download).toHaveBeenCalledWith('bbb', expect.any(String))
+  })
+
+  it('calls evictExcept with all current sha256s', async () => {
+    const nativeFS = fakeNativeFS([])
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const r = createReconciler({
+      api, deviceId: 'tv-1', nativeFS, cdnUrl: (s) => `https://cdn/${s}`,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onManifest(() => {})
+
+    await r.reconcile()
+
+    expect(nativeFS.evictExcept).toHaveBeenCalledWith(JSON.stringify(['aaa', 'bbb']))
+  })
+
+  it('emits onSyncing(true) then onSyncing(false) around downloads', async () => {
+    const nativeFS = fakeNativeFS([])
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const syncing: boolean[] = []
+    const r = createReconciler({
+      api, deviceId: 'tv-1', nativeFS, cdnUrl: (s) => `https://cdn/${s}`,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onSyncing(s => syncing.push(s))
+
+    await r.reconcile()
+
+    expect(syncing).toEqual([true, false])
+  })
+
+  it('does not emit onSyncing when all items are already cached', async () => {
+    const nativeFS = fakeNativeFS(['aaa', 'bbb'])  // all cached
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const syncing: boolean[] = []
+    const r = createReconciler({
+      api, deviceId: 'tv-1', nativeFS, cdnUrl: (s) => `https://cdn/${s}`,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onSyncing(s => syncing.push(s))
+
+    await r.reconcile()
+
+    expect(syncing).toEqual([])
+  })
+
+  it('emits manifest even when a download returns false', async () => {
+    const nativeFS: NativeFSBridge = {
+      exists: vi.fn().mockReturnValue(false),
+      download: vi.fn().mockReturnValue(false),  // always fails
+      evictExcept: vi.fn(),
+    }
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const got: Array<Manifest | null> = []
+    const r = createReconciler({
+      api, deviceId: 'tv-1', nativeFS, cdnUrl: (s) => `https://cdn/${s}`,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onManifest(man => got.push(man))
+
+    await r.reconcile()
+
+    expect(got.length).toBe(1)  // manifest still emitted — player falls back to CDN
+  })
+
+  it('behaves identically to no-NativeFS path when nativeFS dep is absent', async () => {
+    const api = fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) })
+    const got: Array<Manifest | null> = []
+    const r = createReconciler({
+      api, deviceId: 'tv-1',
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onManifest(man => got.push(man))
+
+    await r.reconcile()
+
+    expect(got).toEqual([m(1, 1, items)])
   })
 })

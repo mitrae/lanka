@@ -35,6 +35,7 @@ class MainActivity : Activity() {
 
     private fun configureWebView() {
         webView.setBackgroundColor(Color.BLACK)
+        webView.addJavascriptInterface(NativeFSBridge(MediaCache.get(this)), "NativeFS")
         webView.webViewClient = LankaWebViewClient(
             onMainFrameError = { scheduleReload() },
             onPageOk = { reloadAttempt = 0 },
