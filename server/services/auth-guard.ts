@@ -2,12 +2,14 @@ import type { Role, SessionUser } from './sessions'
 
 const PUBLIC_EXACT = new Set<string>(['/api/healthz', '/api/devices/register'])
 const PUBLIC_DEVICE_RE = /^\/api\/devices\/[^/]+\/(manifest|stream|telemetry|ws)$/
+const PUBLIC_APK_RE = /^\/api\/apk\/[^/]+\/download$/
 
 export function isPublicRoute(path: string): boolean {
   const clean = path.split('?')[0]
   if (PUBLIC_EXACT.has(clean)) return true
   if (clean.startsWith('/api/auth/')) return true
   if (PUBLIC_DEVICE_RE.test(clean)) return true
+  if (PUBLIC_APK_RE.test(clean)) return true
   return false
 }
 

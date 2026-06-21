@@ -88,7 +88,8 @@ export function createCommandChannel(deps: CommandChannelDeps): CommandChannelHa
         send({ commandId: id, status })
         delete (window as any).__otaResult
       }
-      const downloaded = nfs.downloadApk(url, sha256)
+      const absoluteUrl = url.startsWith('http') ? url : new URL(url, window.location.origin).href
+      const downloaded = nfs.downloadApk(absoluteUrl, sha256)
       if (!downloaded) {
         send({ commandId, status: 'failed', result: 'download failed' })
         return
