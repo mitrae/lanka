@@ -134,4 +134,18 @@ describe('POST /api/devices/:id/telemetry handler', () => {
     const [m] = await db.select().from(schema.media).where(eq(schema.media.id, item.mediaId))
     expect(m.playCount).toBe(0)
   })
+
+  it('stores apkVersion when provided', async () => {
+    await seedDevice(db, { id: 'dev-apk' })
+    await handleTelemetry(db, 'dev-apk', { currentItemId: null, apkVersion: '1.2.3' })
+    const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-apk'))
+    expect(row.apkVersion).toBe('1.2.3')
+  })
+
+  it('ignores missing apkVersion without error', async () => {
+    await seedDevice(db, { id: 'dev-noapk' })
+    await expect(
+      handleTelemetry(db, 'dev-noapk', { currentItemId: null })
+    ).resolves.toBeUndefined()
+  })
 })

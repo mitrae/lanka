@@ -6,6 +6,7 @@ import { useDb } from '~/server/db/client'
 
 const BodySchema = z.object({
   currentItemId: z.number().int().positive().nullable(),
+  apkVersion: z.string().max(50).optional(),
   error: z
     .object({ sha256: z.string().optional(), message: z.string().max(500) })
     .optional()
@@ -52,7 +53,8 @@ export async function handleTelemetry(
     .update(schema.devices)
     .set({
       currentItemId: body.currentItemId,
-      lastSeenAt: new Date()
+      lastSeenAt: new Date(),
+      ...(body.apkVersion !== undefined ? { apkVersion: body.apkVersion } : {})
     })
     .where(eq(schema.devices.id, deviceId))
 
