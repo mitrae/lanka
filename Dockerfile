@@ -7,6 +7,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN corepack enable pnpm
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
+# @ffprobe-installer ships the binary non-executable and relies on a postinstall
+# chmod that pnpm's build-script gating may skip; guarantee it here.
+RUN node -e "require('fs').chmodSync(require('@ffprobe-installer/ffprobe').path, 0o755)"
 COPY . .
 ARG MEDIA_PUBLIC_BASE=""
 ENV MEDIA_PUBLIC_BASE=$MEDIA_PUBLIC_BASE

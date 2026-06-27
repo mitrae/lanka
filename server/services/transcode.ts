@@ -37,6 +37,12 @@ export async function probeVideo(path: string): Promise<VideoProbe> {
         videoStream.duration !== undefined
           ? String(videoStream.duration)
           : String(data.format.duration)
+      const durationSecs = parseFloat(rawDuration)
+      // Both stream and format duration can be absent → NaN. Treat unknown
+      // duration as 0 rather than rejecting an otherwise-valid clip.
+      const durationMs = Number.isNaN(durationSecs)
+        ? 0
+        : Math.round(durationSecs * 1000)
 
       resolve({
         codec: videoStream.codec_name ?? '',
@@ -44,7 +50,7 @@ export async function probeVideo(path: string): Promise<VideoProbe> {
         pixFmt: videoStream.pix_fmt ?? '',
         width: videoStream.width ?? 0,
         height: videoStream.height ?? 0,
-        durationMs: Math.round(parseFloat(rawDuration) * 1000),
+        durationMs,
         audioCodec: audioStream ? (audioStream.codec_name ?? null) : null,
       })
     })
@@ -72,7 +78,7 @@ export function isKioskSafe(p: VideoProbe): boolean {
 /**
  * Transcodes `inPath` to `outPath` using kiosk-safe settings:
  *   - H.264 Main profile, yuv420p, CRF 23, veryfast preset
- *   - Scale: short side ≤720, no upscale, even dimensions
+ *   - Scale: short side ≤720, long side ≤1280, no upscale, even dimensions
  *   - AAC 128 kbps stereo audio
  *   - faststart for web playback
  *
@@ -84,11 +90,12 @@ export async function transcodeToKioskSafe(
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const command = ffmpeg(inPath)
-      // Scale: landscape → limit long side to 1280 (short ≤720); portrait → limit long side to 720.
-      // Uses -2 to ensure even dimensions. No upscale.
+      // Two-pass scale: pass 1 caps the short side to 720, pass 2 caps the long
+      // side to 1280. Both decrease-only (min) with even dims (-2), no upscale,
+      // orientation-correct. Caps wider-than-16:9 input (e.g. 2560×720 → 1280×360).
       .outputOptions([
         '-vf',
-        "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)'",
+        "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'",
         '-c:v', 'libx264',
         '-profile:v', 'main',
         '-pix_fmt', 'yuv420p',
@@ -100,16 +107,20 @@ export async function transcodeToKioskSafe(
         '-movflags', '+faststart',
       ])
       .output(outPath)
-      .on('end', () => resolve())
-      .on('error', (err) => reject(err))
 
     const timer = setTimeout(() => {
       command.kill('SIGKILL')
-      reject(new Error(`Transcode timeout after ${TRANSCODE_TIMEOUT_MS}ms: ${inPath}`))
+      reject(new Error(`Transcode timeout after ${TRANSCODE_TIMEOUT_MS}ms`))
     }, TRANSCODE_TIMEOUT_MS)
 
-    command.on('end', () => clearTimeout(timer))
-    command.on('error', () => clearTimeout(timer))
+    command.on('end', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+    command.on('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
 
     command.run()
   })

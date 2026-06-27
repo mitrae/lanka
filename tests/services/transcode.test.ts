@@ -140,6 +140,26 @@ describe('ensureKioskSafe (integration)', () => {
   )
 
   it(
+    'caps the long side to 1280 for ultra-wide (2560×720) input',
+    async () => {
+      const srcDir = makeTmpDir()
+      const outDir = makeTmpDir()
+      tmpDirs.push(srcDir, outDir)
+
+      const srcPath = join(srcDir, 'wide.mp4')
+      await generateClip(srcPath, { profile: 'high', width: 2560, height: 720 })
+
+      const result = await ensureKioskSafe(srcPath, outDir)
+
+      expect(result.transcoded).toBe(true)
+      const { probe: p } = result
+      expect(Math.max(p.width, p.height)).toBeLessThanOrEqual(1280)
+      expect(Math.min(p.width, p.height)).toBeLessThanOrEqual(720)
+    },
+    60_000
+  )
+
+  it(
     'passes through a conforming Main-profile 640×360 clip unchanged',
     async () => {
       const srcDir = makeTmpDir()
