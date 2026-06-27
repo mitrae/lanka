@@ -58,6 +58,7 @@
     "@types/node": "^22",
     "@vitest/coverage-v8": "^4.1.4",
     "drizzle-kit": "^0.31.10",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.4",
     "vue-tsc": "^3.2.6"
