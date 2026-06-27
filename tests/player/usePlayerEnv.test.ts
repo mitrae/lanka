@@ -31,25 +31,27 @@ describe('usePlayerEnv.fileUrl', () => {
   })
 
   // --- NativeFS bridge present (Android APK) ---
+  // The APK serves cached bytes locally via the shouldInterceptRequest
+  // interceptor on the SAME /media/<sha> URL — never file://. An http-origin
+  // player page can't load file:// resources ("Not allowed to load local
+  // resource"), so fileUrl must return the http(s) URL even when cached.
 
-  it('returns NativeFS.fileUrl when the file is cached on-device', () => {
+  it('returns the /media/<sha> URL (never file://) even when NativeFS reports cached', () => {
     vi.stubGlobal('NativeFS', {
       exists: vi.fn().mockReturnValue(true),
       fileUrl: vi.fn().mockReturnValue('file:///data/user/0/ai.lanka.kiosk/files/media-cache/abc123'),
     })
-    expect(usePlayerEnv('https://media.lanka.live').fileUrl('abc123')).toBe(
-      'file:///data/user/0/ai.lanka.kiosk/files/media-cache/abc123'
-    )
+    const url = usePlayerEnv('https://media.lanka.live').fileUrl('abc123')
+    expect(url).toBe('https://media.lanka.live/media/abc123')
+    expect(url.startsWith('file://')).toBe(false)
   })
 
-  it('falls back to CDN URL when NativeFS.exists returns false', () => {
+  it('returns the relative /media/<sha> URL on the APK when no media base is set', () => {
     vi.stubGlobal('NativeFS', {
-      exists: vi.fn().mockReturnValue(false),
-      fileUrl: vi.fn(),
+      exists: vi.fn().mockReturnValue(true),
+      fileUrl: vi.fn().mockReturnValue('file:///whatever'),
     })
-    expect(usePlayerEnv('https://media.lanka.live').fileUrl('abc123')).toBe(
-      'https://media.lanka.live/media/abc123'
-    )
+    expect(usePlayerEnv().fileUrl('abc123')).toBe('/media/abc123')
   })
 
   it('falls back to server path when NativeFS is absent (no bridge)', () => {

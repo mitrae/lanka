@@ -160,10 +160,17 @@ class MediaCache private constructor(private val dir: File) {
         val typeFile = File(dir, "$sha$TYPE_SUFFIX")
         if (typeFile.exists()) {
             val t = typeFile.readText().substringBefore(';').trim()
-            if (t.isNotEmpty()) return t
+            // A generic/empty stored type means the origin server never set a real
+            // Content-Type (older uploads default to application/octet-stream). Serving
+            // that to <video> makes it refuse the source, so sniff the magic bytes
+            // for a playable type instead.
+            if (t.isNotEmpty() && t != OCTET_STREAM) return t
         }
         return sniff(File(dir, sha))
     }
+
+    /** Test seam: resolve the MIME a cached sha would be served with. */
+    internal fun mimeForTesting(sha256: String): String = mimeFor(sha256)
 
     private fun buildResponse(file: File, mime: String, rangeHeader: String?): WebResourceResponse {
         val total = file.length()
@@ -251,6 +258,7 @@ class MediaCache private constructor(private val dir: File) {
         private const val TAG = "LankaCache"
         private const val TYPE_SUFFIX = ".type"
         private const val TMP_SUFFIX = ".tmp"
+        private const val OCTET_STREAM = "application/octet-stream"
         private const val MAX_BYTES = 2L * 1024 * 1024 * 1024 // 2 GB LRU cap
         private val MEDIA_PATH = Regex("""/media/([0-9a-f]{64})""")
         private val RANGE = Regex("""bytes=(\d*)-(\d*)""")

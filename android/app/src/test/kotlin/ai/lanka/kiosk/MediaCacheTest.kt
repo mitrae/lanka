@@ -90,6 +90,34 @@ class MediaCacheTest {
         assertEquals(0, tmpFiles.size)
     }
 
+    // --- mimeFor (served Content-Type for the interceptor) ---
+
+    @Test fun `mimeFor sniffs mp4 when stored type is octet-stream`() {
+        val sha = "a".repeat(64)
+        val mp4 = ByteArray(12).apply {
+            this[4] = 0x66; this[5] = 0x74; this[6] = 0x79; this[7] = 0x70  // 'ftyp'
+        }
+        java.io.File(tempDir, sha).writeBytes(mp4)
+        java.io.File(tempDir, "$sha.type").writeText("application/octet-stream")
+        assertEquals("video/mp4", cache.mimeForTesting(sha))
+    }
+
+    @Test fun `mimeFor honors a real stored type without sniffing`() {
+        val sha = "b".repeat(64)
+        java.io.File(tempDir, sha).writeBytes(ByteArray(12))  // would sniff to octet-stream
+        java.io.File(tempDir, "$sha.type").writeText("video/webm")
+        assertEquals("video/webm", cache.mimeForTesting(sha))
+    }
+
+    @Test fun `mimeFor sniffs when no type sidecar exists`() {
+        val sha = "c".repeat(64)
+        val png = ByteArray(12).apply {
+            this[0] = 0x89.toByte(); this[1] = 0x50; this[2] = 0x4E; this[3] = 0x47  // PNG
+        }
+        java.io.File(tempDir, sha).writeBytes(png)
+        assertEquals("image/png", cache.mimeForTesting(sha))
+    }
+
     // --- evictExcept ---
 
     @Test fun `evictExcept removes files not in keep set`() {
