@@ -57,7 +57,7 @@ export async function ingestMedia(
       .get()
     if (existing) return existing
 
-    await store.put(sha256, createReadStream(tmpPath))
+    await store.put(sha256, createReadStream(tmpPath), input.mimeType)
 
     // Thumbnail generation — if it fails, log and keep going (the row still
     // goes in without a thumbnail, so retries / manual regeneration can happen

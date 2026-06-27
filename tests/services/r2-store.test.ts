@@ -112,6 +112,15 @@ describe('R2Store', () => {
     })
   })
 
+  it('put() sets the Content-Type on the object (so the CDN serves a playable type)', async () => {
+    const store = new R2Store(cfg)
+    await store.put('4'.repeat(64), Readable.from([Buffer.from('x')]), 'video/mp4')
+    expect(uploadCtor.mock.calls[0][0].params).toMatchObject({
+      Key: `media/${'4'.repeat(64)}`,
+      ContentType: 'video/mp4'
+    })
+  })
+
   it('putThumbnail() uploads JPEG to the thumbs/ prefix', async () => {
     const store = new R2Store(cfg)
     await store.putThumbnail('2'.repeat(64), Readable.from([Buffer.from('x')]))

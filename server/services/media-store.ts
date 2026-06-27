@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import type { Readable } from 'node:stream'
 
 export interface MediaStore {
-  put(sha256: string, stream: Readable): Promise<void>
+  put(sha256: string, stream: Readable, contentType?: string): Promise<void>
   has(sha256: string): Promise<boolean>
   // Async so backends that fetch over the network (e.g. R2) fit the contract.
   open(sha256: string, opts?: { start?: number; end?: number }): Promise<Readable>
@@ -46,7 +46,10 @@ export class LocalDiskStore implements MediaStore {
     }
   }
 
-  async put(sha: string, stream: Readable): Promise<void> {
+  // contentType is ignored on local disk — the /media proxy sets Content-Type
+  // from the DB mime_type. R2 has no such proxy, so it must bake it into the
+  // object (see R2Store.put).
+  async put(sha: string, stream: Readable, _contentType?: string): Promise<void> {
     await this.putAtomic(this.path(sha), stream)
   }
 

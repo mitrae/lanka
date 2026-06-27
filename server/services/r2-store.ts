@@ -59,8 +59,11 @@ export class R2Store implements MediaStore {
 
   // --- writes (streamed via lib-storage so unknown-length streams work) ---
 
-  async put(sha: string, stream: Readable): Promise<void> {
-    await this.upload(this.key(sha), stream)
+  async put(sha: string, stream: Readable, contentType?: string): Promise<void> {
+    // contentType MUST be set: players fetch media bytes straight from the R2
+    // public CDN, and an HTML5 <video> rejects a source with no/empty
+    // Content-Type (MEDIA_ERR_SRC_NOT_SUPPORTED).
+    await this.upload(this.key(sha), stream, contentType)
   }
 
   async putThumbnail(sha: string, stream: Readable): Promise<void> {

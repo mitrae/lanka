@@ -19,7 +19,7 @@ export async function handleUploadApk(
   store: MediaStore,
   input: UploadApkInput
 ) {
-  await store.put(input.sha256, input.stream)
+  await store.put(input.sha256, input.stream, 'application/vnd.android.package-archive')
   const [row] = await db
     .insert(schema.apkReleases)
     .values({
