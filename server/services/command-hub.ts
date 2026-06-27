@@ -3,7 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 
 export type CommandStatus = 'pending' | 'sent' | 'acked' | 'failed'
-export type CommandType = 'ota' | 'reboot' | 'screenshot' | 'log-request'
+export type CommandType = 'ota' | 'reboot' | 'screenshot' | 'log-request' | 'kiosk-lock' | 'kiosk-unlock'
 
 interface Peer {
   send(msg: string): void

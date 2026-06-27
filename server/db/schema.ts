@@ -176,7 +176,7 @@ export const deviceCommands = sqliteTable(
     deviceId: text('device_id')
       .notNull()
       .references(() => devices.id, { onDelete: 'cascade' }),
-    cmd: text('cmd', { enum: ['ota', 'reboot', 'screenshot', 'log-request'] }).notNull(),
+    cmd: text('cmd', { enum: ['ota', 'reboot', 'screenshot', 'log-request', 'kiosk-lock', 'kiosk-unlock'] }).notNull(),
     payload: text('payload'),
     status: text('status', { enum: ['pending', 'sent', 'acked', 'failed'] })
       .notNull()

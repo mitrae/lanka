@@ -140,6 +140,7 @@ class MainActivity : Activity() {
     }
 
     private fun scheduleKioskReturn() {
+        if (!KioskLock.locked) return // unlocked for maintenance — let the user leave
         mainHandler.removeCallbacks(kioskReturnRunnable)
         mainHandler.postDelayed(kioskReturnRunnable, KIOSK_RETURN_MS)
     }
@@ -149,9 +150,10 @@ class MainActivity : Activity() {
         if (hasFocus) KioskFlags.apply(this)
     }
 
-    /** Kiosk: a single BACK press from the remote must not tear the player down. */
+    /** Kiosk: a single BACK press from the remote must not tear the player down
+     *  (unless unlocked for maintenance). */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK) return true
+        if (keyCode == KeyEvent.KEYCODE_BACK && KioskLock.locked) return true
         return super.onKeyDown(keyCode, event)
     }
 

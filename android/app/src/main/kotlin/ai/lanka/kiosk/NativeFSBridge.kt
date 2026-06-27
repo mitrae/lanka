@@ -153,6 +153,18 @@ class NativeFSBridge(
     @JavascriptInterface
     fun reboot(): Boolean = DevicePolicy.reboot(context)
 
+    /**
+     * Enables/disables the kiosk snap-back lock at runtime (dashboard maintenance
+     * toggle). When disabled, HOME/app-switch are no longer re-foregrounded and
+     * BACK works again, so an operator can leave the player. Not persisted — the
+     * box boots locked.
+     */
+    @JavascriptInterface
+    fun setKioskLock(enabled: Boolean) {
+        KioskLock.locked = enabled
+        Log.i(TAG, "kiosk lock set to $enabled")
+    }
+
     private companion object {
         private const val TAG = "NativeFS"
     }

@@ -5,7 +5,7 @@ type WsFactory = (url: string) => WebSocket
 
 interface Command {
   commandId: number
-  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request'
+  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request' | 'kiosk-lock' | 'kiosk-unlock'
   payload: Record<string, unknown> | null
 }
 
@@ -69,6 +69,21 @@ export function createCommandChannel(deps: CommandChannelDeps): CommandChannelHa
       try {
         const data = nfs.screenshot()
         send({ commandId, status: 'acked', result: data })
+      }
+      catch (e) {
+        send({ commandId, status: 'failed', result: String(e) })
+      }
+      return
+    }
+
+    if (type === 'kiosk-lock' || type === 'kiosk-unlock') {
+      if (!nfs.setKioskLock) {
+        send({ commandId, status: 'failed', result: 'not supported' })
+        return
+      }
+      try {
+        nfs.setKioskLock(type === 'kiosk-lock')
+        send({ commandId, status: 'acked' })
       }
       catch (e) {
         send({ commandId, status: 'failed', result: String(e) })

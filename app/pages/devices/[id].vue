@@ -357,6 +357,20 @@ async function confirmOta() {
               :loading="commandPending"
               @click="enqueue('log-request')"
             >Pull logs</UButton>
+            <UButton
+              size="sm"
+              variant="outline"
+              leading-icon="i-lucide-lock"
+              :loading="commandPending"
+              @click="enqueue('kiosk-lock')"
+            >Lock</UButton>
+            <UButton
+              size="sm"
+              variant="outline"
+              leading-icon="i-lucide-lock-open"
+              :loading="commandPending"
+              @click="enqueue('kiosk-unlock')"
+            >Unlock</UButton>
           </div>
 
           <!-- Recent commands list -->

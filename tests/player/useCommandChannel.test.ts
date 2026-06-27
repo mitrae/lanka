@@ -30,7 +30,8 @@ function makeNativeFS() {
     installApk: vi.fn(() => true),
     screenshot: vi.fn(() => 'data:image/jpeg;base64,abc'),
     getLogs: vi.fn(() => 'log line 1\nlog line 2'),
-    getAppVersion: vi.fn(() => '1.2.3')
+    getAppVersion: vi.fn(() => '1.2.3'),
+    setKioskLock: vi.fn()
   }
 }
 
@@ -100,6 +101,33 @@ describe('createCommandChannel', () => {
     ws.open()
     ws.receive({ commandId: 7, cmd: 'reboot', payload: null })
     expect(reloaded).toBe(true)
+  })
+
+  it('handles kiosk-lock: calls setKioskLock(true) and acks', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 8, cmd: 'kiosk-lock', payload: null })
+    expect(nativeFS.setKioskLock).toHaveBeenCalledWith(true)
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 8, status: 'acked' })
+  })
+
+  it('handles kiosk-unlock: calls setKioskLock(false) and acks', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 9, cmd: 'kiosk-unlock', payload: null })
+    expect(nativeFS.setKioskLock).toHaveBeenCalledWith(false)
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 9, status: 'acked' })
+  })
+
+  it('kiosk-lock fails gracefully when the bridge lacks setKioskLock (old APK)', () => {
+    const { setKioskLock, ...noLock } = nativeFS
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: noLock as any, onReload: () => {}, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 10, cmd: 'kiosk-lock', payload: null })
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 10, status: 'failed', result: 'not supported' })
   })
 
   it('sends failed ack when nativeFS is absent', () => {

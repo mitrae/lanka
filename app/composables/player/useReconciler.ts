@@ -31,6 +31,11 @@ export interface NativeFSBridge {
    * the box lacks device-owner powers, so the caller falls back to a reload.
    */
   reboot?(): boolean
+  /**
+   * Enables/disables the kiosk snap-back lock at runtime (dashboard maintenance
+   * toggle). Present on APKs that support the lock command.
+   */
+  setKioskLock?(enabled: boolean): void
 }
 
 export interface ReconcilerDeps {
