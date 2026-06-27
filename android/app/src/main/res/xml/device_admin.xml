@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Policies declared by Lanka's device-admin component. Required for
+  `dpm set-device-owner`. The kiosk uses force-lock (reboot/lock) and
+  disable-keyguard-features; the others are declared so future policy use
+  (e.g. remote wipe of a decommissioned box) needs no manifest change.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock />
+        <wipe-data />
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>

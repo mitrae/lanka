@@ -143,6 +143,16 @@ class NativeFSBridge(
     @JavascriptInterface
     fun getAppVersion(): String = BuildConfig.VERSION_NAME
 
+    /**
+     * Reboots the device. Requires Lanka to be provisioned as device owner;
+     * returns false otherwise, in which case the player falls back to a soft
+     * page reload (see useCommandChannel.ts). On success the box reboots, so no
+     * value is meaningfully returned — the command-hub already marks reboot
+     * acked on delivery.
+     */
+    @JavascriptInterface
+    fun reboot(): Boolean = DevicePolicy.reboot(context)
+
     private companion object {
         private const val TAG = "NativeFS"
     }

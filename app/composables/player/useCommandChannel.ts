@@ -46,8 +46,18 @@ export function createCommandChannel(deps: CommandChannelDeps): CommandChannelHa
     const nfs = deps.nativeFS
 
     if (type === 'reboot') {
+      // Prefer a real OS reboot on a device-owner APK; fall back to a soft
+      // player reload on a box without device-owner powers (or a non-APK
+      // browser). Either way no ack is sent — the command-hub marks reboot
+      // acked on delivery, since a rebooting device can never reply.
+      if (nfs?.reboot) {
+        try {
+          if (nfs.reboot()) return
+        }
+        catch { /* fall through to reload */ }
+      }
       deps.onReload()
-      return // no ack — page reloads
+      return
     }
 
     if (!nfs) {

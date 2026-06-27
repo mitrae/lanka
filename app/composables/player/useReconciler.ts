@@ -26,6 +26,11 @@ export interface NativeFSBridge {
   getLogs(): string
   /** Returns the currently installed APK version string. */
   getAppVersion(): string
+  /**
+   * Reboots the device. Present only on a device-owner APK; returns false when
+   * the box lacks device-owner powers, so the caller falls back to a reload.
+   */
+  reboot?(): boolean
 }
 
 export interface ReconcilerDeps {

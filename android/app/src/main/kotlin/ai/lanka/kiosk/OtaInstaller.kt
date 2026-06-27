@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.os.Build
 import android.util.Log
 import android.webkit.WebView
 import java.io.File
@@ -57,6 +58,15 @@ class OtaInstaller private constructor(private val baseDir: File) {
         }
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+: an app holding REQUEST_INSTALL_PACKAGES may update
+            // *itself* (same signer) with no prompt. A device-owner install is
+            // silent regardless; this also covers the non-owner self-update path
+            // on certified boxes. If the box still refuses, the commit reports
+            // STATUS_PENDING_USER_ACTION and OtaInstallReceiver falls back to the
+            // system install prompt.
+            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        }
         val sessionId = installer.createSession(params)
         val session = installer.openSession(sessionId)
         try {

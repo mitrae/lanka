@@ -118,6 +118,76 @@ keystore means every box must uninstall/reinstall (a different signature can't
    The device appears in the Lanka dashboard's unclaimed tray; assign a
    playlist there.
 
+## Kiosk hardening WITHOUT device owner (per box)
+
+When the box can't be provisioned as device owner (e.g. a Google TV box already
+signed into an account, where the setup wizard offers no "skip"), run these once
+per device over ADB — no factory reset needed:
+
+```bash
+# Silent OTA self-update (Android 12+ self-update path; no install prompt)
+adb shell appops set ai.lanka.kiosk REQUEST_INSTALL_PACKAGES allow
+# Kiosk snap-back: lets the player relaunch itself from the background
+adb shell appops set ai.lanka.kiosk SYSTEM_ALERT_WINDOW allow
+```
+
+What you get without device owner:
+- **BACK** is swallowed; **HOME / app-switch snap back** — pressing them flashes
+  the launcher for ~1s, then `MainActivity.onUserLeaveHint`/`onStop` re-foregrounds
+  the player (the snap-back also re-shows the player when the box wakes from sleep).
+- This is **deterrence, not a hard lock**: there's a brief launcher flash, and the
+  remote's **power button still sleeps the box** (harmless — handled by the TV's
+  own on/off schedule, or a wake).
+
+What does NOT work without device owner (verified on Xiaomi TV Box S 3rd Gen):
+- **Screen pinning** (`startLockTask` on a non-whitelisted app) — Google TV ignores
+  it (`lockTaskModeState` stays `NONE`).
+- **Replacing the HOME launcher** (`set-home-activity`) — Google TV keeps its own.
+- Intercepting HOME / dedicated remote app buttons — system-reserved.
+
+For an **airtight** lock (silent lock-task, HOME/Recents/app-buttons all dead,
+status bar gone) you must provision **device owner** — see below.
+
+## Device-owner provisioning (silent OTA + reboot + locked kiosk)
+
+On a **certified box** (Google TV, e.g. Xiaomi TV Box S) a normal app can't
+silently install updates or reboot the device — those need **device owner**.
+Provisioning it unlocks Lanka's full remote control plane and a true lock-task
+kiosk. **The same APK still runs un-provisioned** (on a permissive/rooted box or
+during dev) — `DevicePolicy` degrades every call to a no-op, and OTA falls back
+to the system install prompt.
+
+Device owner can only be set on a box with **no accounts added** (a factory-fresh
+or freshly reset device):
+
+```bash
+# 1. Factory reset the box. Do NOT sign into a Google account during setup.
+# 2. Enable developer options + (wireless) ADB, then install Lanka:
+adb install -r app-debug.apk
+# 3. Promote Lanka to device owner:
+adb shell dpm set-device-owner ai.lanka.kiosk/.LankaDeviceAdminReceiver
+# → "Success: Device owner set to package ai.lanka.kiosk"
+```
+
+Once provisioned, on next launch Lanka automatically (see `DevicePolicy.kt`):
+
+- **pins itself via lock task** (no "screen pinned" prompt) and **becomes the
+  HOME launcher**, so HOME/BACK can't escape the player and a reboot returns
+  straight to it — no reliance on the flaky `BOOT_COMPLETED` path;
+- **disables keyguard + status bar**, blocks safe-boot and factory-reset;
+- **defers Google TV OS updates to 03:00–05:00** so the box never reboots
+  mid-playlist on its own;
+- enables **silent OTA** (dashboard → device → *Update*, no on-TV tap) and
+  **real reboot** (dashboard → device → *Reboot* now power-cycles the box
+  instead of just reloading the page).
+
+To undo (device owner can't be removed by ADB once accounts exist — factory
+reset clears it):
+
+```bash
+adb shell dpm remove-active-admin ai.lanka.kiosk/.LankaDeviceAdminReceiver
+```
+
 ## Known limitations (intentional, PoC scope)
 
 - **Autostart depends on the box.** A `BOOT_COMPLETED` receiver relaunches the

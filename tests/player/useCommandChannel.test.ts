@@ -63,13 +63,43 @@ describe('createCommandChannel', () => {
     expect(ack.result).toContain('log line')
   })
 
-  it('calls onReload for reboot command (no ack sent)', () => {
+  it('calls onReload for reboot command when bridge has no reboot (no ack sent)', () => {
     const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => { reloaded = true }, wsFactory })
     ch.open()
     ws.open()
     ws.receive({ commandId: 3, cmd: 'reboot', payload: null })
     expect(reloaded).toBe(true)
     expect(ws.sent).toHaveLength(0)
+  })
+
+  it('calls native reboot (no reload, no ack) when device-owner bridge supports it', () => {
+    const reboot = vi.fn(() => true)
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: { ...nativeFS, reboot }, onReload: () => { reloaded = true }, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 5, cmd: 'reboot', payload: null })
+    expect(reboot).toHaveBeenCalled()
+    expect(reloaded).toBe(false)
+    expect(ws.sent).toHaveLength(0)
+  })
+
+  it('falls back to reload when native reboot returns false', () => {
+    const reboot = vi.fn(() => false)
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: { ...nativeFS, reboot }, onReload: () => { reloaded = true }, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 6, cmd: 'reboot', payload: null })
+    expect(reboot).toHaveBeenCalled()
+    expect(reloaded).toBe(true)
+  })
+
+  it('falls back to reload when native reboot throws', () => {
+    const reboot = vi.fn(() => { throw new Error('not owner') })
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: { ...nativeFS, reboot }, onReload: () => { reloaded = true }, wsFactory })
+    ch.open()
+    ws.open()
+    ws.receive({ commandId: 7, cmd: 'reboot', payload: null })
+    expect(reloaded).toBe(true)
   })
 
   it('sends failed ack when nativeFS is absent', () => {
