@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, createReadStream } from 'node:fs'
+import { mkdtempSync, createReadStream, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +13,7 @@ import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { useMediaStore } from '~/server/services/media-store-singleton'
 import type { MediaStore } from '~/server/services/media-store'
+import { ensureKioskSafe } from '~/server/services/transcode'
 
 export type IngestInput = {
   stream: Readable
@@ -32,7 +33,7 @@ export async function ingestMedia(
   input: IngestInput
 ): Promise<IngestedMedia> {
   const tmpDir = mkdtempSync(join(tmpdir(), 'lanka-ingest-'))
-  const tmpPath = join(tmpDir, 'upload.bin')
+  const tmpPath = join(tmpDir, 'in.bin')
   const hash = createHash('sha256')
   let bytes = 0
 
@@ -48,20 +49,76 @@ export async function ingestMedia(
       throw createError({ statusCode: 400, message: 'Empty upload' })
     }
 
-    const sha256 = hash.digest('hex')
+    const sourceSha = hash.digest('hex')
+    const sourceBytes = bytes
 
-    const existing = await db
+    // 1. Source dedup: if we've already ingested this exact source, return it
+    const sourceExisting = await db
       .select()
       .from(schema.media)
-      .where(eq(schema.media.sha256, sha256))
+      .where(eq(schema.media.sourceSha256, sourceSha))
       .get()
-    if (existing) return existing
+    if (sourceExisting) return sourceExisting
 
-    await store.put(sha256, createReadStream(tmpPath), input.mimeType)
+    // 2. Determine the final file, mime, sha, and dims by kind
+    let finalPath: string
+    let finalSha: string
+    let finalBytes: number
+    let finalMime: string
+    let finalWidth: number | null
+    let finalHeight: number | null
+    let finalDurationMs: number | null
 
-    // Thumbnail generation — if it fails, log and keep going (the row still
-    // goes in without a thumbnail, so retries / manual regeneration can happen
-    // later).
+    if (input.kind === 'image') {
+      finalPath = tmpPath
+      finalSha = sourceSha
+      finalBytes = sourceBytes
+      finalMime = input.mimeType ?? 'application/octet-stream'
+      finalWidth = input.width ?? null
+      finalHeight = input.height ?? null
+      finalDurationMs = input.durationMs ?? null
+    } else {
+      // video: run through kiosk-safe normalizer
+      let result: Awaited<ReturnType<typeof ensureKioskSafe>>
+      try {
+        result = await ensureKioskSafe(tmpPath, tmpDir)
+      } catch {
+        throw createError({ statusCode: 422, message: 'Could not process this video' })
+      }
+      finalPath = result.path
+      finalMime = 'video/mp4'
+      finalBytes = statSync(finalPath).size
+      // Hash the final (possibly transcoded) file
+      const outHash = createHash('sha256')
+      const { Writable } = await import('node:stream')
+      await pipeline(
+        createReadStream(finalPath),
+        new Writable({
+          write(chunk, _enc, cb) {
+            outHash.update(chunk)
+            cb()
+          }
+        })
+      )
+      finalSha = outHash.digest('hex')
+      // Probe is authoritative for video dims
+      finalWidth = result.probe.width
+      finalHeight = result.probe.height
+      finalDurationMs = result.probe.durationMs
+    }
+
+    // 3. Content dedup: protect against the UNIQUE sha256 constraint
+    const contentExisting = await db
+      .select()
+      .from(schema.media)
+      .where(eq(schema.media.sha256, finalSha))
+      .get()
+    if (contentExisting) return contentExisting
+
+    // 4. Store the object
+    await store.put(finalSha, createReadStream(finalPath), finalMime)
+
+    // 5. Thumbnail generation — if it fails, log and keep going
     let thumbnailBytes: number | null = null
     try {
       const { generateImageThumbnail, generateVideoThumbnail } = await import(
@@ -70,26 +127,28 @@ export async function ingestMedia(
       const { Readable } = await import('node:stream')
       const thumbBuf =
         input.kind === 'image'
-          ? await generateImageThumbnail(createReadStream(tmpPath))
-          : await generateVideoThumbnail(createReadStream(tmpPath))
-      await store.putThumbnail(sha256, Readable.from([thumbBuf]))
+          ? await generateImageThumbnail(createReadStream(finalPath))
+          : await generateVideoThumbnail(createReadStream(finalPath))
+      await store.putThumbnail(finalSha, Readable.from([thumbBuf]))
       thumbnailBytes = thumbBuf.length
     } catch (err) {
-      console.warn('[thumbnail]', { sha256, err: (err as Error).message })
+      console.warn('[thumbnail]', { sha256: finalSha, err: (err as Error).message })
     }
 
+    // 6. Insert the media row
     const [row] = await db
       .insert(schema.media)
       .values({
-        sha256,
+        sha256: finalSha,
+        sourceSha256: sourceSha,
         kind: input.kind,
         filename: input.filename,
-        mimeType: input.mimeType ?? 'application/octet-stream',
-        bytes,
+        mimeType: finalMime,
+        bytes: finalBytes,
         thumbnailBytes,
-        durationMs: input.durationMs ?? null,
-        width: input.width ?? null,
-        height: input.height ?? null
+        durationMs: finalDurationMs,
+        width: finalWidth,
+        height: finalHeight
       })
       .returning()
     return row

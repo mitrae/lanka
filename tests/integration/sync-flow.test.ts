@@ -1,5 +1,5 @@
 // tests/integration/sync-flow.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,8 +10,19 @@ import { LocalDiskStore } from '~/server/services/media-store'
 import { handleRegister } from '~/server/api/devices/register.post'
 import { handleManifest } from '~/server/api/devices/[id]/manifest.get'
 import { ingestMedia } from '~/server/api/media.post'
+import { ensureKioskSafe } from '~/server/services/transcode'
 import { bumpPlaylistVersion } from '~/server/services/playlist-version'
 import * as schema from '~/server/db/schema'
+
+vi.mock('~/server/services/transcode')
+
+beforeEach(() => {
+  vi.mocked(ensureKioskSafe).mockImplementation(async (inPath) => ({
+    path: inPath,
+    transcoded: false,
+    probe: { codec: 'h264', profile: 'Main', pixFmt: 'yuv420p', width: 1280, height: 720, durationMs: 1000, audioCodec: 'aac' }
+  }))
+})
 
 describe('sync flow end-to-end', () => {
   let db: TestDb
@@ -88,7 +99,7 @@ describe('sync flow end-to-end', () => {
     expect(m1!.items[0]).toMatchObject({
       type: 'video',
       sha256: v.sha256,
-      durationMs: 15000
+      durationMs: 1000 // from probe (mock returns durationMs: 1000)
     })
     expect(m1!.items[1]).toMatchObject({
       type: 'image',

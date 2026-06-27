@@ -42,6 +42,7 @@ describe('ingestMedia', () => {
     expect(row.kind).toBe('image')
     expect(row.filename).toBe('test.png')
     expect(row.bytes).toBe(9)
+    expect(row.sourceSha256).toBe(row.sha256) // images: source === stored
     expect(await store.has(row.sha256)).toBe(true)
   })
 
@@ -63,11 +64,11 @@ describe('ingestMedia', () => {
     expect(all).toHaveLength(1)
   })
 
-  it('records duration_ms when given', async () => {
+  it('records duration_ms when given for images', async () => {
     const row = await ingestMedia(db, store, {
-      stream: readable('MP4'),
-      filename: 'clip.mp4',
-      kind: 'video',
+      stream: readable('ANIMATED-GIF'),
+      filename: 'clip.gif',
+      kind: 'image',
       durationMs: 15000
     })
     expect(row.durationMs).toBe(15000)

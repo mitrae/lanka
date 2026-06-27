@@ -1,5 +1,5 @@
 // tests/integration/admin-flow.test.ts
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import { EventsHub } from '~/server/services/events'
 import { handleRegister } from '~/server/api/devices/register.post'
 import { handleManifest } from '~/server/api/devices/[id]/manifest.get'
 import { ingestMedia } from '~/server/api/media.post'
+import { ensureKioskSafe } from '~/server/services/transcode'
 import { handleCreateAddress } from '~/server/api/addresses/index.post'
 import { handleCreateGroup } from '~/server/api/groups/index.post'
 import { handleUpdateDevice } from '~/server/api/devices/[id].delete'
@@ -19,6 +20,16 @@ import { handleReplacePlaylistItems } from '~/server/api/playlists/[id]/items.pu
 import { handleAssignGroup } from '~/server/api/assignments/groups/[id].delete'
 import { handleAssignDevice } from '~/server/api/assignments/devices/[id].delete'
 import { bumpPlaylistVersion } from '~/server/services/playlist-version'
+
+vi.mock('~/server/services/transcode')
+
+beforeEach(() => {
+  vi.mocked(ensureKioskSafe).mockImplementation(async (inPath) => ({
+    path: inPath,
+    transcoded: false,
+    probe: { codec: 'h264', profile: 'Main', pixFmt: 'yuv420p', width: 1280, height: 720, durationMs: 1000, audioCodec: 'aac' }
+  }))
+})
 
 describe('admin flow end-to-end', () => {
   let db: TestDb
@@ -101,7 +112,7 @@ describe('admin flow end-to-end', () => {
     expect(m!.items[0]).toMatchObject({
       type: 'video',
       sha256: video.sha256,
-      durationMs: 15000
+      durationMs: 1000 // from probe (mock returns durationMs: 1000)
     })
     expect(m!.items[1]).toMatchObject({
       type: 'image',
