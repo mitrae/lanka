@@ -82,7 +82,11 @@ export default defineNuxtConfig({
   },
   nitro: {
     experimental: {
-      tasks: false
+      tasks: false,
+      // Enables Nitro/crossws WebSocket upgrades so the device command channel
+      // (/api/devices/:id/ws — reboot, screenshot, OTA, kiosk-lock) works.
+      // Without this the node server answers WS upgrades with HTTP 426.
+      websocket: true
     }
   }
 })
