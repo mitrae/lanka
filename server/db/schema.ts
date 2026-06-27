@@ -74,9 +74,11 @@ export const media = sqliteTable(
       () => organizations.id,
       { onDelete: 'set null' }
     ),
+    sourceSha256: text('source_sha256'),
   },
   (t) => ({
-    sha256Idx: uniqueIndex('media_sha256_idx').on(t.sha256)
+    sha256Idx: uniqueIndex('media_sha256_idx').on(t.sha256),
+    sourceShaIdx: index('media_source_sha_idx').on(t.sourceSha256)
   })
 )
 
