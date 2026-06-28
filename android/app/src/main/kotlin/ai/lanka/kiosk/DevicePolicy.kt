@@ -61,6 +61,8 @@ object DevicePolicy {
         if (homeActivity != null) {
             runCatching { setHomeLauncher(context, dpm, admin, homeActivity) }
                 .onFailure { Log.w(TAG, "setHomeLauncher: ${it.message}") }
+        } else {
+            Log.d(TAG, "homeActivity=null — skipping HOME-launcher pinning")
         }
         runCatching { dpm.setKeyguardDisabled(admin, true) }
         runCatching { dpm.setStatusBarDisabled(admin, true) }

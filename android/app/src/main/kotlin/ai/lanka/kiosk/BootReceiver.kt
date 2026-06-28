@@ -18,9 +18,8 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(ctx: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         Log.i("LankaBoot", "BOOT_COMPLETED — launching kiosk")
-        val launch = Intent(ctx, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
+        val launch = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) ?: return
         ctx.startActivity(launch)
     }
 }
