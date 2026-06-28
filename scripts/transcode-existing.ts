@@ -40,7 +40,7 @@ import * as schema from '../server/db/schema'
 import { LocalDiskStore } from '../server/services/media-store'
 import { R2Store } from '../server/services/r2-store'
 import type { MediaStore } from '../server/services/media-store'
-import { ensureKioskSafe, probeVideo, isKioskSafe } from '../server/services/transcode'
+import { ensureQuality, probeVideo, isKioskSafe } from '../server/services/transcode'
 import { bumpPlaylistVersion } from '../server/services/playlist-version'
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ async function main(): Promise<void> {
       }
 
       // --- Real run: probe + conditionally transcode + re-probe ---
-      const { path: finalPath, probe, transcoded } = await ensureKioskSafe(tmpIn, tmpDir)
+      const { path: finalPath, probe, transcoded } = await ensureQuality(tmpIn, tmpDir, 'standard')
 
       if (!transcoded) {
         console.log(`${label} skip (already conforming)`)

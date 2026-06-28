@@ -7,7 +7,7 @@ import { Readable } from 'node:stream'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { LocalDiskStore } from '~/server/services/media-store'
 import { ingestMedia } from '~/server/api/media.post'
-import { ensureKioskSafe } from '~/server/services/transcode'
+import { ensureQuality } from '~/server/services/transcode'
 import * as schema from '~/server/db/schema'
 
 vi.mock('~/server/services/transcode')
@@ -58,7 +58,7 @@ describe('ingestMedia — video transcode integration', () => {
     const transcodedFile = join(tmpFilesDir, 'transcoded.mp4')
     writeFileSync(transcodedFile, transcodedBytes)
 
-    vi.mocked(ensureKioskSafe).mockResolvedValue({
+    vi.mocked(ensureQuality).mockResolvedValue({
       path: transcodedFile,
       probe: {
         codec: 'h264',
@@ -107,11 +107,11 @@ describe('ingestMedia — video transcode integration', () => {
     const sourceSha = sha256Hex(sourceBytes)
 
     // Passthrough: same path (same bytes), so sha is identical to source sha
-    // We need a real file that ensureKioskSafe returns as-is.
+    // We need a real file that ensureQuality returns as-is.
     // The mock returns the same path the handler writes to (in.bin inside tmpDir).
     // Since we can't know tmpDir ahead of time, we use mockImplementation to
     // capture the inPath and return it unchanged.
-    vi.mocked(ensureKioskSafe).mockImplementation(async (inPath) => ({
+    vi.mocked(ensureQuality).mockImplementation(async (inPath) => ({
       path: inPath,
       probe: {
         codec: 'h264',
@@ -142,7 +142,7 @@ describe('ingestMedia — video transcode integration', () => {
   })
 
   // (c) source dedup: same source bytes → return existing row, no transcode/put
-  it('(c) source-dedup: pre-existing sourceSha256 match returns existing row without calling ensureKioskSafe or store.put', async () => {
+  it('(c) source-dedup: pre-existing sourceSha256 match returns existing row without calling ensureQuality or store.put', async () => {
     const sourceBytes = Buffer.from('DUPLICATE-SOURCE-VIDEO')
     const sourceSha = sha256Hex(sourceBytes)
 
@@ -168,13 +168,13 @@ describe('ingestMedia — video transcode integration', () => {
     })
 
     expect(row.id).toBe(preInserted.id)
-    expect(vi.mocked(ensureKioskSafe)).not.toHaveBeenCalled()
+    expect(vi.mocked(ensureQuality)).not.toHaveBeenCalled()
     expect(putSpy).not.toHaveBeenCalled()
   })
 
   // (d) transcode failure → 422
   it('(d) transcode failure → 422 error', async () => {
-    vi.mocked(ensureKioskSafe).mockRejectedValue(new Error('ffmpeg crashed'))
+    vi.mocked(ensureQuality).mockRejectedValue(new Error('ffmpeg crashed'))
 
     await expect(
       ingestMedia(db, store, {
@@ -206,8 +206,8 @@ describe('ingestMedia — video transcode integration', () => {
       .returning()
 
     // Different source bytes → different source sha → no source-dedup hit
-    // but ensureKioskSafe returns our identical output file
-    vi.mocked(ensureKioskSafe).mockResolvedValue({
+    // but ensureQuality returns our identical output file
+    vi.mocked(ensureQuality).mockResolvedValue({
       path: transcodeFile,
       probe: {
         codec: 'h264',

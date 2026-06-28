@@ -13,7 +13,7 @@ import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { useMediaStore } from '~/server/services/media-store-singleton'
 import type { MediaStore } from '~/server/services/media-store'
-import { ensureKioskSafe } from '~/server/services/transcode'
+import { ensureQuality } from '~/server/services/transcode'
 
 export type IngestInput = {
   stream: Readable
@@ -79,9 +79,9 @@ export async function ingestMedia(
       finalDurationMs = input.durationMs ?? null
     } else {
       // video: run through kiosk-safe normalizer
-      let result: Awaited<ReturnType<typeof ensureKioskSafe>>
+      let result: Awaited<ReturnType<typeof ensureQuality>>
       try {
-        result = await ensureKioskSafe(tmpPath, tmpDir)
+        result = await ensureQuality(tmpPath, tmpDir, 'standard')
       } catch {
         throw createError({ statusCode: 422, message: 'Could not process this video' })
       }
