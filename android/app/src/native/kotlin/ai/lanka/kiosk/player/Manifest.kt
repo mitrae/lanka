@@ -12,3 +12,6 @@ data class Manifest(
     val version: Int,
     val items: List<ManifestItem>
 )
+
+@Serializable
+data class RegisterBody(val deviceId: String, val playerVersion: String, val surface: String)
