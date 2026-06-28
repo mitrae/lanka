@@ -10,6 +10,7 @@ import {
   seedPlaylist
 } from '../helpers/fixtures'
 import { handleTelemetry } from '~/server/api/devices/[id]/telemetry.post'
+import { handleRegister } from '~/server/api/devices/register.post'
 import * as schema from '~/server/db/schema'
 
 describe('POST /api/devices/:id/telemetry handler', () => {
@@ -147,5 +148,12 @@ describe('POST /api/devices/:id/telemetry handler', () => {
     await expect(
       handleTelemetry(db, 'dev-noapk', { currentItemId: null })
     ).resolves.toBeUndefined()
+  })
+
+  it('persists surface from telemetry', async () => {
+    await handleRegister(db, { deviceId: 'dev-t', playerVersion: '0.1.0' })
+    await handleTelemetry(db, 'dev-t', { currentItemId: null, surface: 'native' })
+    const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-t'))
+    expect(row.surface).toBe('native')
   })
 })
