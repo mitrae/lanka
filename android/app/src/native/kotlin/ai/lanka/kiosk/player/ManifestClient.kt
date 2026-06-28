@@ -33,6 +33,12 @@ class ManifestClient(
 
     private val jsonContentType = "application/json".toMediaType()
 
+    // Dedicated SSE client with infinite read timeout so quiet intervals don't kill the stream.
+    // The original `http` (finite timeout) is still used for manifest GET and register POST.
+    private val sseHttp by lazy {
+        http.newBuilder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+    }
+
     private fun mediaUrl(sha: String) =
         if (mediaPublicBase.isNotEmpty()) "${mediaPublicBase.trimEnd('/')}/media/$sha"
         else "$serverBaseUrl/media/$sha"
@@ -42,6 +48,7 @@ class ManifestClient(
             RegisterBody.serializer(), RegisterBody(deviceId, playerVersion, surface)
         )
         runCatching {
+            // /api/devices/register expects deviceId in the JSON body, not the URL path.
             http.newCall(
                 Request.Builder()
                     .url("$serverBaseUrl/api/devices/register")
@@ -86,6 +93,7 @@ class ManifestClient(
         shas.filterNot { mediaCache.exists(it) }.forEach { sha ->
             runCatching { mediaCache.downloadSync(sha, mediaUrl(sha)) }
         }
+        // Downloads are best-effort; failed shas fall back to network streaming at play time.
         mediaCache.evictExcept(shas.toSet())
     }
 
@@ -94,8 +102,9 @@ class ManifestClient(
         val req = Request.Builder()
             .url("$serverBaseUrl/api/devices/$deviceId/stream")
             .build()
-        es = EventSources.createFactory(http).newEventSource(req, object : EventSourceListener() {
+        es = EventSources.createFactory(sseHttp).newEventSource(req, object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
+                attempt = 0  // Healthy stream — reset backoff so SSE reconnects aren't penalised by unrelated reconcile failures.
                 reconcile()
             }
             override fun onEvent(
