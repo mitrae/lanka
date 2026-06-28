@@ -1,0 +1,6 @@
+<resources>
+    <!-- Native (ExoPlayer) flavor override of the shared "Lanka" label, so the
+         Lanka-vs APK is distinguishable from the WebView APK in the launcher
+         and in Recents when both are installed for A/B comparison. -->
+    <string name="app_name">Lanka-vs</string>
+</resources>
