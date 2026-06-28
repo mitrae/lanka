@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
+    "postbuild": "node scripts/copy-ffmpeg-binaries.mjs",
     "start": "node .output/server/index.mjs",
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
