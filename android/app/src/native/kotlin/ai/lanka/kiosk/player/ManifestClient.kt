@@ -21,7 +21,12 @@ class ManifestClient(
     private val json: Json,
     private val mediaCache: MediaCache,
     private val onManifest: (Manifest?) -> Unit,
-    private val onError: (Throwable) -> Unit
+    private val onError: (Throwable) -> Unit,
+    // SSE "reload" handler. Null = the default behaviour, a plain reconcile()
+    // (re-fetch the manifest). PlayerActivity passes a handler that recreate()s
+    // the activity for a clean restart. (A null default rather than a lambda
+    // because a constructor-parameter default can't reference instance methods.)
+    private val onReload: (() -> Unit)? = null
 ) {
     private val differ = ManifestDiffer()
     private val poll = Executors.newSingleThreadScheduledExecutor { r ->
@@ -115,7 +120,7 @@ class ManifestClient(
             ) {
                 when (type) {
                     "manifest-changed" -> reconcile()
-                    "reload" -> reconcile() // PlayerActivity may recreate
+                    "reload" -> (onReload ?: ::reconcile)() // PlayerActivity recreates; default reconciles
                 }
             }
             override fun onFailure(

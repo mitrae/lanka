@@ -1,13 +1,10 @@
 package ai.lanka.kiosk
 
-import android.content.Context
-import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.WebSettings
 import android.webkit.WebView
-import java.util.UUID
 
 class MainActivity : KioskActivity() {
 
@@ -35,7 +32,7 @@ class MainActivity : KioskActivity() {
             }
         }
 
-        playerUrl = "${BuildConfig.LANKA_SERVER_URL}/player?deviceId=${deviceId()}"
+        playerUrl = "${BuildConfig.LANKA_SERVER_URL}/player?deviceId=${DeviceId.get(this)}"
         webView.loadUrl(playerUrl)
     }
 
@@ -89,14 +86,6 @@ class MainActivity : KioskActivity() {
         recreate()
     }
 
-    private fun deviceId(): String {
-        val prefs = getSharedPreferences("lanka_kiosk", Context.MODE_PRIVATE)
-        prefs.getString(KEY_DEVICE_ID, null)?.let { return it }
-        val fresh = UUID.randomUUID().toString()
-        prefs.edit().putString(KEY_DEVICE_ID, fresh).apply()
-        return fresh
-    }
-
     override fun onDestroy() {
         OtaResultBus.clearListener()
         mainHandler.removeCallbacksAndMessages(null)
@@ -104,7 +93,6 @@ class MainActivity : KioskActivity() {
     }
 
     companion object {
-        private const val KEY_DEVICE_ID = "deviceId"
         private const val RELOAD_BASE_MS = 3_000L  // first retry after 3s
         private const val RELOAD_MAX_MS = 30_000L  // cap between retries
         private const val RELOAD_MAX_SHIFT = 4     // 3,6,12,24 → then 30s cap

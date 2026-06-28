@@ -48,12 +48,29 @@ class OtaInstaller private constructor(private val baseDir: File) {
         }
     }
 
-    fun installSilently(context: Context, sha256: String, commandId: Long, webView: WebView) {
+    fun installSilently(context: Context, sha256: String, commandId: Long, webView: WebView) =
+        installSilently(context, sha256, commandId) { status ->
+            webView.post {
+                webView.evaluateJavascript("window.__otaResult($commandId, '$status')", null)
+            }
+        }
+
+    /**
+     * WebView-free variant for the native (ExoPlayer) player. Identical install
+     * flow; the immediate failure paths (missing APK / session throw) report via
+     * [onImmediateFailure] instead of a WebView JS call. The OS-delivered result
+     * still arrives through [OtaInstallReceiver] → [OtaResultBus], so the native
+     * caller passes `{ status -> OtaResultBus.notify(commandId, status) }`.
+     */
+    fun installSilently(
+        context: Context,
+        sha256: String,
+        commandId: Long,
+        onImmediateFailure: (status: String) -> Unit,
+    ) {
         val apk = apkFile(sha256)
         if (!apk.exists()) {
-            webView.post {
-                webView.evaluateJavascript("window.__otaResult($commandId, 'failed')", null)
-            }
+            onImmediateFailure("failed")
             return
         }
         val installer = context.packageManager.packageInstaller
@@ -85,9 +102,7 @@ class OtaInstaller private constructor(private val baseDir: File) {
         } catch (e: Exception) {
             session.abandon()
             Log.e(TAG, "installSilently failed: ${e.message}")
-            webView.post {
-                webView.evaluateJavascript("window.__otaResult($commandId, 'failed')", null)
-            }
+            onImmediateFailure("failed")
         }
     }
 
