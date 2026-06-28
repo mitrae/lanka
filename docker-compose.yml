@@ -11,6 +11,11 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
+      # Pin bind host/port here so they always win over env_file (.env). A stray
+      # dev PORT (e.g. 5100) would otherwise make the app listen off the port
+      # nginx proxies (127.0.0.1:3000) and break the healthcheck — total outage.
+      - HOST=127.0.0.1
+      - PORT=3000
       - DATABASE_URL=file:/app/data/signage.db
       - MEDIA_DIR=/app/data/media
     volumes:

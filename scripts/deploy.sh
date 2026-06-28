@@ -37,16 +37,14 @@ fi
 echo "==> Building and restarting"
 docker compose up -d --build
 
-echo "==> Loading HOST/PORT from .env for healthz poll"
-# docker-compose already treats .env as shell-sourceable via env_file.
-# Source it the same way here so future format changes (comments,
-# quoted values) don't silently break the poll URL.
-set -a
-# shellcheck disable=SC1091
-. ./.env
-set +a
-HOST_IP="$HOST"
-PORT_VAL="$PORT"
+# HOST/PORT are pinned to 127.0.0.1:3000 in docker-compose.yml as the single
+# source of truth (and the Dockerfile healthcheck probes the same loopback:port).
+# Mirror those constants here instead of sourcing .env: prod leaves HOST unset in
+# .env, so `. ./.env` + `HOST_IP="$HOST"` under `set -u` would abort the deploy
+# *after* the new image is already live but *before* this poll runs — skipping
+# the rollback below. A stray dev PORT would likewise poll the wrong port.
+HOST_IP="127.0.0.1"
+PORT_VAL="3000"
 
 echo "==> Waiting for http://${HOST_IP}:${PORT_VAL}/api/healthz"
 for i in $(seq 1 30); do
