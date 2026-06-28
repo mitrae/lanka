@@ -91,20 +91,35 @@ export class CommandHub {
 
   async handleAck(
     db: BetterSQLite3Database<typeof schema>,
+    deviceId: string,
     commandId: number,
     status: 'acked' | 'failed',
     result: string | null
   ): Promise<void> {
+    // Scope the update to the device on this socket so a peer can only ack its
+    // OWN commands — it must not tamper with another device's command rows by
+    // guessing an integer commandId.
     await db
       .update(schema.deviceCommands)
       .set({ status, result, updatedAt: new Date() })
-      .where(eq(schema.deviceCommands.id, commandId))
+      .where(
+        and(
+          eq(schema.deviceCommands.id, commandId),
+          eq(schema.deviceCommands.deviceId, deviceId)
+        )
+      )
   }
 
   async onDisconnect(
     db: BetterSQLite3Database<typeof schema>,
-    deviceId: string
+    deviceId: string,
+    peer: Peer
   ): Promise<void> {
+    // Ignore a stale disconnect from a socket already superseded by a reconnect:
+    // a new peer often opens before the old one's close fires, and deleting it /
+    // reverting its commands here would drop or duplicate command delivery.
+    if (this.peers.get(deviceId) !== peer) return
+
     await db
       .update(schema.deviceCommands)
       .set({ status: 'pending', updatedAt: new Date() })
