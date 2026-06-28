@@ -1,34 +1,21 @@
 package ai.lanka.kiosk
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.view.KeyEvent
 import android.view.ViewGroup
 import android.webkit.WebSettings
 import android.webkit.WebView
 import java.util.UUID
 
-class MainActivity : Activity() {
+class MainActivity : KioskActivity() {
 
     private lateinit var webView: WebView
     private lateinit var playerUrl: String
 
-    private val mainHandler = Handler(Looper.getMainLooper())
     private var reloadAttempt = 0
     private var reloadPending = false
-
-    /** Kiosk snap-back: re-foreground the player after it's been backgrounded. */
-    private val kioskReturnRunnable = Runnable {
-        startActivity(
-            Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        )
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,53 +97,6 @@ class MainActivity : Activity() {
         return fresh
     }
 
-    override fun onResume() {
-        super.onResume()
-        // Enter lock task once the activity is foregrounded. Pins the kiosk with
-        // no "screen pinned" UI when device owner; no-op otherwise. Idempotent.
-        DevicePolicy.startKioskMode(this)
-        // Cancel a pending snap-back — we're already in front.
-        mainHandler.removeCallbacks(kioskReturnRunnable)
-    }
-
-    /**
-     * Kiosk snap-back. The user pressed HOME or launched another app — bring the
-     * player back to the foreground so the remote can't park on the Google TV
-     * launcher. Needs SYSTEM_ALERT_WINDOW for the background activity launch
-     * (granted at setup). A no-op under device-owner lock-task, which never lets
-     * focus leave in the first place. Also re-foregrounds the player when the box
-     * wakes from sleep.
-     */
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        scheduleKioskReturn()
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // Catch backgrounding that skipped onUserLeaveHint, but never fight our
-        // own recreate() (renderer recovery) or an intentional finish.
-        if (!isFinishing && !isChangingConfigurations) scheduleKioskReturn()
-    }
-
-    private fun scheduleKioskReturn() {
-        if (!KioskLock.locked) return // unlocked for maintenance — let the user leave
-        mainHandler.removeCallbacks(kioskReturnRunnable)
-        mainHandler.postDelayed(kioskReturnRunnable, KIOSK_RETURN_MS)
-    }
-
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) KioskFlags.apply(this)
-    }
-
-    /** Kiosk: a single BACK press from the remote must not tear the player down
-     *  (unless unlocked for maintenance). */
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK && KioskLock.locked) return true
-        return super.onKeyDown(keyCode, event)
-    }
-
     override fun onDestroy() {
         OtaResultBus.clearListener()
         mainHandler.removeCallbacksAndMessages(null)
@@ -168,6 +108,5 @@ class MainActivity : Activity() {
         private const val RELOAD_BASE_MS = 3_000L  // first retry after 3s
         private const val RELOAD_MAX_MS = 30_000L  // cap between retries
         private const val RELOAD_MAX_SHIFT = 4     // 3,6,12,24 → then 30s cap
-        private const val KIOSK_RETURN_MS = 400L   // snap-back delay after leave
     }
 }
