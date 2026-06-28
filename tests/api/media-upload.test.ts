@@ -103,6 +103,15 @@ describe('ingestMedia', () => {
     expect(row.mimeType).toBe('application/octet-stream')
   })
 
+  it('defaults quality to standard', async () => {
+    const row = await ingestMedia(db, store, {
+      stream: readable('PNG-BYTES'),
+      filename: 'test.png',
+      kind: 'image'
+    })
+    expect(row.quality).toBe('standard')
+  })
+
   it('stores a thumbnail for image uploads', async () => {
     const sharp = (await import('sharp')).default
     const pngBuf = await sharp({
