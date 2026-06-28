@@ -22,9 +22,13 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    sqlite3 ca-certificates tini \
+    sqlite3 ca-certificates tini gosu \
  && rm -rf /var/lib/apt/lists/*
 RUN corepack enable pnpm
+# Unprivileged runtime user. Fixed uid/gid 10001 so the operator can predict the
+# owner of files written into the bind-mounted ./data (SQLite DB + WAL).
+RUN groupadd -r -g 10001 lanka \
+ && useradd -r -u 10001 -g lanka -m -d /home/lanka lanka
 COPY --from=builder /app/.output       ./.output
 COPY --from=builder /app/node_modules  ./node_modules
 COPY --from=builder /app/server/db     ./server/db
@@ -32,10 +36,19 @@ COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/package.json  ./
 COPY scripts/entrypoint.sh ./scripts/entrypoint.sh
 RUN chmod +x ./scripts/entrypoint.sh
+# Own the whole app tree as the runtime user. The bind-mounted /app/data is
+# re-chowned at runtime by the entrypoint (it starts as root, fixes ownership of
+# the host-owned mount, then drops to `lanka` via gosu).
+RUN chown -R lanka:lanka /app
 # Probe loopback (always reachable in-container whether the app binds 127.0.0.1
 # or 0.0.0.0) and default the port, so a missing/!=3000 HOST/PORT in the
 # environment can't make this resolve to http://undefined:.../ and flap unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||'3000')+'/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# NOTE: no `USER lanka` here on purpose. The container must start as root so the
+# entrypoint can chown the host-owned bind-mounted /app/data (the SQLite DB + WAL
+# live there); it then drops to the unprivileged `lanka` user via `gosu` before
+# exec'ing node. A static `USER lanka` would make `drizzle-kit migrate` fail to
+# write the DB on a fresh host-owned ./data → crash loop. tini stays PID 1.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./scripts/entrypoint.sh"]

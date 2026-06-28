@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# --- privilege drop -------------------------------------------------------
+# The container starts as root ONLY so we can fix ownership of the host-owned,
+# bind-mounted /app/data (the SQLite DB + WAL live there). A naive non-root
+# `USER` would leave the unprivileged user unable to write that mount, so
+# `drizzle-kit migrate` would fail → crash loop. Here, while still root, we
+# chown the data dir to the runtime user, then re-exec this same script under
+# that user via gosu. Everything below then runs unprivileged. `gosu` (unlike
+# `su`) execs without an intermediate shell, so tini stays PID 1 and signals
+# propagate cleanly.
+RUN_AS=lanka
+if [ "$(id -u)" = "0" ]; then
+  # MEDIA_DIR may live under /app/data too; chown the whole tree so a fresh
+  # host-owned ./data and its media/ subdir become writable.
+  chown -R "$RUN_AS:$RUN_AS" /app/data 2>/dev/null || true
+  exec gosu "$RUN_AS" "$0" "$@"
+fi
+
 # Run migrations against the bind-mounted DB, then start Nitro.
 # drizzle-kit reads DATABASE_URL from env; compose sets it to
 # file:/app/data/signage.db.
