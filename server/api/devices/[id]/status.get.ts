@@ -12,6 +12,7 @@ export type DeviceStatus = {
   online: boolean
   lastSeenAt: number | null
   apkVersion: string | null
+  surface: 'webview' | 'native'
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }
@@ -46,7 +47,7 @@ export async function handleDeviceStatus(
       playlistName = row.playlistName
     }
   }
-  return { online, lastSeenAt, apkVersion: device.apkVersion ?? null, currentItem, playlistName }
+  return { online, lastSeenAt, apkVersion: device.apkVersion ?? null, surface: (device.surface as 'webview' | 'native'), currentItem, playlistName }
 }
 
 export default defineEventHandler(async (event) => {

@@ -4,6 +4,7 @@ import { createTestDb, type TestDb } from '../helpers/test-db'
 import { assign, seedAddress, seedDevice, seedGroup, seedMedia, seedPlaylist } from '../helpers/fixtures'
 import { handleDeviceStatus } from '~/server/api/devices/[id]/status.get'
 import { handleTelemetry } from '~/server/api/devices/[id]/telemetry.post'
+import { handleRegister } from '~/server/api/devices/register.post'
 import * as schema from '~/server/db/schema'
 
 describe('GET /api/devices/:id/status handler', () => {
@@ -49,5 +50,11 @@ describe('GET /api/devices/:id/status handler', () => {
 
   it('404s on unknown device', async () => {
     await expect(handleDeviceStatus(db, 'ghost')).rejects.toMatchObject({ statusCode: 404 })
+  })
+
+  it('returns the device surface', async () => {
+    await handleRegister(db, { deviceId: 'dev-s', playerVersion: '0.1.0', surface: 'native' })
+    const status = await handleDeviceStatus(db, 'dev-s')
+    expect(status.surface).toBe('native')
   })
 })

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { seedAddress, seedDevice, seedGroup } from '../helpers/fixtures'
 import { handleListDevices } from '~/server/api/devices/index.get'
+import { handleRegister } from '~/server/api/devices/register.post'
 import {
   handleGetDevice,
   handleUpdateDevice,
@@ -126,5 +127,19 @@ describe('devices CRUD', () => {
     await seedDevice(db, { id: 'd' })
     await handleDeleteDevice(db, 'd')
     expect(await db.select().from(schema.devices)).toHaveLength(0)
+  })
+
+  it('listed device includes surface; freshly-registered device defaults to webview', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id)
+    await handleRegister(db, { deviceId: 'dev-list-surface', playerVersion: '0.1.0' })
+    // claim it so it can be listed by addressId (exercises the explicit-column branch)
+    await db.update(schema.devices).set({ groupId: g.id }).where(
+      (await import('drizzle-orm')).eq(schema.devices.id, 'dev-list-surface')
+    )
+    const rows = await handleListDevices(db, { addressId: a.id })
+    const row = rows.find(r => r.id === 'dev-list-surface')
+    expect(row).toBeDefined()
+    expect(row!.surface).toBe('webview')
   })
 })

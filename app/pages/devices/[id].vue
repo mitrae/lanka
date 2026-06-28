@@ -317,6 +317,9 @@ async function confirmOta() {
             <span class="text-sm text-(--ui-text-muted)">
               APK on device: <strong>{{ status?.apkVersion ?? '—' }}</strong>
             </span>
+            <UBadge :color="status?.surface === 'native' ? 'primary' : 'neutral'" variant="subtle" size="sm">
+              {{ status?.surface === 'native' ? 'Native' : 'WebView' }}
+            </UBadge>
             <div class="flex items-center gap-2">
               <USelect
                 v-model="selectedReleaseId"

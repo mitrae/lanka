@@ -40,6 +40,7 @@ export async function handleListDevices(
         lastSeenAt: schema.devices.lastSeenAt,
         playerVersion: schema.devices.playerVersion,
         currentItemId: schema.devices.currentItemId,
+        surface: schema.devices.surface,
         createdAt: schema.devices.createdAt,
         updatedAt: schema.devices.updatedAt
       })

@@ -32,6 +32,7 @@ export interface Device {
   lastSeenAt: string | null
   playerVersion: string | null
   currentItemId: number | null
+  surface: 'webview' | 'native'
   createdAt: string
   updatedAt: string
 }
@@ -171,6 +172,7 @@ export interface DeviceNowPlaying {
   online: boolean
   lastSeenAt: number | null
   apkVersion?: string | null
+  surface: 'webview' | 'native'
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }
