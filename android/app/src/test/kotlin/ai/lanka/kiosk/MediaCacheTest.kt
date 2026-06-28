@@ -46,6 +46,13 @@ class MediaCacheTest {
         assertTrue(cache.fileUrl(sha).endsWith(sha))
     }
 
+    @Test fun `file returns handle inside cache dir ending in sha`() {
+        val sha = "a".repeat(64)
+        val f = cache.file(sha)
+        assertEquals(sha, f.name)
+        assertTrue(f.parentFile!!.absolutePath == tempDir.absolutePath)
+    }
+
     // --- downloadSync ---
 
     @Test fun `downloadSync is no-op when already cached`() {

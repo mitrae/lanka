@@ -44,6 +44,10 @@ class MediaCache private constructor(private val dir: File) {
 
     fun fileUrl(sha256: String): String = "file://${File(dir, sha256).absolutePath}"
 
+    /** The cached file handle for [sha256] (may not exist). For native (ExoPlayer)
+     *  playback, which reads local files directly — no http interception needed. */
+    fun file(sha256: String): File = File(dir, sha256)
+
     /**
      * Downloads [url] into the cache under [sha256], blocking until complete.
      * No-op if the file is already cached. Cleans up the partial [TMP_SUFFIX] file
