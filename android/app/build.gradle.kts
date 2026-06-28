@@ -4,6 +4,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 // Release signing is read from android/keystore.properties (kept out of git),
@@ -61,6 +62,16 @@ android {
         }
     }
 
+    flavorDimensions += "surface"
+    productFlavors {
+        create("webview") { dimension = "surface" }
+        create("native") {
+            dimension = "surface"
+            applicationIdSuffix = ".vs"
+            versionNameSuffix = "-vs"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -74,6 +85,12 @@ android {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
         }
+        getByName("native") {
+            java.srcDirs("src/native/kotlin")
+        }
+        getByName("webview") {
+            java.srcDirs("src/webview/kotlin")
+        }
     }
 }
 
@@ -81,4 +98,12 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.webkit:webkit:1.9.0")
     testImplementation("junit:junit:4.13.2")
+
+    val media3 = "1.3.1"
+    "nativeImplementation"("androidx.media3:media3-exoplayer:$media3")
+    "nativeImplementation"("androidx.media3:media3-ui:$media3")
+    "nativeImplementation"("com.squareup.okhttp3:okhttp:4.12.0")
+    "nativeImplementation"("com.squareup.okhttp3:okhttp-sse:4.12.0")
+    "nativeImplementation"("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }

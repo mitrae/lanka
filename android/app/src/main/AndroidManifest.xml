@@ -21,27 +21,6 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Lanka.Kiosk">
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|keyboardHidden|navigation"
-            android:screenOrientation="landscape">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
-            </intent-filter>
-            <!-- HOME so a device-owner box can pin Lanka as the launcher (set at
-                 runtime via addPersistentPreferredActivity); also returns the box
-                 to the player on boot without a BOOT_COMPLETED activity launch. -->
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.HOME"/>
-                <category android:name="android.intent.category.DEFAULT"/>
-            </intent-filter>
-        </activity>
-
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
