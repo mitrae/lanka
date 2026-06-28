@@ -156,4 +156,12 @@ describe('POST /api/devices/:id/telemetry handler', () => {
     const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-t'))
     expect(row.surface).toBe('native')
   })
+
+  it('does not overwrite surface when omitted', async () => {
+    await seedDevice(db, { id: 'dev-surface' })
+    await handleTelemetry(db, 'dev-surface', { currentItemId: null, surface: 'native' })
+    await handleTelemetry(db, 'dev-surface', { currentItemId: null })
+    const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-surface'))
+    expect(row.surface).toBe('native')
+  })
 })
