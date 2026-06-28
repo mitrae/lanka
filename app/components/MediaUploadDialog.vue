@@ -14,6 +14,7 @@ const { t } = useI18n()
 const files = ref<File[]>([])
 const uploading = ref(false)
 const dragOver = ref(false)
+const quality = ref<'low' | 'standard' | 'high'>('standard')
 
 function onDrop(e: DragEvent) {
   e.preventDefault()
@@ -45,6 +46,7 @@ async function upload() {
     const form = new FormData()
     form.append('file', f)
     form.append('kind', kindOf(f))
+    form.append('quality', quality.value)
     try {
       await store.upload(form)
       ok++
@@ -134,6 +136,22 @@ async function upload() {
             />
           </li>
         </ul>
+
+        <div class="mt-4">
+          <label class="text-sm font-medium">{{ $t('components.mediaUploadDialog.quality.label') }}</label>
+          <USelect
+            v-model="quality"
+            :items="[
+              { label: $t('components.mediaUploadDialog.quality.low'), value: 'low' },
+              { label: $t('components.mediaUploadDialog.quality.standard'), value: 'standard' },
+              { label: $t('components.mediaUploadDialog.quality.high'), value: 'high' },
+            ]"
+            value-key="value"
+            label-key="label"
+            class="mt-1 w-full"
+          />
+          <p class="mt-1 text-xs text-(--ui-text-muted)">{{ $t('components.mediaUploadDialog.quality.hint') }}</p>
+        </div>
 
         <div class="mt-6 flex justify-end gap-2">
           <UButton variant="ghost" @click="emit('update:modelValue', false)">
