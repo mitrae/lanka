@@ -1,6 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/player_root"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="#000000" />
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="#000000">
+
+    <FrameLayout android:id="@+id/slotA" android:layout_width="match_parent" android:layout_height="match_parent">
+        <androidx.media3.ui.PlayerView android:id="@+id/videoA"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            app:surface_type="texture_view" app:use_controller="false" app:resize_mode="fit"/>
+        <ImageView android:id="@+id/imageA" android:layout_width="match_parent" android:layout_height="match_parent"
+            android:scaleType="fitCenter" android:visibility="gone"/>
+    </FrameLayout>
+
+    <FrameLayout android:id="@+id/slotB" android:layout_width="match_parent" android:layout_height="match_parent"
+        android:alpha="0">
+        <androidx.media3.ui.PlayerView android:id="@+id/videoB"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            app:surface_type="texture_view" app:use_controller="false" app:resize_mode="fit"/>
+        <ImageView android:id="@+id/imageB" android:layout_width="match_parent" android:layout_height="match_parent"
+            android:scaleType="fitCenter" android:visibility="gone"/>
+    </FrameLayout>
+
+    <TextView android:id="@+id/stalledBanner" android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal" android:layout_marginBottom="24dp"
+        android:padding="8dp" android:textColor="#F4F4F5" android:background="#99000000"
+        android:text="Playback stalled — waiting for next sync…" android:visibility="gone"/>
+</FrameLayout>
