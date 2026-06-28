@@ -38,12 +38,23 @@ class MainActivity : KioskActivity() {
 
     private fun configureWebView() {
         webView.setBackgroundColor(Color.BLACK)
-        webView.addJavascriptInterface(NativeFSBridge(MediaCache.get(this), this, webView), "NativeFS")
-        webView.webViewClient = LankaWebViewClient(
+        // Create the client first: it tracks the current top-level URL, which the
+        // NativeFS bridge reads to gate privileged calls to the trusted origin.
+        val client = LankaWebViewClient(
             onMainFrameError = { scheduleReload() },
             onPageOk = { reloadAttempt = 0 },
             onRenderGone = { recoverFromRenderGone() },
-            mediaCache = MediaCache.get(this)
+            mediaCache = MediaCache.get(this),
+            trustedOrigin = BuildConfig.LANKA_SERVER_URL
+        )
+        webView.webViewClient = client
+        webView.addJavascriptInterface(
+            NativeFSBridge(
+                MediaCache.get(this), this, webView,
+                trustedOrigin = BuildConfig.LANKA_SERVER_URL,
+                currentUrl = { client.currentUrl }
+            ),
+            "NativeFS"
         )
         webView.webChromeClient = LankaChromeClient()
         webView.settings.apply {

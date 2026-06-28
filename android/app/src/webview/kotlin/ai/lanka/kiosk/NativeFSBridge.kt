@@ -25,8 +25,28 @@ import java.util.concurrent.TimeUnit
 class NativeFSBridge(
     private val cache: MediaCache,
     private val context: Context,
-    private val webView: WebView
+    private val webView: WebView,
+    /** Origin (BuildConfig.LANKA_SERVER_URL) allowed to call privileged methods. */
+    private val trustedOrigin: String? = null,
+    /** Current top-level page URL, read on a binder thread → must be thread-safe. */
+    private val currentUrl: () -> String? = { null }
 ) {
+
+    /**
+     * Privileged methods (device control / data exfil) are refused unless the
+     * WebView's current top-level page is the trusted server origin, so a foreign
+     * page the WebView was somehow driven to (e.g. a server redirect that bypasses
+     * shouldOverrideUrlLoading) can't reboot/install/screenshot the box. When
+     * trustedOrigin is unset (e.g. tests) the gate is open. Media-cache methods
+     * (exists/download/fileUrl/free/evictExcept) are not gated — they only touch
+     * the cache and are on the player's hot path.
+     */
+    private fun privilegedOriginAllowed(): Boolean {
+        if (trustedOrigin == null) return true
+        val ok = WebOrigin.sameOrigin(currentUrl(), trustedOrigin)
+        if (!ok) Log.w(TAG, "refused privileged NativeFS call from origin ${currentUrl()}")
+        return ok
+    }
 
     @JavascriptInterface
     fun exists(sha256: String): Boolean = cache.exists(sha256)
@@ -78,7 +98,8 @@ class NativeFSBridge(
      */
     @JavascriptInterface
     fun downloadApk(url: String, sha256: String): Boolean =
-        OtaInstaller.get(context).downloadApk(sha256, url)
+        if (!privilegedOriginAllowed()) false
+        else OtaInstaller.get(context).downloadApk(sha256, url)
 
     /**
      * Triggers a silent install of the previously downloaded APK identified by
@@ -87,6 +108,7 @@ class NativeFSBridge(
      */
     @JavascriptInterface
     fun installApk(sha256: String, commandId: Long): Boolean {
+        if (!privilegedOriginAllowed()) return false
         OtaInstaller.get(context).installSilently(context, sha256, commandId, webView)
         return true
     }
@@ -101,6 +123,7 @@ class NativeFSBridge(
      */
     @JavascriptInterface
     fun screenshot(): String {
+        if (!privilegedOriginAllowed()) return ""
         val latch = CountDownLatch(1)
         var result = ""
         webView.post {
@@ -129,14 +152,17 @@ class NativeFSBridge(
      * Useful for remote diagnostics from the dashboard.
      */
     @JavascriptInterface
-    fun getLogs(): String = try {
-        val proc = Runtime.getRuntime().exec(
-            arrayOf("logcat", "-d", "-t", "200", "-s",
-                "LankaKiosk:*", "LankaCache:*", "NativeFS:*", "OtaInstaller:*")
-        )
-        proc.inputStream.bufferedReader().readText()
-    } catch (e: Exception) {
-        "error: ${e.message}"
+    fun getLogs(): String {
+        if (!privilegedOriginAllowed()) return ""
+        return try {
+            val proc = Runtime.getRuntime().exec(
+                arrayOf("logcat", "-d", "-t", "200", "-s",
+                    "LankaKiosk:*", "LankaCache:*", "NativeFS:*", "OtaInstaller:*")
+            )
+            proc.inputStream.bufferedReader().readText()
+        } catch (e: Exception) {
+            "error: ${e.message}"
+        }
     }
 
     /** Returns the installed APK version name (e.g. "0.1.0-poc"). */
@@ -151,7 +177,8 @@ class NativeFSBridge(
      * acked on delivery.
      */
     @JavascriptInterface
-    fun reboot(): Boolean = DevicePolicy.reboot(context)
+    fun reboot(): Boolean =
+        if (!privilegedOriginAllowed()) false else DevicePolicy.reboot(context)
 
     /**
      * Enables/disables the kiosk snap-back lock at runtime (dashboard maintenance
@@ -161,6 +188,7 @@ class NativeFSBridge(
      */
     @JavascriptInterface
     fun setKioskLock(enabled: Boolean) {
+        if (!privilegedOriginAllowed()) return
         KioskLock.locked = enabled
         Log.i(TAG, "kiosk lock set to $enabled")
     }

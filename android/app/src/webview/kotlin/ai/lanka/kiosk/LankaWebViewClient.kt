@@ -1,5 +1,6 @@
 package ai.lanka.kiosk
 
+import android.graphics.Bitmap
 import android.os.Build
 import android.util.Log
 import android.webkit.RenderProcessGoneDetail
@@ -22,8 +23,37 @@ class LankaWebViewClient(
     private val onMainFrameError: () -> Unit = {},
     private val onPageOk: () -> Unit = {},
     private val onRenderGone: () -> Unit = {},
-    private val mediaCache: MediaCache? = null
+    private val mediaCache: MediaCache? = null,
+    /** When set, top-level navigation off this origin is blocked. */
+    private val trustedOrigin: String? = null
 ) : WebViewClient() {
+
+    /**
+     * The current top-level page URL, updated on the UI thread. NativeFSBridge
+     * reads this (it can't call webView.getUrl() from its binder thread) to gate
+     * privileged calls to the trusted origin.
+     */
+    @Volatile
+    var currentUrl: String? = null
+        private set
+
+    override fun shouldOverrideUrlLoading(
+        view: WebView?,
+        request: WebResourceRequest?
+    ): Boolean {
+        // Pin the top-level document to the trusted server origin: a redirect or
+        // injected link to an attacker page must not be able to replace the player
+        // (and reach window.NativeFS). Subresources/iframes are unaffected (they
+        // don't pass through here as main-frame loads) so embedded content works.
+        if (trustedOrigin != null && request?.isForMainFrame == true) {
+            val target = request.url?.toString()
+            if (!WebOrigin.sameOrigin(target, trustedOrigin)) {
+                Log.w("LankaWebView", "blocked off-origin navigation to $target")
+                return true // handled → do not load
+            }
+        }
+        return false
+    }
 
     override fun shouldInterceptRequest(
         view: WebView?,
@@ -35,7 +65,12 @@ class LankaWebViewClient(
         return super.shouldInterceptRequest(view, request)
     }
 
+    override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+        currentUrl = url
+    }
+
     override fun onPageFinished(view: WebView?, url: String?) {
+        currentUrl = url
         onPageOk()
     }
 
