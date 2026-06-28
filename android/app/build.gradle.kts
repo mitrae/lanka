@@ -81,6 +81,13 @@ android {
         jvmTarget = "17"
     }
 
+    // Pure-logic JVM unit tests may incidentally call android.util.Log (e.g. the
+    // OTA hash-mismatch path). Return stub defaults instead of throwing
+    // "Method ... not mocked" so those branches are testable without Robolectric.
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     sourceSets {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
