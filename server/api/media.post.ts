@@ -181,9 +181,14 @@ export default defineEventHandler(async (event) => {
 
   const qualityRaw = Array.isArray(fields.quality) ? fields.quality[0] : fields.quality
   const QUALITIES = ['low', 'standard', 'high'] as const
-  const quality: QualityPreset = QUALITIES.includes(qualityRaw as any)
-    ? (qualityRaw as QualityPreset)
-    : 'standard'
+  let quality: QualityPreset
+  if (!qualityRaw) {
+    quality = 'standard'
+  } else if (QUALITIES.includes(qualityRaw as any)) {
+    quality = qualityRaw as QualityPreset
+  } else {
+    throw createError({ statusCode: 400, message: 'quality must be "low", "standard", or "high"' })
+  }
 
   const result = await ingestMedia(useDb(), useMediaStore(), {
     stream: createReadStream(file.filepath),

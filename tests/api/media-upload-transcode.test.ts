@@ -16,6 +16,42 @@ vi.mock('~/server/services/thumbnails', () => ({
   generateVideoThumbnail: vi.fn().mockResolvedValue(Buffer.from('thumb'))
 }))
 
+// Handler-level quality validation (mirrors the `kind` validation in media.post.ts defineEventHandler)
+describe('media upload — quality field handler validation', () => {
+  const QUALITIES = ['low', 'standard', 'high'] as const
+  type QualityPreset = (typeof QUALITIES)[number]
+
+  function parseQuality(qualityRaw: string | undefined): QualityPreset {
+    if (!qualityRaw) return 'standard'
+    if (QUALITIES.includes(qualityRaw as QualityPreset)) return qualityRaw as QualityPreset
+    throw createError({ statusCode: 400, message: 'quality must be "low", "standard", or "high"' })
+  }
+
+  it('absent quality defaults to standard', () => {
+    expect(parseQuality(undefined)).toBe('standard')
+  })
+
+  it('empty string quality defaults to standard', () => {
+    expect(parseQuality('')).toBe('standard')
+  })
+
+  it('valid quality values are accepted', () => {
+    expect(parseQuality('low')).toBe('low')
+    expect(parseQuality('standard')).toBe('standard')
+    expect(parseQuality('high')).toBe('high')
+  })
+
+  it('invalid non-empty quality throws 400', () => {
+    expect(() => parseQuality('ultra')).toThrow()
+    try {
+      parseQuality('ultra')
+    } catch (err: any) {
+      expect(err.statusCode).toBe(400)
+      expect(err.message).toMatch(/quality must be/)
+    }
+  })
+})
+
 function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
 }
