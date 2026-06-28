@@ -1,0 +1,1 @@
+ALTER TABLE `devices` ADD `surface` text DEFAULT 'webview' NOT NULL;

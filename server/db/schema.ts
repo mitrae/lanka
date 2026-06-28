@@ -50,7 +50,10 @@ export const devices = sqliteTable('devices', {
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
-  apkVersion: text('apk_version')
+  apkVersion: text('apk_version'),
+  // Which player renders on this device: the WebView APK ('webview', default)
+  // or the native ExoPlayer APK ('native'). Reported on register/telemetry.
+  surface: text('surface').notNull().default('webview')
 })
 
 export const media = sqliteTable(

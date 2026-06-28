@@ -82,4 +82,16 @@ describe('POST /api/devices/register handler', () => {
       handleRegister(db, { deviceId: big, playerVersion: '0.1.0' })
     ).rejects.toThrow()
   })
+
+  it('persists surface when provided', async () => {
+    await handleRegister(db, { deviceId: 'dev-vs', playerVersion: '0.1.0', surface: 'native' })
+    const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-vs'))
+    expect(row.surface).toBe('native')
+  })
+
+  it('defaults surface to webview when omitted', async () => {
+    await handleRegister(db, { deviceId: 'dev-wv', playerVersion: '0.1.0' })
+    const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-wv'))
+    expect(row.surface).toBe('webview')
+  })
 })

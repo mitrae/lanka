@@ -6,7 +6,8 @@ import { useDb } from '~/server/db/client'
 
 const BodySchema = z.object({
   deviceId: z.string().min(1).max(128),
-  playerVersion: z.string().min(1).max(64)
+  playerVersion: z.string().min(1).max(64),
+  surface: z.enum(['webview', 'native']).optional()
 })
 
 export type RegisterBody = z.infer<typeof BodySchema>
@@ -30,14 +31,16 @@ export async function handleRegister(
       id: body.deviceId,
       playerVersion: body.playerVersion,
       lastSeenAt: now,
-      updatedAt: now
+      updatedAt: now,
+      ...(body.surface ? { surface: body.surface } : {})
     })
     .onConflictDoUpdate({
       target: schema.devices.id,
       set: {
         playerVersion: body.playerVersion,
         lastSeenAt: now,
-        updatedAt: now
+        updatedAt: now,
+        ...(body.surface ? { surface: body.surface } : {})
       }
     })
 
