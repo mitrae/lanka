@@ -148,14 +148,8 @@ async function main(): Promise<void> {
         continue
       }
 
-      // --- Real run: probe + conditionally transcode + re-probe ---
-      const { path: finalPath, probe, transcoded } = await ensureQuality(tmpIn, tmpDir, 'standard')
-
-      if (!transcoded) {
-        console.log(`${label} skip (already conforming)`)
-        countSkipped++
-        continue
-      }
+      // --- Real run: probe + transcode + re-probe ---
+      const { path: finalPath, probe } = await ensureQuality(tmpIn, tmpDir, 'standard')
 
       // Compute new sha256
       const newSha = await hashFile(finalPath)

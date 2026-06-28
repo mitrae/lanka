@@ -26,7 +26,7 @@ vi.mock('~/server/services/transcode')
 beforeEach(() => {
   vi.mocked(ensureQuality).mockImplementation(async (inPath) => ({
     path: inPath,
-    transcoded: false,
+    transcoded: true,
     probe: { codec: 'h264', profile: 'Main', pixFmt: 'yuv420p', width: 1280, height: 720, durationMs: 1000, audioCodec: 'aac' }
   }))
 })

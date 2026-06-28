@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegPath from '@ffmpeg-installer/ffmpeg'
 import ffmpegLib from 'fluent-ffmpeg'
-import { isKioskSafe, ensureQuality, QUALITY_PRESETS, transcodeToKioskSafe } from '../../server/services/transcode'
-import { probeVideo } from '../../server/services/transcode'
+import { isKioskSafe, ensureQuality, QUALITY_PRESETS, transcodeToKioskSafe, probeVideo } from '../../server/services/transcode'
 import type { VideoProbe } from '../../server/services/transcode'
 
 ffmpegLib.setFfmpegPath(ffmpegPath.path)
