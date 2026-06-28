@@ -1,11 +1,18 @@
 import { eq } from 'drizzle-orm'
 import { useDb } from '~/server/db/client'
 import { useCommandHub } from '~/server/services/command-hub'
+import { decideWsAuth, hashDeviceSecret } from '~/server/services/device-secret'
 import * as schema from '~/server/db/schema'
 
 function deviceIdFromUrl(url: string): string | null {
   const m = url.match(/\/devices\/([^/?#]+)\/ws/)
   return m?.[1] ?? null
+}
+
+function secretFromUrl(url: string): string | null {
+  const q = url.indexOf('?')
+  if (q < 0) return null
+  return new URLSearchParams(url.slice(q + 1)).get('secret')
 }
 
 // One stable Peer wrapper per live socket, keyed by the crossws peer. The hub
@@ -20,27 +27,44 @@ function deviceIdFromUrl(url: string): string | null {
 // revert + the hub leaks stale peers. Re-verify on upgrade.
 const wrappers = new WeakMap<object, { send: (msg: string) => void }>()
 
-async function deviceExists(id: string): Promise<boolean> {
-  const rows = await useDb()
-    .select({ id: schema.devices.id })
-    .from(schema.devices)
-    .where(eq(schema.devices.id, id))
-  return rows.length > 0
-}
-
 export default defineWebSocketHandler({
   async open(peer) {
-    const id = deviceIdFromUrl(peer.request?.url ?? '')
+    const url = peer.request?.url ?? ''
+    const id = deviceIdFromUrl(url)
     if (!id) return peer.close(1008, 'Missing device id')
-    // Reject sockets for devices that don't exist (the player registers before
-    // opening this channel). Keeps junk/unknown connections out of the hub.
-    if (!(await deviceExists(id))) return peer.close(1008, 'Unknown device')
+
+    // Ratchet TOFU auth: unknown device → reject; once a client has connected
+    // with the right secret the device is "active" and the secret is required;
+    // before that it's grace-allowed so un-upgraded boxes keep working.
+    const db = useDb()
+    const [row] = await db
+      .select({
+        secret: schema.devices.commandSecret,
+        active: schema.devices.commandSecretActive
+      })
+      .from(schema.devices)
+      .where(eq(schema.devices.id, id))
+
+    const presented = secretFromUrl(url)
+    const decision = decideWsAuth({
+      exists: !!row,
+      storedHash: row?.secret ?? null,
+      active: row?.active ?? false,
+      presentedHash: presented ? hashDeviceSecret(presented) : null
+    })
+    if (!decision.allow) return peer.close(decision.closeCode ?? 1008, decision.reason ?? 'unauthorized')
+    if (decision.activate) {
+      await db
+        .update(schema.devices)
+        .set({ commandSecretActive: true })
+        .where(eq(schema.devices.id, id))
+    }
 
     const wrapper = { send: (msg: string) => peer.send(msg) }
     wrappers.set(peer, wrapper)
     const hub = useCommandHub()
     hub.register(id, wrapper)
-    await hub.drain(useDb(), id, wrapper)
+    await hub.drain(db, id, wrapper)
   },
 
   async message(peer, raw) {

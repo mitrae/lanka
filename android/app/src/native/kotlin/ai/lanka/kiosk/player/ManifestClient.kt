@@ -26,7 +26,10 @@ class ManifestClient(
     // (re-fetch the manifest). PlayerActivity passes a handler that recreate()s
     // the activity for a clean restart. (A null default rather than a lambda
     // because a constructor-parameter default can't reference instance methods.)
-    private val onReload: (() -> Unit)? = null
+    private val onReload: (() -> Unit)? = null,
+    // Called with the raw command-channel secret the FIRST time /register issues
+    // one (TOFU). The caller persists it (DeviceSecretStore) for the command WS.
+    private val onCommandSecret: ((String) -> Unit)? = null
 ) {
     private val differ = ManifestDiffer()
     private val poll = Executors.newSingleThreadScheduledExecutor { r ->
@@ -59,7 +62,15 @@ class ManifestClient(
                     .url("$serverBaseUrl/api/devices/register")
                     .post(bodyStr.toRequestBody(jsonContentType))
                     .build()
-            ).execute().close()
+            ).execute().use { resp ->
+                val raw = resp.body?.string()
+                if (resp.isSuccessful && !raw.isNullOrEmpty()) {
+                    val secret = runCatching {
+                        json.decodeFromString(RegisterResult.serializer(), raw).commandSecret
+                    }.getOrNull()
+                    if (!secret.isNullOrEmpty()) onCommandSecret?.invoke(secret)
+                }
+            }
         }.onFailure { /* retried on next reconcile error */ }
     }
 

@@ -54,6 +54,37 @@ describe('createCommandChannel', () => {
     expect(ack).toMatchObject({ commandId: 1, status: 'acked', result: 'data:image/jpeg;base64,abc' })
   })
 
+  it('appends the secret as an encoded query param to the WS url', () => {
+    let capturedUrl = ''
+    const ch = createCommandChannel({
+      deviceId: 'dev-1',
+      secret: 's3cr et/+',
+      onReload: () => {},
+      wsFactory: (url) => {
+        capturedUrl = url
+        return new MockWS() as unknown as WebSocket
+      }
+    })
+    ch.open()
+    expect(capturedUrl).toBe('/api/devices/dev-1/ws?secret=s3cr%20et%2F%2B')
+    ch.close()
+  })
+
+  it('omits the query when no secret is set', () => {
+    let capturedUrl = ''
+    const ch = createCommandChannel({
+      deviceId: 'dev-1',
+      onReload: () => {},
+      wsFactory: (url) => {
+        capturedUrl = url
+        return new MockWS() as unknown as WebSocket
+      }
+    })
+    ch.open()
+    expect(capturedUrl).toBe('/api/devices/dev-1/ws')
+    ch.close()
+  })
+
   it('sends log-request ack with log text', () => {
     const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
     ch.open()

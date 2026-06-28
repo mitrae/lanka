@@ -34,7 +34,10 @@ class CommandClient(
     private val deviceId: String,
     private val serverBaseUrl: String,
     private val http: OkHttpClient,
-    actions: CommandActions
+    actions: CommandActions,
+    // Per-device command-channel secret (persisted from a prior register, TOFU).
+    // Sent as ?secret= so the server authenticates this socket once adopted.
+    private val secret: String? = null
 ) {
     private val TAG = "CommandClient"
 
@@ -66,7 +69,12 @@ class CommandClient(
         }
     }
 
-    private val wsUrl get() = "${serverBaseUrl.trimEnd('/')}/api/devices/$deviceId/ws"
+    private val wsUrl get() = buildString {
+        append(serverBaseUrl.trimEnd('/')).append("/api/devices/").append(deviceId).append("/ws")
+        if (!secret.isNullOrEmpty()) {
+            append("?secret=").append(java.net.URLEncoder.encode(secret, "UTF-8"))
+        }
+    }
 
     fun open() {
         if (closed) return
@@ -74,7 +82,9 @@ class CommandClient(
         http.newWebSocket(req, object : WebSocketListener() {
 
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d(TAG, "WS connected: $wsUrl")
+                // Don't log wsUrl — it carries ?secret=. getLogs() ships
+                // CommandClient logs to the dashboard, which would exfiltrate it.
+                Log.d(TAG, "WS connected for device $deviceId")
                 socket = webSocket
                 attempt.set(0)
             }

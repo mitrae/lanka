@@ -17,6 +17,9 @@ interface Ack {
 
 export interface CommandChannelDeps {
   deviceId: string
+  /** Per-device command-channel secret; sent as ?secret= so the server can
+   *  authenticate this socket once the device has adopted one (TOFU). */
+  secret?: string | null
   nativeFS?: NativeFSBridge
   onReload: () => void
   /** Injected in tests; defaults to global WebSocket */
@@ -126,7 +129,11 @@ export function createCommandChannel(deps: CommandChannelDeps): CommandChannelHa
 
   function connect(): void {
     if (closed) return
-    ws = factory(`/api/devices/${deps.deviceId}/ws`)
+    const base = `/api/devices/${deps.deviceId}/ws`
+    const url = deps.secret
+      ? `${base}?secret=${encodeURIComponent(deps.secret)}`
+      : base
+    ws = factory(url)
 
     ws.onopen = () => {
       attempt = 0

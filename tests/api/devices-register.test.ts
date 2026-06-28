@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { handleRegister } from '~/server/api/devices/register.post'
+import { hashDeviceSecret } from '~/server/services/device-secret'
 import * as schema from '~/server/db/schema'
 
 describe('POST /api/devices/register handler', () => {
@@ -20,12 +21,13 @@ describe('POST /api/devices/register handler', () => {
       deviceId: 'dev-abc',
       playerVersion: '0.1.0'
     })
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       deviceId: 'dev-abc',
       claimed: false,
       name: null,
       groupId: null
     })
+    expect(typeof result.commandSecret).toBe('string')
 
     const [row] = await db
       .select()
@@ -93,5 +95,20 @@ describe('POST /api/devices/register handler', () => {
     await handleRegister(db, { deviceId: 'dev-wv', playerVersion: '0.1.0' })
     const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-wv'))
     expect(row.surface).toBe('webview')
+  })
+
+  it('issues a command secret once (TOFU) and stores only its hash', async () => {
+    const r1 = await handleRegister(db, { deviceId: 'dev-s', playerVersion: '1' })
+    expect(typeof r1.commandSecret).toBe('string')
+    const [row1] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-s'))
+    expect(row1.commandSecret).toBe(hashDeviceSecret(r1.commandSecret!))
+    expect(row1.commandSecretActive).toBe(false)
+
+    // Second register must NOT re-issue or rotate the secret (so an attacker who
+    // knows the deviceId can't re-bootstrap it).
+    const r2 = await handleRegister(db, { deviceId: 'dev-s', playerVersion: '2' })
+    expect(r2.commandSecret).toBeNull()
+    const [row2] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-s'))
+    expect(row2.commandSecret).toBe(row1.commandSecret)
   })
 })

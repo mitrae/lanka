@@ -46,6 +46,9 @@ export interface RegisterResult {
   claimed: boolean
   name: string | null
   groupId: number | null
+  /** Raw command-channel secret — present only on the device's FIRST register
+   *  (trust-on-first-use); null afterwards. Persist it on first receipt. */
+  commandSecret: string | null
 }
 
 export interface Media {

@@ -83,12 +83,32 @@ export function usePlayerBoot(
     sched.start()
   }
 
+  // The command-channel secret is returned by /register only on the FIRST
+  // registration (TOFU), so persist it in localStorage (survives WebView
+  // reloads/reboots) and reuse it on every later boot.
+  const secretKey = (id: string) => `lanka:cmd-secret:${id}`
+  function loadSecret(id: string): string | null {
+    try {
+      return globalThis.localStorage?.getItem(secretKey(id)) ?? null
+    } catch {
+      return null
+    }
+  }
+  function saveSecret(id: string, secret: string): void {
+    try {
+      globalThis.localStorage?.setItem(secretKey(id), secret)
+    } catch {
+      /* private mode / no storage — the WS just stays in grace mode */
+    }
+  }
+
   async function ensureRegistered(): Promise<void> {
     try {
-      await api.register({
+      const res = await api.register({
         deviceId: deviceId.value,
         playerVersion: PLAYER_VERSION
       })
+      if (res?.commandSecret) saveSecret(deviceId.value, res.commandSecret)
     } catch (err) {
       console.warn('[player] register failed; will retry on next reconcile error', err)
     }
@@ -158,6 +178,7 @@ export function usePlayerBoot(
 
     channel = createCommandChannel({
       deviceId: deviceId.value,
+      secret: loadSecret(deviceId.value),
       nativeFS,
       onReload: () => device.reload()
     })

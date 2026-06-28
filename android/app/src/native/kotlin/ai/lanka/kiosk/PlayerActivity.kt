@@ -109,7 +109,8 @@ class PlayerActivity : KioskActivity() {
             mediaCache = mediaCache,
             onManifest = { m -> runOnUiThread { onManifest(m) } },
             onError = { runOnUiThread { showStandbyIfNeverPlayed() } },
-            onReload = { runOnUiThread { recreate() } }
+            onReload = { runOnUiThread { recreate() } },
+            onCommandSecret = { DeviceSecretStore.put(this, deviceId, it) }
         )
         this.manifestClient = manifestClient
 
@@ -125,7 +126,10 @@ class PlayerActivity : KioskActivity() {
             deviceId,
             BuildConfig.LANKA_SERVER_URL,
             http,
-            commandActions
+            commandActions,
+            // Stored from a prior register (TOFU). Null on the very first boot —
+            // the WS connects in grace until register persists it for next time.
+            secret = DeviceSecretStore.get(this, deviceId)
         ).also { it.open() }
     }
 

@@ -53,7 +53,16 @@ export const devices = sqliteTable('devices', {
   apkVersion: text('apk_version'),
   // Which player renders on this device: the WebView APK ('webview', default)
   // or the native ExoPlayer APK ('native'). Reported on register/telemetry.
-  surface: text('surface').notNull().default('webview')
+  surface: text('surface').notNull().default('webview'),
+  // Per-device command-channel secret: sha256 of a raw token issued ONCE at the
+  // first register (trust-on-first-use; never re-issued). `active` ratchets to
+  // true the first time a client connects to the WS with the correct secret;
+  // once active the WS requires it. Before activation the WS is in grace mode so
+  // un-upgraded boxes keep working (and stay OTA-able). See services/device-secret.
+  commandSecret: text('command_secret'),
+  commandSecretActive: integer('command_secret_active', { mode: 'boolean' })
+    .notNull()
+    .default(false)
 })
 
 export const media = sqliteTable(

@@ -15,3 +15,7 @@ data class Manifest(
 
 @Serializable
 data class RegisterBody(val deviceId: String, val playerVersion: String, val surface: String)
+
+// Only the field we need from /api/devices/register; Json has ignoreUnknownKeys.
+@Serializable
+data class RegisterResult(val commandSecret: String? = null)

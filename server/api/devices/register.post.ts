@@ -4,6 +4,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { authLimiters, clientIp, enforceRateLimit } from '~/server/services/rate-limit'
+import { generateDeviceSecret } from '~/server/services/device-secret'
 
 const BodySchema = z.object({
   deviceId: z.string().min(1).max(128),
@@ -17,6 +18,10 @@ export type RegisterResult = {
   claimed: boolean
   name: string | null
   groupId: number | null
+  /** The raw command-channel secret, returned ONLY on the first registration
+   *  (trust-on-first-use). null on every subsequent register — the device must
+   *  persist it from the first call. See services/device-secret. */
+  commandSecret: string | null
 }
 
 export async function handleRegister(
@@ -50,11 +55,24 @@ export async function handleRegister(
     .from(schema.devices)
     .where(eq(schema.devices.id, body.deviceId))
 
+  // TOFU: issue the command-channel secret only on the first registration (when
+  // none is stored), store its hash, and hand the raw back exactly once.
+  let commandSecret: string | null = null
+  if (!row.commandSecret) {
+    const s = generateDeviceSecret()
+    await db
+      .update(schema.devices)
+      .set({ commandSecret: s.hash })
+      .where(eq(schema.devices.id, row.id))
+    commandSecret = s.raw
+  }
+
   return {
     deviceId: row.id,
     claimed: row.groupId !== null,
     name: row.name,
-    groupId: row.groupId
+    groupId: row.groupId,
+    commandSecret
   }
 }
 
