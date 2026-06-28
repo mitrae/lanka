@@ -60,18 +60,39 @@ The Gradle wrapper handles Gradle itself — no system Gradle needed once
 
 ## Build
 
+The app is **flavored** (`surface` dimension) — there is no plain
+`assembleDebug`. Pick the player surface:
+
+- `webview` → `ai.lanka.kiosk` ("Lanka", HTML5 `<video>` kiosk)
+- `native` → `ai.lanka.kiosk.vs` ("Lanka-vs", ExoPlayer)
+
 ```bash
 cd android
-./gradlew :app:assembleDebug -PLANKA_SERVER_URL=http://lanka-server:3000
+./gradlew :app:assembleWebviewDebug -PLANKA_SERVER_URL=http://lanka-server:3000
+./gradlew :app:assembleNativeDebug  -PLANKA_SERVER_URL=http://lanka-server:3000
 ```
 
-Replace `lanka-server:3000` with whatever hostname your TVs can reach over
-the tailnet. Tailscale MagicDNS names work (`http://lanka-server:3000`), as
-do raw 100.x.y.z IPs.
+The server URL is **compile-time** (`BuildConfig.LANKA_SERVER_URL`); rebuild to
+retarget (no on-device override). Use a Tailscale MagicDNS name
+(`http://lanka-server:3000`) or a raw `100.x.y.z` IP your TVs can reach over the
+tailnet.
 
-APK lands at `app/build/outputs/apk/debug/app-debug.apk` (~1.5 MB).
+APKs land at `app/build/outputs/apk/{webview,native}/debug/app-{webview,native}-debug.apk`.
 
-To change the URL, rebuild — there is no on-device override in the PoC.
+### Native dev + prod builds (helper)
+
+`scripts/build-native-apk.sh` builds the native APK for the dev and/or prod
+server in one step (URLs overridable via `LANKA_DEV_URL` / `LANKA_PROD_URL`):
+
+```bash
+scripts/build-native-apk.sh        # both → app-native-debug-{DEV,PROD}.apk
+scripts/build-native-apk.sh prod   # prod only
+```
+
+Defaults: dev = `http://100.123.113.86:5100` (local dev server on the tailnet),
+prod = `http://100.79.177.86` (Hetzner, nginx tailnet block on :80). Both share
+`applicationId ai.lanka.kiosk.vs`, so only one can be installed on a box at a
+time.
 
 ## Release build (signed)
 
