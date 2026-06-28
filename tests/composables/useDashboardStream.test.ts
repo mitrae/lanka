@@ -1,5 +1,32 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { createDashboardStream } from '~/app/composables/useDashboardStream'
+import {
+  createDashboardStream,
+  shouldOpenDashboardStream
+} from '~/app/composables/useDashboardStream'
+
+describe('shouldOpenDashboardStream', () => {
+  it('opens for an authenticated admin/super on a dashboard route', () => {
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'admin', path: '/devices' })).toBe(true)
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'super', path: '/' })).toBe(true)
+  })
+
+  it('does NOT open for a client (they live on /portal and the SSE is admin/super-only)', () => {
+    // The bug this guards: a client opening the admin SSE → infinite 403 reconnect loop.
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'client', path: '/portal' })).toBe(false)
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'client', path: '/portal/stats' })).toBe(false)
+  })
+
+  it('does not open when unauthenticated or role is null', () => {
+    expect(shouldOpenDashboardStream({ authenticated: false, role: 'admin', path: '/devices' })).toBe(false)
+    expect(shouldOpenDashboardStream({ authenticated: true, role: null, path: '/devices' })).toBe(false)
+  })
+
+  it('does not open on /player (kiosk, no session) or the pre-auth pages', () => {
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'admin', path: '/player' })).toBe(false)
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'admin', path: '/login' })).toBe(false)
+    expect(shouldOpenDashboardStream({ authenticated: true, role: 'admin', path: '/reset-password' })).toBe(false)
+  })
+})
 
 type Listener = (event: { data: string }) => void
 

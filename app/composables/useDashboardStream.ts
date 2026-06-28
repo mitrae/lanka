@@ -60,6 +60,28 @@ export function createDashboardStream(
   }
 }
 
+// Routes that must never open the authenticated dashboard SSE.
+const NON_DASHBOARD_PATHS = new Set(['/login', '/forgot-password', '/reset-password'])
+
+/**
+ * Whether to open the dashboard SSE (`/api/dashboard/stream`). The server gates
+ * that endpoint to admin/super, so opening it as anyone else (notably a `client`
+ * on /portal/*) produces an infinite 403 reconnect loop. Open it only for an
+ * authenticated admin/super on an actual dashboard route — never on /player
+ * (kiosk, no session) or the pre-auth pages.
+ */
+export function shouldOpenDashboardStream(o: {
+  authenticated: boolean
+  role: string | null
+  path: string
+}): boolean {
+  if (!o.authenticated) return false
+  if (o.role !== 'admin' && o.role !== 'super') return false
+  if (o.path === '/player' || o.path.startsWith('/player/')) return false
+  if (NON_DASHBOARD_PATHS.has(o.path)) return false
+  return true
+}
+
 let _singleton: DashboardStream | null = null
 
 export function useDashboardStream(): DashboardStream {
