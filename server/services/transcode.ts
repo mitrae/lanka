@@ -1,10 +1,28 @@
 import { join } from 'node:path'
+import { existsSync } from 'node:fs'
 import ffmpegPath from '@ffmpeg-installer/ffmpeg'
 import ffprobePath from '@ffprobe-installer/ffprobe'
 import ffmpeg from 'fluent-ffmpeg'
 
-ffmpeg.setFfmpegPath(ffmpegPath.path)
-ffmpeg.setFfprobePath(ffprobePath.path)
+/**
+ * Pick the binary to hand fluent-ffmpeg: prefer the pinned
+ * `@ffmpeg-installer`/`@ffprobe-installer` binary, but fall back to the
+ * system binary on PATH when the bundled one is missing.
+ *
+ * Why: Nitro's production bundle can omit a platform sub-package from
+ * `.output/server/node_modules` — pnpm's virtual-store layout trips the trace
+ * for `@ffprobe-installer/linux-x64`, so `ffprobePath.path` points at a file
+ * that isn't there and the transcode spawn fails at runtime (a 422 on upload).
+ * The system `ffmpeg`/`ffprobe` (resolved via PATH by passing the bare name)
+ * keeps a built dev server working. Prod Docker bundles both binaries, so
+ * `existsSync` is true there and the pinned binary is used.
+ */
+export function resolveBinary(installerPath: string, systemName: string): string {
+  return existsSync(installerPath) ? installerPath : systemName
+}
+
+ffmpeg.setFfmpegPath(resolveBinary(ffmpegPath.path, 'ffmpeg'))
+ffmpeg.setFfprobePath(resolveBinary(ffprobePath.path, 'ffprobe'))
 
 const TRANSCODE_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
 
