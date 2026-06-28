@@ -223,8 +223,10 @@ class PlayerActivity : KioskActivity() {
         /** Download + silently install the OTA APK. The OS-delivered result (or an
          *  immediate failure) flows back via OtaResultBus → CommandClient's ack. */
         override fun installOta(sha256: String, url: String, commandId: Int): Boolean {
+            val absUrl = if (url.startsWith("http")) url
+                         else BuildConfig.LANKA_SERVER_URL.trimEnd('/') + url
             val installer = OtaInstaller.get(this@PlayerActivity)
-            if (!installer.downloadApk(sha256, url)) return false
+            if (!installer.downloadApk(sha256, absUrl)) return false
             installer.installSilently(this@PlayerActivity, sha256, commandId.toLong()) { status ->
                 OtaResultBus.notify(commandId.toLong(), status)
             }
