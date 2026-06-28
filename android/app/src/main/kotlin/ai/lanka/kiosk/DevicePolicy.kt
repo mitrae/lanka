@@ -41,15 +41,16 @@ object DevicePolicy {
      * cheap boxes) still gets the rest. Idempotent — safe to call every onCreate.
      *
      * - Whitelists Lanka for lock task so [startKioskMode] can pin it.
-     * - Makes Lanka the persistent HOME activity, so a reboot returns straight
-     *   to the player without relying on BOOT_COMPLETED (restricted on API 29+).
+     * - Makes Lanka the persistent HOME activity (using [homeActivity]), so a
+     *   reboot returns straight to the player without relying on BOOT_COMPLETED
+     *   (restricted on API 29+). Pass null to skip the HOME-launcher pinning.
      * - Disables keyguard/status bar and blocks safe-boot / factory-reset so a
      *   passer-by with a remote can't escape the player.
      * - Defers OS (Google TV) updates to an overnight window so the box never
      *   reboots mid-playlist on its own.
      * - Auto-grants runtime permissions so OTA installs never stall on a prompt.
      */
-    fun applyKioskPolicies(context: Context) {
+    fun applyKioskPolicies(context: Context, homeActivity: Class<out Activity>? = null) {
         if (!isDeviceOwner(context)) return
         val dpm = dpm(context)
         val admin = admin(context)
@@ -57,8 +58,10 @@ object DevicePolicy {
 
         runCatching { dpm.setLockTaskPackages(admin, arrayOf(pkg)) }
             .onFailure { Log.w(TAG, "setLockTaskPackages: ${it.message}") }
-        runCatching { setHomeLauncher(context, dpm, admin) }
-            .onFailure { Log.w(TAG, "setHomeLauncher: ${it.message}") }
+        if (homeActivity != null) {
+            runCatching { setHomeLauncher(context, dpm, admin, homeActivity) }
+                .onFailure { Log.w(TAG, "setHomeLauncher: ${it.message}") }
+        }
         runCatching { dpm.setKeyguardDisabled(admin, true) }
         runCatching { dpm.setStatusBarDisabled(admin, true) }
         runCatching { dpm.addUserRestriction(admin, UserManager.DISALLOW_SAFE_BOOT) }
@@ -76,13 +79,18 @@ object DevicePolicy {
         Log.i(TAG, "kiosk policies applied (device owner)")
     }
 
-    private fun setHomeLauncher(context: Context, dpm: DevicePolicyManager, admin: ComponentName) {
+    private fun setHomeLauncher(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName,
+        homeActivity: Class<out Activity>,
+    ) {
         val filter = IntentFilter(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_HOME)
             addCategory(Intent.CATEGORY_DEFAULT)
         }
         dpm.addPersistentPreferredActivity(
-            admin, filter, ComponentName(context, MainActivity::class.java)
+            admin, filter, ComponentName(context, homeActivity)
         )
     }
 

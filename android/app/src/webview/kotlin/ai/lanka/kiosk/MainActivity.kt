@@ -36,7 +36,7 @@ class MainActivity : Activity() {
         // Device-owner kiosk lockdown (lock-task whitelist, HOME launcher,
         // keyguard/status-bar off, deferred OS updates). No-op when Lanka is not
         // provisioned as device owner, so the same APK still runs anywhere.
-        DevicePolicy.applyKioskPolicies(this)
+        DevicePolicy.applyKioskPolicies(this, MainActivity::class.java)
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.web)

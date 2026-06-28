@@ -8,7 +8,7 @@ class PlayerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         KioskFlags.apply(this)
-        DevicePolicy.applyKioskPolicies(this)
+        DevicePolicy.applyKioskPolicies(this, PlayerActivity::class.java)
         setContentView(R.layout.activity_player)
     }
 }
