@@ -171,7 +171,8 @@ export const apkReleases = sqliteTable('apk_releases', {
   uploadedAt: integer('uploaded_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
-  uploadedBy: integer('uploaded_by').references(() => users.id, { onDelete: 'set null' })
+  uploadedBy: integer('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
+  flavor: text('flavor').notNull().default('webview')
 })
 
 export const deviceCommands = sqliteTable(

@@ -12,6 +12,7 @@ export interface UploadApkInput {
   size: number
   stream: Readable
   uploadedBy: number | null
+  flavor?: 'webview' | 'native'
 }
 
 export async function handleUploadApk(
@@ -26,7 +27,8 @@ export async function handleUploadApk(
       version: input.version,
       sha256: input.sha256,
       size: input.size,
-      uploadedBy: input.uploadedBy
+      uploadedBy: input.uploadedBy,
+      ...(input.flavor ? { flavor: input.flavor } : {})
     })
     .returning()
   return row
@@ -49,6 +51,9 @@ export default defineEventHandler(async (event) => {
   const version = versionPart.data.toString('utf8').trim()
   if (!version) throw createError({ statusCode: 400, message: 'version must not be empty' })
 
+  const flavorPart = form.find(p => p.name === 'flavor')
+  const flavor = flavorPart?.data?.toString('utf8').trim() as 'webview' | 'native' | undefined
+
   const buf = filePart.data
   const sha256 = createHash('sha256').update(buf).digest('hex')
   const { Readable } = await import('node:stream')
@@ -59,6 +64,7 @@ export default defineEventHandler(async (event) => {
     version,
     size: buf.length,
     stream,
-    uploadedBy: user.id
+    uploadedBy: user.id,
+    flavor
   })
 })

@@ -1,0 +1,1 @@
+ALTER TABLE `apk_releases` ADD `flavor` text DEFAULT 'webview' NOT NULL;
