@@ -1,9 +1,8 @@
 import { z } from 'zod'
-import { eq, inArray } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
-import { bumpPlaylistVersion } from '~/server/services/playlist-version'
 
 const BodySchema = z.object({
   items: z.array(
@@ -60,22 +59,55 @@ export async function handleReplacePlaylistItems(
     }
   }
 
-  await db
-    .delete(schema.playlistItems)
-    .where(eq(schema.playlistItems.playlistId, playlistId))
+  // Delete-all + re-insert + version bump must be atomic: a mid-sequence failure
+  // (e.g. a concurrent media delete, or two simultaneous reorders racing on the
+  // (playlist_id, position) unique index) would otherwise leave the playlist
+  // empty and devices polling a blank manifest. better-sqlite3's transaction
+  // callback is synchronous, so every op uses .run()/.all() and the version bump
+  // is inlined (bumpPlaylistVersion is async and can't run inside it).
+  db.transaction((tx) => {
+    // Capture the outgoing item ids so we can null any device still pointing at
+    // one of them — the replaced rows get fresh autoincrement ids, so a device's
+    // current_item_id would otherwise dangle (schema relies on us nulling it).
+    const oldItemIds = tx
+      .select({ id: schema.playlistItems.id })
+      .from(schema.playlistItems)
+      .where(eq(schema.playlistItems.playlistId, playlistId))
+      .all()
+      .map((r) => r.id)
 
-  if (body.items.length > 0) {
-    await db.insert(schema.playlistItems).values(
-      body.items.map((it, idx) => ({
-        playlistId,
-        mediaId: it.mediaId,
-        position: idx,
-        durationMsOverride: it.durationMsOverride ?? null
-      }))
-    )
-  }
+    tx.delete(schema.playlistItems)
+      .where(eq(schema.playlistItems.playlistId, playlistId))
+      .run()
 
-  await bumpPlaylistVersion(db, playlistId)
+    if (oldItemIds.length > 0) {
+      tx.update(schema.devices)
+        .set({ currentItemId: null })
+        .where(inArray(schema.devices.currentItemId, oldItemIds))
+        .run()
+    }
+
+    if (body.items.length > 0) {
+      tx.insert(schema.playlistItems)
+        .values(
+          body.items.map((it, idx) => ({
+            playlistId,
+            mediaId: it.mediaId,
+            position: idx,
+            durationMsOverride: it.durationMsOverride ?? null
+          }))
+        )
+        .run()
+    }
+
+    tx.update(schema.playlists)
+      .set({
+        version: sql`${schema.playlists.version} + 1`,
+        updatedAt: new Date()
+      })
+      .where(eq(schema.playlists.id, playlistId))
+      .run()
+  })
 }
 
 export default defineEventHandler(async (event) => {

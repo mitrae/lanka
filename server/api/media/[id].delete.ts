@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm'
+import { eq, sql, inArray } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
@@ -38,9 +38,26 @@ export async function handleDeleteMedia(
 
   db.transaction((tx) => {
     if (opts.force && affectedPlaylists.size > 0) {
+      // Null current_item_id on any device playing an item we're about to delete
+      // (devices have no FK on it — see schema). Capture ids before the delete.
+      const deletedItemIds = tx
+        .select({ id: schema.playlistItems.id })
+        .from(schema.playlistItems)
+        .where(eq(schema.playlistItems.mediaId, id))
+        .all()
+        .map((r) => r.id)
+
       tx.delete(schema.playlistItems)
         .where(eq(schema.playlistItems.mediaId, id))
         .run()
+
+      if (deletedItemIds.length > 0) {
+        tx.update(schema.devices)
+          .set({ currentItemId: null })
+          .where(inArray(schema.devices.currentItemId, deletedItemIds))
+          .run()
+      }
+
       for (const pid of affectedPlaylists) {
         const bumped = tx
           .update(schema.playlists)

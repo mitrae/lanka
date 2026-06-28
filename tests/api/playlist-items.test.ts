@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { seedMedia, seedPlaylist } from '../helpers/fixtures'
 import { handleReplacePlaylistItems } from '~/server/api/playlists/[id]/items.put'
@@ -14,7 +14,12 @@ describe('PUT /api/playlists/:id/items', () => {
     db = t.db
     close = t.close
   })
-  afterEach(() => close())
+  afterEach(() => {
+    try {
+      db.run(sql`DROP TRIGGER IF EXISTS items_insert_fail`)
+    } catch {}
+    close()
+  })
 
   it('replaces all items with the submitted list and bumps version', async () => {
     const v = await seedMedia(db, { sha256: 'v', kind: 'video' })
@@ -87,5 +92,41 @@ describe('PUT /api/playlists/:id/items', () => {
     await expect(
       handleReplacePlaylistItems(db, 9999, { items: [] })
     ).rejects.toThrow(/playlist.*not found/i)
+  })
+
+  it('rolls back the delete and version bump when the re-insert fails mid-transaction', async () => {
+    const v = await seedMedia(db, { sha256: 'v', kind: 'video' })
+    const v2 = await seedMedia(db, { sha256: 'v2', kind: 'video' })
+    const pl = await seedPlaylist(db, { items: [{ mediaId: v.id }] })
+    expect(pl.version).toBe(1)
+
+    // Abort the re-insert so the (delete-all → insert → bump) sequence must
+    // either fully apply or fully roll back. Without a wrapping transaction the
+    // playlist would be left empty (devices then poll a blank manifest).
+    db.run(sql`
+      CREATE TRIGGER items_insert_fail
+      BEFORE INSERT ON playlist_items
+      FOR EACH ROW
+      BEGIN SELECT RAISE(ABORT, 'simulated insert failure'); END
+    `)
+
+    await expect(
+      handleReplacePlaylistItems(db, pl.id, { items: [{ mediaId: v2.id }] })
+    ).rejects.toThrow(/simulated insert failure/)
+
+    db.run(sql`DROP TRIGGER IF EXISTS items_insert_fail`)
+
+    const items = await db
+      .select()
+      .from(schema.playlistItems)
+      .where(eq(schema.playlistItems.playlistId, pl.id))
+    expect(items).toHaveLength(1)
+    expect(items[0].mediaId).toBe(v.id)
+
+    const [refreshed] = await db
+      .select()
+      .from(schema.playlists)
+      .where(eq(schema.playlists.id, pl.id))
+    expect(refreshed.version).toBe(1)
   })
 })
