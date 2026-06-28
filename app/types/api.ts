@@ -62,6 +62,7 @@ export interface Media {
   createdAt: string
   organizationId: number | null
   playCount: number
+  quality: 'low' | 'standard' | 'high'
 }
 
 export interface MediaListRow extends Media {

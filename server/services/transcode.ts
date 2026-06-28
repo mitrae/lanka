@@ -93,34 +93,48 @@ export function isKioskSafe(p: VideoProbe): boolean {
   )
 }
 
+export type QualityPreset = 'low' | 'standard' | 'high'
+
+/** Resolution cap (scale-down only), CRF, and audio bitrate per preset.
+ *  All presets emit H.264 Main / yuv420p / +faststart. `standard` reproduces
+ *  the original hardcoded kiosk-safe profile. */
+export const QUALITY_PRESETS: Record<QualityPreset, {
+  maxLong: number
+  maxShort: number
+  crf: number
+  audioBitrate: string
+}> = {
+  low: { maxLong: 854, maxShort: 480, crf: 26, audioBitrate: '96k' },
+  standard: { maxLong: 1280, maxShort: 720, crf: 23, audioBitrate: '128k' },
+  high: { maxLong: 1920, maxShort: 1080, crf: 20, audioBitrate: '128k' },
+}
+
 /**
- * Transcodes `inPath` to `outPath` using kiosk-safe settings:
- *   - H.264 Main profile, yuv420p, CRF 23, veryfast preset
- *   - Scale: short side ≤720, long side ≤1280, no upscale, even dimensions
- *   - AAC 128 kbps stereo audio
- *   - faststart for web playback
+ * Transcodes `inPath` to `outPath` using the specified quality preset:
+ *   - H.264 Main profile, yuv420p, veryfast preset, +faststart
+ *   - Scale: short side ≤maxShort, long side ≤maxLong, no upscale, even dimensions
+ *   - AAC audio at the preset's audioBitrate, stereo
  *
  * Rejects on error or if the encode exceeds TRANSCODE_TIMEOUT_MS.
  */
 export async function transcodeToKioskSafe(
   inPath: string,
-  outPath: string
+  outPath: string,
+  preset: QualityPreset
 ): Promise<void> {
+  const p = QUALITY_PRESETS[preset]
   return new Promise((resolve, reject) => {
     const command = ffmpeg(inPath)
-      // Two-pass scale: pass 1 caps the short side to 720, pass 2 caps the long
-      // side to 1280. Both decrease-only (min) with even dims (-2), no upscale,
-      // orientation-correct. Caps wider-than-16:9 input (e.g. 2560×720 → 1280×360).
       .outputOptions([
         '-vf',
-        "scale='if(gt(iw,ih),-2,min(720,iw))':'if(gt(iw,ih),min(720,ih),-2)',scale='if(gt(iw,ih),min(1280,iw),-2)':'if(gt(iw,ih),-2,min(1280,ih))'",
+        `scale='if(gt(iw,ih),-2,min(${p.maxShort},iw))':'if(gt(iw,ih),min(${p.maxShort},ih),-2)',scale='if(gt(iw,ih),min(${p.maxLong},iw),-2)':'if(gt(iw,ih),-2,min(${p.maxLong},ih))'`,
         '-c:v', 'libx264',
         '-profile:v', 'main',
         '-pix_fmt', 'yuv420p',
         '-preset', 'veryfast',
-        '-crf', '23',
+        '-crf', String(p.crf),
         '-c:a', 'aac',
-        '-b:a', '128k',
+        '-b:a', p.audioBitrate,
         '-ac', '2',
         '-movflags', '+faststart',
       ])
@@ -131,38 +145,23 @@ export async function transcodeToKioskSafe(
       reject(new Error(`Transcode timeout after ${TRANSCODE_TIMEOUT_MS}ms`))
     }, TRANSCODE_TIMEOUT_MS)
 
-    command.on('end', () => {
-      clearTimeout(timer)
-      resolve()
-    })
-    command.on('error', (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-
+    command.on('end', () => { clearTimeout(timer); resolve() })
+    command.on('error', (err) => { clearTimeout(timer); reject(err) })
     command.run()
   })
 }
 
 /**
- * Ensures a video file is kiosk-safe.
- * - If already safe: returns `{ path: inPath, probe, transcoded: false }`.
- * - If not safe: transcodes to `${tmpDir}/out.mp4`, re-probes, returns the
- *   output path with `transcoded: true`.
+ * Transcodes a video to the chosen quality preset (always re-encodes), writing
+ * to `${tmpDir}/out.mp4`. Returns the output path + a fresh probe.
  */
-export async function ensureKioskSafe(
+export async function ensureQuality(
   inPath: string,
-  tmpDir: string
+  tmpDir: string,
+  preset: QualityPreset
 ): Promise<{ path: string; probe: VideoProbe; transcoded: boolean }> {
-  const probe = await probeVideo(inPath)
-
-  if (isKioskSafe(probe)) {
-    return { path: inPath, probe, transcoded: false }
-  }
-
   const outPath = join(tmpDir, 'out.mp4')
-  await transcodeToKioskSafe(inPath, outPath)
+  await transcodeToKioskSafe(inPath, outPath, preset)
   const outProbe = await probeVideo(outPath)
-
   return { path: outPath, probe: outProbe, transcoded: true }
 }

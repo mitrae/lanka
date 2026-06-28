@@ -10,16 +10,16 @@ import { LocalDiskStore } from '~/server/services/media-store'
 import { handleRegister } from '~/server/api/devices/register.post'
 import { handleManifest } from '~/server/api/devices/[id]/manifest.get'
 import { ingestMedia } from '~/server/api/media.post'
-import { ensureKioskSafe } from '~/server/services/transcode'
+import { ensureQuality } from '~/server/services/transcode'
 import { bumpPlaylistVersion } from '~/server/services/playlist-version'
 import * as schema from '~/server/db/schema'
 
 vi.mock('~/server/services/transcode')
 
 beforeEach(() => {
-  vi.mocked(ensureKioskSafe).mockImplementation(async (inPath) => ({
+  vi.mocked(ensureQuality).mockImplementation(async (inPath) => ({
     path: inPath,
-    transcoded: false,
+    transcoded: true,
     probe: { codec: 'h264', profile: 'Main', pixFmt: 'yuv420p', width: 1280, height: 720, durationMs: 1000, audioCodec: 'aac' }
   }))
 })

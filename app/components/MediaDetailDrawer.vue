@@ -67,6 +67,12 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
             <dt class="text-(--ui-text-muted)">{{ $t('media.duration') }}</dt>
             <dd>{{ Math.round(detail.durationMs / 1000) }}s</dd>
           </template>
+          <template v-if="detail.kind === 'video'">
+            <dt class="text-(--ui-text-muted)">{{ $t('media.quality') }}</dt>
+            <dd>
+              <UBadge color="neutral" variant="subtle" size="sm">{{ detail.quality }}</UBadge>
+            </dd>
+          </template>
           <dt class="text-(--ui-text-muted)">{{ $t('media.uploaded') }}</dt>
           <dd>{{ new Date(detail.createdAt).toLocaleString() }}</dd>
           <dt class="text-(--ui-text-muted)">sha256</dt>

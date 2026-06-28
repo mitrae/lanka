@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegPath from '@ffmpeg-installer/ffmpeg'
 import ffmpegLib from 'fluent-ffmpeg'
-import { isKioskSafe, ensureKioskSafe } from '../../server/services/transcode'
+import { isKioskSafe, ensureQuality, QUALITY_PRESETS, transcodeToKioskSafe, probeVideo } from '../../server/services/transcode'
 import type { VideoProbe } from '../../server/services/transcode'
 
 ffmpegLib.setFfmpegPath(ffmpegPath.path)
@@ -104,7 +104,7 @@ describe('isKioskSafe', () => {
 // Integration tests — invoke real ffmpeg
 // ---------------------------------------------------------------------------
 
-describe('ensureKioskSafe (integration)', () => {
+describe('ensureQuality (integration)', () => {
   const tmpDirs: string[] = []
 
   afterEach(async () => {
@@ -124,7 +124,7 @@ describe('ensureKioskSafe (integration)', () => {
       const srcPath = join(srcDir, 'high.mp4')
       await generateClip(srcPath, { profile: 'high', width: 1920, height: 1080 })
 
-      const result = await ensureKioskSafe(srcPath, outDir)
+      const result = await ensureQuality(srcPath, outDir, 'standard')
 
       expect(result.transcoded).toBe(true)
       expect(existsSync(result.path)).toBe(true)
@@ -149,7 +149,7 @@ describe('ensureKioskSafe (integration)', () => {
       const srcPath = join(srcDir, 'wide.mp4')
       await generateClip(srcPath, { profile: 'high', width: 2560, height: 720 })
 
-      const result = await ensureKioskSafe(srcPath, outDir)
+      const result = await ensureQuality(srcPath, outDir, 'standard')
 
       expect(result.transcoded).toBe(true)
       const { probe: p } = result
@@ -160,7 +160,7 @@ describe('ensureKioskSafe (integration)', () => {
   )
 
   it(
-    'passes through a conforming Main-profile 640×360 clip unchanged',
+    'always re-encodes a conforming Main-profile 640×360 clip (transcoded:true)',
     async () => {
       const srcDir = makeTmpDir()
       const outDir = makeTmpDir()
@@ -188,11 +188,61 @@ describe('ensureKioskSafe (integration)', () => {
           .run()
       })
 
-      const result = await ensureKioskSafe(srcPath, outDir)
+      const result = await ensureQuality(srcPath, outDir, 'standard')
 
-      expect(result.transcoded).toBe(false)
-      expect(result.path).toBe(srcPath)
+      expect(result.transcoded).toBe(true)
+      expect(result.path).not.toBe(srcPath)
     },
     60_000
   )
+})
+
+// ---------------------------------------------------------------------------
+// New preset + ensureQuality tests (Task 2)
+// ---------------------------------------------------------------------------
+
+describe('QUALITY_PRESETS', () => {
+  it('has low/standard/high with the agreed caps + crf', () => {
+    expect(QUALITY_PRESETS.low).toEqual({ maxLong: 854, maxShort: 480, crf: 26, audioBitrate: '96k' })
+    expect(QUALITY_PRESETS.standard).toEqual({ maxLong: 1280, maxShort: 720, crf: 23, audioBitrate: '128k' })
+    expect(QUALITY_PRESETS.high).toEqual({ maxLong: 1920, maxShort: 1080, crf: 20, audioBitrate: '128k' })
+  })
+})
+
+describe('transcodeToKioskSafe per preset', () => {
+  let dir: string
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }) })
+
+  it.each([
+    ['low', 854, 480],
+    ['standard', 1280, 720],
+    ['high', 1920, 1080],
+  ] as const)('caps a 1080p source to %s (<=%i long / <=%i short), Main/yuv420p', async (preset, long, short) => {
+    dir = makeTmpDir()
+    const src = join(dir, 'src.mp4')
+    const out = join(dir, 'out.mp4')
+    await generateClip(src, { profile: 'high', width: 1920, height: 1080, durationSecs: 1 })
+    await transcodeToKioskSafe(src, out, preset)
+    const p = await probeVideo(out)
+    expect(Math.max(p.width, p.height)).toBeLessThanOrEqual(long)
+    expect(Math.min(p.width, p.height)).toBeLessThanOrEqual(short)
+    expect(p.profile).toBe('Main')
+    expect(p.pixFmt).toBe('yuv420p')
+  }, 60_000)
+})
+
+describe('ensureQuality always re-encodes', () => {
+  let dir: string
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }) })
+
+  it('transcodes even an already-safe source (transcoded:true) and applies the preset', async () => {
+    dir = makeTmpDir()
+    const src = join(dir, 'src.mp4')
+    // already kiosk-safe: Main, 640x360
+    await generateClip(src, { profile: 'main', width: 640, height: 360, durationSecs: 1 })
+    const res = await ensureQuality(src, dir, 'standard')
+    expect(res.transcoded).toBe(true)
+    expect(res.path).not.toBe(src)
+    expect(res.probe.profile).toBe('Main')
+  }, 60_000)
 })

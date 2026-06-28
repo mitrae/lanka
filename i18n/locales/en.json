@@ -62,7 +62,14 @@
       "uploadFailed": "Upload failed: {name}",
       "uploadedFiles": "{n} file uploaded | {n} files uploaded | {n} files uploaded",
       "uploadButton": "Upload",
-      "uploadButtonCount": "Upload ({n})"
+      "uploadButtonCount": "Upload ({n})",
+      "quality": {
+        "label": "Video quality",
+        "low": "Low — 480p, smallest file",
+        "standard": "Standard — 720p, plays on all devices",
+        "high": "High — 1080p, larger, native players",
+        "hint": "Applies to video uploads. High keeps 1080p for native-player boxes."
+      }
     },
     "assignmentPicker": {
       "noDirectAssignment": "— No direct assignment —",
@@ -236,6 +243,7 @@
     "size": "Size",
     "dimensions": "Dimensions",
     "duration": "Duration",
+    "quality": "Quality",
     "uploaded": "Uploaded",
     "organization": "Organization",
     "noOrganization": "No organization",

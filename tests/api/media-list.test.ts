@@ -42,6 +42,13 @@ describe('media CRUD beyond upload', () => {
     expect(byId.get(b.id)!.usedInPlaylists).toBe(1)
   })
 
+  it('list rows include the quality field', async () => {
+    await seedMedia(db, { sha256: 'q1', kind: 'video' })
+    const rows = await handleListMedia(db)
+    expect(rows[0]).toHaveProperty('quality')
+    expect(rows[0].quality).toBe('standard') // default quality
+  })
+
   it('get returns the row', async () => {
     const m = await seedMedia(db, { sha256: 'x', kind: 'image' })
     const row = await handleGetMedia(db, m.id)

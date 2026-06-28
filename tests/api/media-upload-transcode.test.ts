@@ -7,7 +7,7 @@ import { Readable } from 'node:stream'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { LocalDiskStore } from '~/server/services/media-store'
 import { ingestMedia } from '~/server/api/media.post'
-import { ensureKioskSafe } from '~/server/services/transcode'
+import { ensureQuality } from '~/server/services/transcode'
 import * as schema from '~/server/db/schema'
 
 vi.mock('~/server/services/transcode')
@@ -15,6 +15,42 @@ vi.mock('~/server/services/thumbnails', () => ({
   generateImageThumbnail: vi.fn().mockResolvedValue(Buffer.from('thumb')),
   generateVideoThumbnail: vi.fn().mockResolvedValue(Buffer.from('thumb'))
 }))
+
+// Handler-level quality validation (mirrors the `kind` validation in media.post.ts defineEventHandler)
+describe('media upload — quality field handler validation', () => {
+  const QUALITIES = ['low', 'standard', 'high'] as const
+  type QualityPreset = (typeof QUALITIES)[number]
+
+  function parseQuality(qualityRaw: string | undefined): QualityPreset {
+    if (!qualityRaw) return 'standard'
+    if (QUALITIES.includes(qualityRaw as QualityPreset)) return qualityRaw as QualityPreset
+    throw createError({ statusCode: 400, message: 'quality must be "low", "standard", or "high"' })
+  }
+
+  it('absent quality defaults to standard', () => {
+    expect(parseQuality(undefined)).toBe('standard')
+  })
+
+  it('empty string quality defaults to standard', () => {
+    expect(parseQuality('')).toBe('standard')
+  })
+
+  it('valid quality values are accepted', () => {
+    expect(parseQuality('low')).toBe('low')
+    expect(parseQuality('standard')).toBe('standard')
+    expect(parseQuality('high')).toBe('high')
+  })
+
+  it('invalid non-empty quality throws 400', () => {
+    expect(() => parseQuality('ultra')).toThrow()
+    try {
+      parseQuality('ultra')
+    } catch (err: any) {
+      expect(err.statusCode).toBe(400)
+      expect(err.message).toMatch(/quality must be/)
+    }
+  })
+})
 
 function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
@@ -58,7 +94,7 @@ describe('ingestMedia — video transcode integration', () => {
     const transcodedFile = join(tmpFilesDir, 'transcoded.mp4')
     writeFileSync(transcodedFile, transcodedBytes)
 
-    vi.mocked(ensureKioskSafe).mockResolvedValue({
+    vi.mocked(ensureQuality).mockResolvedValue({
       path: transcodedFile,
       probe: {
         codec: 'h264',
@@ -107,11 +143,11 @@ describe('ingestMedia — video transcode integration', () => {
     const sourceSha = sha256Hex(sourceBytes)
 
     // Passthrough: same path (same bytes), so sha is identical to source sha
-    // We need a real file that ensureKioskSafe returns as-is.
+    // We need a real file that ensureQuality returns as-is.
     // The mock returns the same path the handler writes to (in.bin inside tmpDir).
     // Since we can't know tmpDir ahead of time, we use mockImplementation to
     // capture the inPath and return it unchanged.
-    vi.mocked(ensureKioskSafe).mockImplementation(async (inPath) => ({
+    vi.mocked(ensureQuality).mockImplementation(async (inPath) => ({
       path: inPath,
       probe: {
         codec: 'h264',
@@ -142,7 +178,7 @@ describe('ingestMedia — video transcode integration', () => {
   })
 
   // (c) source dedup: same source bytes → return existing row, no transcode/put
-  it('(c) source-dedup: pre-existing sourceSha256 match returns existing row without calling ensureKioskSafe or store.put', async () => {
+  it('(c) source-dedup: pre-existing sourceSha256 match returns existing row without calling ensureQuality or store.put', async () => {
     const sourceBytes = Buffer.from('DUPLICATE-SOURCE-VIDEO')
     const sourceSha = sha256Hex(sourceBytes)
 
@@ -168,13 +204,13 @@ describe('ingestMedia — video transcode integration', () => {
     })
 
     expect(row.id).toBe(preInserted.id)
-    expect(vi.mocked(ensureKioskSafe)).not.toHaveBeenCalled()
+    expect(vi.mocked(ensureQuality)).not.toHaveBeenCalled()
     expect(putSpy).not.toHaveBeenCalled()
   })
 
   // (d) transcode failure → 422
   it('(d) transcode failure → 422 error', async () => {
-    vi.mocked(ensureKioskSafe).mockRejectedValue(new Error('ffmpeg crashed'))
+    vi.mocked(ensureQuality).mockRejectedValue(new Error('ffmpeg crashed'))
 
     await expect(
       ingestMedia(db, store, {
@@ -183,6 +219,128 @@ describe('ingestMedia — video transcode integration', () => {
         kind: 'video'
       })
     ).rejects.toMatchObject({ statusCode: 422, message: 'Could not process this video' })
+  })
+
+  // quality: persists chosen preset on the media row
+  it('persists the chosen quality on the media row', async () => {
+    const sourceBytes = Buffer.from('QUALITY-HIGH-VIDEO-BYTES')
+    const transcodedBytes = Buffer.from('QUALITY-HIGH-TRANSCODED-OUTPUT')
+    const transcodedFile = join(tmpFilesDir, 'quality-high.mp4')
+    writeFileSync(transcodedFile, transcodedBytes)
+
+    vi.mocked(ensureQuality).mockResolvedValue({
+      path: transcodedFile,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1920,
+        height: 1080,
+        durationMs: 3000,
+        audioCodec: 'aac'
+      },
+      transcoded: true
+    })
+
+    const row = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'video-hq.mp4',
+      kind: 'video',
+      quality: 'high'
+    })
+    expect(row.quality).toBe('high')
+  })
+
+  // quality: dedup on (source, quality) — same source+quality returns same row
+  it('dedups on (source, quality): same source+quality returns the same row', async () => {
+    const sourceBytes = Buffer.from('DEDUP-SAME-QUALITY-VIDEO')
+    const transcodedBytes = Buffer.from('DEDUP-SAME-QUALITY-TRANSCODED')
+    const transcodedFile = join(tmpFilesDir, 'dedup-same.mp4')
+    writeFileSync(transcodedFile, transcodedBytes)
+
+    vi.mocked(ensureQuality).mockResolvedValue({
+      path: transcodedFile,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1280,
+        height: 720,
+        durationMs: 2000,
+        audioCodec: null
+      },
+      transcoded: true
+    })
+
+    const a = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'standard'
+    })
+    const b = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'standard'
+    })
+    expect(b.id).toBe(a.id)
+  })
+
+  // quality: same source at a different quality creates a new row
+  it('same source at a different quality creates a new row', async () => {
+    const sourceBytes = Buffer.from('DEDUP-DIFF-QUALITY-VIDEO')
+
+    const transcodedBytesStd = Buffer.from('DEDUP-DIFF-QUALITY-STD-TRANSCODED')
+    const transcodedFileStd = join(tmpFilesDir, 'dedup-diff-std.mp4')
+    writeFileSync(transcodedFileStd, transcodedBytesStd)
+
+    const transcodedBytesHigh = Buffer.from('DEDUP-DIFF-QUALITY-HIGH-TRANSCODED')
+    const transcodedFileHigh = join(tmpFilesDir, 'dedup-diff-high.mp4')
+    writeFileSync(transcodedFileHigh, transcodedBytesHigh)
+
+    // First call: standard
+    vi.mocked(ensureQuality).mockResolvedValueOnce({
+      path: transcodedFileStd,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1280,
+        height: 720,
+        durationMs: 2000,
+        audioCodec: null
+      },
+      transcoded: true
+    })
+    // Second call: high
+    vi.mocked(ensureQuality).mockResolvedValueOnce({
+      path: transcodedFileHigh,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1920,
+        height: 1080,
+        durationMs: 2000,
+        audioCodec: null
+      },
+      transcoded: true
+    })
+
+    const a = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'standard'
+    })
+    const c = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'high'
+    })
+    expect(c.id).not.toBe(a.id)
   })
 
   // (e) content dedup: pre-existing sha256 match (from different source) returns existing row
@@ -206,8 +364,8 @@ describe('ingestMedia — video transcode integration', () => {
       .returning()
 
     // Different source bytes → different source sha → no source-dedup hit
-    // but ensureKioskSafe returns our identical output file
-    vi.mocked(ensureKioskSafe).mockResolvedValue({
+    // but ensureQuality returns our identical output file
+    vi.mocked(ensureQuality).mockResolvedValue({
       path: transcodeFile,
       probe: {
         codec: 'h264',
