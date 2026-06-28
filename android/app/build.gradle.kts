@@ -91,6 +91,9 @@ android {
         getByName("webview") {
             java.srcDirs("src/webview/kotlin")
         }
+        getByName("testNative") {
+            java.srcDirs("src/testNative/kotlin")
+        }
     }
 }
 
