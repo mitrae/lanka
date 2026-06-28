@@ -6,14 +6,14 @@ import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createWriteStream } from 'node:fs'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import formidable from 'formidable'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { useMediaStore } from '~/server/services/media-store-singleton'
 import type { MediaStore } from '~/server/services/media-store'
-import { ensureQuality } from '~/server/services/transcode'
+import { ensureQuality, type QualityPreset } from '~/server/services/transcode'
 
 export type IngestInput = {
   stream: Readable
@@ -23,6 +23,7 @@ export type IngestInput = {
   durationMs?: number
   width?: number
   height?: number
+  quality?: QualityPreset
 }
 
 export type IngestedMedia = typeof schema.media.$inferSelect
@@ -52,11 +53,13 @@ export async function ingestMedia(
     const sourceSha = hash.digest('hex')
     const sourceBytes = bytes
 
-    // 1. Source dedup: if we've already ingested this exact source, return it
+    const quality: QualityPreset = input.quality ?? 'standard'
+
+    // 1. Source dedup: if we've already ingested this exact source at this quality, return it
     const sourceExisting = await db
       .select()
       .from(schema.media)
-      .where(eq(schema.media.sourceSha256, sourceSha))
+      .where(and(eq(schema.media.sourceSha256, sourceSha), eq(schema.media.quality, quality)))
       .get()
     if (sourceExisting) return sourceExisting
 
@@ -81,7 +84,7 @@ export async function ingestMedia(
       // video: run through kiosk-safe normalizer
       let result: Awaited<ReturnType<typeof ensureQuality>>
       try {
-        result = await ensureQuality(tmpPath, tmpDir, 'standard')
+        result = await ensureQuality(tmpPath, tmpDir, quality)
       } catch {
         throw createError({ statusCode: 422, message: 'Could not process this video' })
       }
@@ -148,7 +151,8 @@ export async function ingestMedia(
         thumbnailBytes,
         durationMs: finalDurationMs,
         width: finalWidth,
-        height: finalHeight
+        height: finalHeight,
+        quality
       })
       .returning()
     return row
@@ -175,12 +179,19 @@ export default defineEventHandler(async (event) => {
     ? fields.durationMs[0]
     : fields.durationMs
 
+  const qualityRaw = Array.isArray(fields.quality) ? fields.quality[0] : fields.quality
+  const QUALITIES = ['low', 'standard', 'high'] as const
+  const quality: QualityPreset = QUALITIES.includes(qualityRaw as any)
+    ? (qualityRaw as QualityPreset)
+    : 'standard'
+
   const result = await ingestMedia(useDb(), useMediaStore(), {
     stream: createReadStream(file.filepath),
     filename: file.originalFilename ?? 'upload.bin',
     kind,
     mimeType: file.mimetype ?? undefined,
-    durationMs: durMs ? Number(durMs) : undefined
+    durationMs: durMs ? Number(durMs) : undefined,
+    quality
   })
 
   return result

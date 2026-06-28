@@ -185,6 +185,128 @@ describe('ingestMedia — video transcode integration', () => {
     ).rejects.toMatchObject({ statusCode: 422, message: 'Could not process this video' })
   })
 
+  // quality: persists chosen preset on the media row
+  it('persists the chosen quality on the media row', async () => {
+    const sourceBytes = Buffer.from('QUALITY-HIGH-VIDEO-BYTES')
+    const transcodedBytes = Buffer.from('QUALITY-HIGH-TRANSCODED-OUTPUT')
+    const transcodedFile = join(tmpFilesDir, 'quality-high.mp4')
+    writeFileSync(transcodedFile, transcodedBytes)
+
+    vi.mocked(ensureQuality).mockResolvedValue({
+      path: transcodedFile,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1920,
+        height: 1080,
+        durationMs: 3000,
+        audioCodec: 'aac'
+      },
+      transcoded: true
+    })
+
+    const row = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'video-hq.mp4',
+      kind: 'video',
+      quality: 'high'
+    })
+    expect(row.quality).toBe('high')
+  })
+
+  // quality: dedup on (source, quality) — same source+quality returns same row
+  it('dedups on (source, quality): same source+quality returns the same row', async () => {
+    const sourceBytes = Buffer.from('DEDUP-SAME-QUALITY-VIDEO')
+    const transcodedBytes = Buffer.from('DEDUP-SAME-QUALITY-TRANSCODED')
+    const transcodedFile = join(tmpFilesDir, 'dedup-same.mp4')
+    writeFileSync(transcodedFile, transcodedBytes)
+
+    vi.mocked(ensureQuality).mockResolvedValue({
+      path: transcodedFile,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1280,
+        height: 720,
+        durationMs: 2000,
+        audioCodec: null
+      },
+      transcoded: true
+    })
+
+    const a = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'standard'
+    })
+    const b = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'standard'
+    })
+    expect(b.id).toBe(a.id)
+  })
+
+  // quality: same source at a different quality creates a new row
+  it('same source at a different quality creates a new row', async () => {
+    const sourceBytes = Buffer.from('DEDUP-DIFF-QUALITY-VIDEO')
+
+    const transcodedBytesStd = Buffer.from('DEDUP-DIFF-QUALITY-STD-TRANSCODED')
+    const transcodedFileStd = join(tmpFilesDir, 'dedup-diff-std.mp4')
+    writeFileSync(transcodedFileStd, transcodedBytesStd)
+
+    const transcodedBytesHigh = Buffer.from('DEDUP-DIFF-QUALITY-HIGH-TRANSCODED')
+    const transcodedFileHigh = join(tmpFilesDir, 'dedup-diff-high.mp4')
+    writeFileSync(transcodedFileHigh, transcodedBytesHigh)
+
+    // First call: standard
+    vi.mocked(ensureQuality).mockResolvedValueOnce({
+      path: transcodedFileStd,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1280,
+        height: 720,
+        durationMs: 2000,
+        audioCodec: null
+      },
+      transcoded: true
+    })
+    // Second call: high
+    vi.mocked(ensureQuality).mockResolvedValueOnce({
+      path: transcodedFileHigh,
+      probe: {
+        codec: 'h264',
+        profile: 'Main',
+        pixFmt: 'yuv420p',
+        width: 1920,
+        height: 1080,
+        durationMs: 2000,
+        audioCodec: null
+      },
+      transcoded: true
+    })
+
+    const a = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'standard'
+    })
+    const c = await ingestMedia(db, store, {
+      stream: readable(sourceBytes),
+      filename: 'clip.mp4',
+      kind: 'video',
+      quality: 'high'
+    })
+    expect(c.id).not.toBe(a.id)
+  })
+
   // (e) content dedup: pre-existing sha256 match (from different source) returns existing row
   it('(e) content-dedup: two different sources that transcode to identical bytes return existing row, no UNIQUE violation', async () => {
     const transcodeOutputBytes = Buffer.from('IDENTICAL-TRANSCODED-OUTPUT')
