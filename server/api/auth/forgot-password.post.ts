@@ -5,6 +5,7 @@ import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { createResetToken } from '~/server/services/password-reset'
 import { useMailer, type MailSender } from '~/server/services/mailer'
+import { authLimiters, clientIp, enforceRateLimit } from '~/server/services/rate-limit'
 
 const BodySchema = z.object({ email: z.string().min(1).max(254) })
 
@@ -30,7 +31,14 @@ export async function handleForgotPassword(
 }
 
 export default defineEventHandler(async (event) => {
+  // Throttle reset-email sends per source and per target inbox (Resend abuse +
+  // mailbox flooding). Keying on the submitted email — before any DB lookup —
+  // keeps the response non-enumerating.
+  enforceRateLimit(event, authLimiters.forgotIp, clientIp(event))
   const body = await readBody(event)
+  const email =
+    typeof (body as any)?.email === 'string' ? (body as any).email.toLowerCase() : null
+  if (email) enforceRateLimit(event, authLimiters.forgotAccount, email)
   const config = useRuntimeConfig()
   try {
     return await handleForgotPassword(useDb(), body, {

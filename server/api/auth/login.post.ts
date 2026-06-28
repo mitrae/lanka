@@ -11,6 +11,7 @@ import {
   type Role,
   type SessionUser
 } from '~/server/services/sessions'
+import { authLimiters, clientIp, enforceRateLimit } from '~/server/services/rate-limit'
 
 const BodySchema = z.object({
   email: z.string().min(1).max(254),
@@ -43,7 +44,14 @@ export function sessionCookieOptions(secure: boolean) {
 }
 
 export default defineEventHandler(async (event) => {
+  // Throttle before touching the body (cheap), then again per account so neither
+  // a single source nor a single targeted email can be brute-forced. Per-account
+  // is IP-independent; per-IP is a generous backstop (see rate-limit.ts).
+  enforceRateLimit(event, authLimiters.loginIp, clientIp(event))
   const body = await readBody(event)
+  const email =
+    typeof (body as any)?.email === 'string' ? (body as any).email.toLowerCase() : null
+  if (email) enforceRateLimit(event, authLimiters.loginAccount, email)
   let result: { user: SessionUser; token: string } | null
   try {
     result = await authenticateUser(useDb(), body)

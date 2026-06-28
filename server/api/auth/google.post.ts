@@ -6,6 +6,7 @@ import { useDb } from '~/server/db/client'
 import { createSession, SESSION_COOKIE, type Role, type SessionUser } from '~/server/services/sessions'
 import { verifyGoogleIdToken, type VerifyIdTokenFn } from '~/server/services/google-auth'
 import { sessionCookieOptions } from '~/server/api/auth/login.post'
+import { authLimiters, clientIp, enforceRateLimit } from '~/server/services/rate-limit'
 
 const BodySchema = z.object({
   credential: z.string().min(1).max(8192)
@@ -40,6 +41,7 @@ export async function handleGoogleLogin(
 }
 
 export default defineEventHandler(async (event) => {
+  enforceRateLimit(event, authLimiters.googleIp, clientIp(event))
   const body = await readBody(event)
   const config = useRuntimeConfig()
   const clientId = config.public.googleClientId

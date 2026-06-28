@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
+import { authLimiters, clientIp, enforceRateLimit } from '~/server/services/rate-limit'
 
 const BodySchema = z.object({
   deviceId: z.string().min(1).max(128),
@@ -58,6 +59,10 @@ export async function handleRegister(
 }
 
 export default defineEventHandler(async (event) => {
+  // Generous per-IP backstop against unbounded device-row creation. Kept high so
+  // a subnet-router/Linux player fronting many boxes (one tailnet IP) isn't
+  // throttled during a fleet-wide boot.
+  enforceRateLimit(event, authLimiters.registerIp, clientIp(event))
   const body = await readBody(event)
   try {
     return await handleRegister(useDb(), body)
