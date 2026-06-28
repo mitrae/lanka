@@ -49,8 +49,7 @@ class CommandClient(
     // AckSender that writes to the current socket; silently drops if socket is gone.
     private val ackSender = object : AckSender {
         override fun send(json: String) {
-            @Suppress("USELESS_CAST")
-            socket?.send(json as String)
+            socket?.send(json)
         }
     }
 
@@ -85,6 +84,7 @@ class CommandClient(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                socket = null
                 webSocket.close(1000, null)
             }
 

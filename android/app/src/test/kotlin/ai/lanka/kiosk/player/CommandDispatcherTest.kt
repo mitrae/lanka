@@ -46,6 +46,12 @@ class CommandDispatcherTest {
         val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s)
             .handle("""{"commandId":6,"cmd":"ota","payload":{"sha256":"abc","url":"http://h/x.apk"}}""")
         assertEquals(Triple("abc", "http://h/x.apk", 6), a.ota)
+        assertTrue(s.sent.isEmpty())
+    }
+    @Test fun `kiosk-unlock toggles and acks`() {
+        val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s)
+            .handle("""{"commandId":7,"cmd":"kiosk-unlock","payload":null}""")
+        assertEquals(false, a.locked); assertTrue(s.sent.single().contains("\"status\":\"acked\""))
     }
     @Test fun `malformed json is ignored`() {
         val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s).handle("not json")
