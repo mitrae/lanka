@@ -1,4 +1,6 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- Adaptive launcher icon backdrop — sampled from the logo's own background. -->
+    <color name="ic_launcher_background">#FDFEFE</color>
 </resources>
