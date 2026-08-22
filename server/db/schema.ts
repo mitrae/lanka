@@ -95,6 +95,47 @@ export const media = sqliteTable(
   })
 )
 
+export const UPLOAD_STATUSES = [
+  'pending',
+  'queued',
+  'processing',
+  'done',
+  'failed',
+  'expired'
+] as const
+export type UploadStatus = (typeof UPLOAD_STATUSES)[number]
+
+// Async upload jobs: one row per dashboard upload. The bytes are staged by the
+// client straight into the media store (presigned PUT on R2, PUT /file on local
+// disk) and ingested by the in-process worker (services/media-ingest-queue).
+export const mediaUploads = sqliteTable(
+  'media_uploads',
+  {
+    id: text('id').primaryKey(), // UUID v4
+    filename: text('filename').notNull(),
+    kind: text('kind', { enum: ['video', 'image'] }).notNull(),
+    quality: text('quality', { enum: ['low', 'standard', 'high'] })
+      .notNull()
+      .default('standard'),
+    mimeType: text('mime_type').notNull(),
+    bytes: integer('bytes').notNull(), // declared by the client at create time
+    status: text('status', { enum: UPLOAD_STATUSES }).notNull().default('pending'),
+    error: text('error'),
+    mediaId: integer('media_id').references(() => media.id, { onDelete: 'set null' }),
+    attempts: integer('attempts').notNull().default(0),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .default(sql`(unixepoch() * 1000)`)
+  },
+  (t) => ({
+    statusIdx: index('media_uploads_status_idx').on(t.status),
+    createdIdx: index('media_uploads_created_idx').on(t.createdAt)
+  })
+)
+
 export const playlists = sqliteTable('playlists', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
@@ -351,4 +392,8 @@ export const mediaRelations = relations(media, ({ one }) => ({
     fields: [media.organizationId],
     references: [organizations.id]
   })
+}))
+
+export const mediaUploadsRelations = relations(mediaUploads, ({ one }) => ({
+  media: one(media, { fields: [mediaUploads.mediaId], references: [media.id] })
 }))
