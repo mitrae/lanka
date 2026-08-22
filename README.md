@@ -51,7 +51,7 @@ pnpm db:migrate   # apply migrations to data/signage.db
 | DELETE | `/api/media/:id` | Delete media (409 if in use; `?force=true` to cascade) |
 | GET  | `/media/:sha256` | Serve a media file (supports Range) |
 | GET  | `/media/:sha256/thumb` | Serve JPEG thumbnail |
-| POST | `/api/media/uploads` | Create an upload job; returns a presigned PUT ticket (R2) or a local-disk upload URL |
+| POST | `/api/media/uploads` | Create an upload job; returns a presigned PUT ticket (R2) or a local-disk upload URL. `mimeType` must be `video/*`/`image/*` matching `kind`, or `application/octet-stream` (browsers report an empty type for extensions like `.mkv`/`.ts`) |
 | PUT | `/api/media/uploads/:id/file` | Upload the file bytes (local-disk `MediaStore` only) |
 | POST | `/api/media/uploads/:id/complete` | Verify the staged object and enqueue background ingest |
 | GET | `/api/media/uploads/:id` | Poll upload job status |
@@ -175,7 +175,7 @@ Android WebView kiosk (Plan 5) or a desktop browser for QA.
 | `PORT` | 3000 | HTTP listen port |
 | `SESSION_COOKIE_SECURE` | unset | Set to `true` in production (HTTPS only) |
 | `MEDIA_PUBLIC_BASE` | unset | Public CDN base URL for media (e.g. `https://media.lanka.live`). Baked into SPA at build time. |
-| `MAX_UPLOAD_BYTES` | `2147483648` | Cap for dashboard uploads, default 2147483648 (2 GiB) |
+| `MAX_UPLOAD_BYTES` | `2147483648` (2 GiB) | Cap for dashboard uploads |
 | `GOOGLE_CLIENT_ID` | unset | Public Google OAuth Client ID for "Sign in with Google". Baked into the SPA at build time (like `MEDIA_PUBLIC_BASE`). Empty → Google button hidden. No client secret is used. |
 | `R2_ENDPOINT` | unset | R2-compatible endpoint URL |
 | `R2_BUCKET` | unset | R2 bucket name |
@@ -312,7 +312,7 @@ The nginx public block should rate-limit `POST /api/auth/forgot-password` the sa
 - Shell into the container: `docker exec -it lanka bash`
 - Inspect the DB from the host: `sqlite3 /opt/lanka/data/signage.db`
 - Rotate to a new tailnet IP: re-render the nginx tailnet block and reload nginx — `sudo sed "s/TAILSCALE_IP/$(tailscale ip -4 | head -n1)/" /opt/lanka/ops/nginx/lanka.conf | sudo tee /etc/nginx/sites-available/lanka.conf` then `sudo systemctl reload nginx`.
-- Install/refresh the R2 bucket rules (CORS + 1-day lifecycle on uploads/): `docker cp scripts/r2-bucket-setup.mjs lanka:/tmp/ && docker exec -w /app lanka node /tmp/r2-bucket-setup.mjs --origin https://app.lanka.live`
+- Install/refresh the R2 bucket rules (CORS + 1-day lifecycle on uploads/): `docker cp scripts/r2-bucket-setup.mjs lanka:/app/r2-bucket-setup.mjs && docker exec lanka node /app/r2-bucket-setup.mjs --origin https://app.lanka.live` (must land under `/app` — ESM bare-specifier resolution for `@aws-sdk/client-s3` walks up from the script's own directory, and `/tmp` has no `node_modules`)
 
 ## Next plans
 

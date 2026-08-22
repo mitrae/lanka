@@ -9,8 +9,12 @@
 // Idempotent — re-running replaces only the Lanka-managed rules.
 //
 // Local:   set -a; . ./.env; set +a; node scripts/r2-bucket-setup.mjs --origin https://app.lanka.live
-// Prod:    docker cp scripts/r2-bucket-setup.mjs lanka:/tmp/r2-bucket-setup.mjs \
-//          && docker exec -w /app lanka node /tmp/r2-bucket-setup.mjs --origin https://app.lanka.live
+// Prod:    docker cp scripts/r2-bucket-setup.mjs lanka:/app/r2-bucket-setup.mjs \
+//          && docker exec lanka node /app/r2-bucket-setup.mjs --origin https://app.lanka.live
+//          (must land under /app — ESM bare-specifier resolution for
+//          @aws-sdk/client-s3 walks up from the SCRIPT's directory looking
+//          for node_modules; /tmp has none, so a copy there fails with
+//          ERR_MODULE_NOT_FOUND even with -w /app)
 import {
   S3Client,
   GetBucketCorsCommand,

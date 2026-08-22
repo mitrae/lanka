@@ -126,7 +126,7 @@ media_uploads
 
 State machine: `pending → queued → processing → done | failed`;
 `pending → expired` (sweeper, 24 h) ; `pending → (deleted)` (client cancel);
-`processing → queued` (boot recovery, `attempts < 2`) else `→ failed`.
+`processing → queued` (boot recovery, `attempts < MAX_ATTEMPTS`) else `→ failed`.
 
 `tests/helpers/test-db.ts` applies real migrations, so tests see the table
 automatically once 0012 exists.
@@ -136,7 +136,7 @@ already 403s `client` for every non-portal `/api/*` route)
 
 | Route | Body / params | Responses |
 |---|---|---|
-| `POST /api/media/uploads` | `{ filename, kind, quality?, mimeType, bytes }` | `201 { id, status:'pending', upload:{method,url,headers,expiresAt} }` · `400` bad kind/quality, `bytes ≤ 0`, non-integer, or `mimeType` not `video/*`/`image/*` matching `kind` · `413` `bytes > maxUploadBytes` |
+| `POST /api/media/uploads` | `{ filename, kind, quality?, mimeType, bytes }` | `201 { id, status:'pending', upload:{method,url,headers,expiresAt} }` · `400` bad kind/quality, `bytes ≤ 0`, non-integer, or `mimeType` not `video/*`/`image/*` matching `kind` (or `application/octet-stream`, which is always accepted — browsers report an empty type for extensions like `.mkv`/`.ts`) · `413` `bytes > maxUploadBytes` |
 | `PUT /api/media/uploads/:id/file` | raw body (`event.node.req` streamed to `store.putStaged`) | `204` · `404` unknown · `409` not `pending` · `400` `content-length` ≠ declared `bytes` · `413` over cap. Handed out only by `LocalDiskStore`, but works for any store. |
 | `POST /api/media/uploads/:id/complete` | — | `200` the job — `pending` → `queued` (atomic conditional update; exactly one caller enqueues); **idempotent**: `queued`/`processing`/`done` return the job unchanged · `404` unknown · `409` `failed`/`expired` · `400` staged object missing or `statStaged().bytes ≠ bytes` (job → `failed`, staged deleted) |
 | `GET /api/media/uploads/:id` | — | `200 { id, filename, kind, quality, bytes, status, error, mediaId, media?: Media, createdAt, updatedAt }` (`media` embedded when `done`) · `404` |
@@ -292,7 +292,7 @@ ingest = ingestMedia, log, retryDelayMs, freeBytes })` returning
 | `complete` with size mismatch / missing object | `400`, job `failed`, staged deleted |
 | ffmpeg fails / times out | job `failed` with message; staged deleted; toast on the media page |
 | Dedup hit (same `source_sha256` + `quality`) | `ingestMedia` returns the existing row → job `done` with that `mediaId` (same as today) |
-| Server restart mid-transcode | `recover()` re-queues once (`attempts < 2`); second interruption → `failed` |
+| Server restart mid-transcode | `recover()` re-queues (`attempts < MAX_ATTEMPTS`, i.e. up to 3 boots); interruption after that → `failed` |
 | Disk full in container `/tmp` | ingest throws → `failed`; tmp dir removed in `finally` (existing behaviour) |
 
 ## 6. Security

@@ -64,7 +64,6 @@
       "failed": "Failed",
       "cancelUpload": "Cancel upload",
       "uploadFailed": "Upload failed: {name}",
-      "uploadedFiles": "{n} file uploaded | {n} files uploaded | {n} files uploaded",
       "queuedFiles": "{n} file queued for processing | {n} files queued for processing | {n} files queued for processing",
       "uploadButton": "Upload",
       "uploadButtonCount": "Upload ({n})",

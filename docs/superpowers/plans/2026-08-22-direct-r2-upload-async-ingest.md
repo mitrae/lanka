@@ -14,7 +14,7 @@
 
 - Upload cap default **2 GiB** (`MAX_UPLOAD_BYTES` → `runtimeConfig.maxUploadBytes`; entrypoint bridges to `NUXT_MAX_UPLOAD_BYTES`).
 - Presigned URL: **PUT only, 1 h expiry (`expiresIn: 3600`), key `uploads/<uuid-v4>`, `ContentType` signed, `ContentLength` NOT signed.**
-- Worker **concurrency 1**; boot recovery `attempts < 2`; pending jobs expire after **24 h**; `TRANSCODE_TIMEOUT_MS` becomes **30 min**.
+- Worker **concurrency 1**; boot recovery `attempts < MAX_ATTEMPTS` (3); pending jobs expire after **24 h**; `TRANSCODE_TIMEOUT_MS` becomes **30 min**.
 - Client polls `GET /api/media/uploads/:id` every **3 s** while any job is active; no SSE.
 - The R2 PUT must target the S3 endpoint (presigned URL), never `media.lanka.live`.
 - All new `/api/media/uploads*` routes are admin/super only (already enforced by `decideAccess`); handlers are exported as `handleXxx(db, store, …)` and tests call those directly (never the default export).
@@ -3222,7 +3222,7 @@ curl -s -o /dev/null -w 'complete anonymous: %{http_code}\n' -X POST "$B/api/med
 
 - [ ] **Step 1: Push** — `git push origin main`.
 - [ ] **Step 2: Deploy** — `ssh lanka-prod 'cd /opt/lanka && nohup setsid ./scripts/deploy.sh > /root/lanka-deploy-$(date +%Y%m%d-%H%M%S).log 2>&1 < /dev/null &'`; poll the log until `Healthy after N attempt(s)`; confirm `sqlite3 /opt/lanka/data/signage.db ".tables"` lists `media_uploads` and `docker logs lanka` has no `[ingest-queue]` errors.
-- [ ] **Step 3: Bucket rules** — `scp scripts/r2-bucket-setup.mjs lanka-prod:/tmp/ && ssh lanka-prod 'docker cp /tmp/r2-bucket-setup.mjs lanka:/tmp/r2-bucket-setup.mjs && docker exec -w /app lanka node /tmp/r2-bucket-setup.mjs --origin https://app.lanka.live'` — Expected: prints the CORS rules including `lanka-dashboard-upload` with `AllowedOrigins: ["https://app.lanka.live"]` and the lifecycle rule `lanka-expire-staged-uploads` (prefix `uploads/`, 1 day).
+- [ ] **Step 3: Bucket rules** — `scp scripts/r2-bucket-setup.mjs lanka-prod:/tmp/ && ssh lanka-prod 'docker cp /tmp/r2-bucket-setup.mjs lanka:/app/r2-bucket-setup.mjs && docker exec lanka node /app/r2-bucket-setup.mjs --origin https://app.lanka.live'` — Expected: prints the CORS rules including `lanka-dashboard-upload` with `AllowedOrigins: ["https://app.lanka.live"]` and the lifecycle rule `lanka-expire-staged-uploads` (prefix `uploads/`, 1 day).
 - [ ] **Step 4: Preflight from outside** — `curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS -H 'Origin: https://app.lanka.live' -H 'Access-Control-Request-Method: PUT' -H 'Access-Control-Request-Headers: content-type' https://<account>.r2.cloudflarestorage.com/lanka-media/uploads/x` → expect `200` with `access-control-allow-origin: https://app.lanka.live` (`-D -` to see headers).
 - [ ] **Step 5: Real test** — from the dashboard at `https://app.lanka.live/media`, upload a **>100 MB** video: progress bar → "Queued" → placeholder "Processing…" → real card; `docker logs lanka` shows no errors; the bucket's `uploads/` prefix is empty afterwards (`aws s3 ls`-equivalent via the script or the Cloudflare dashboard).
 - [ ] **Step 6: Record** the outcome in the memory note (`keep-local-dev-separate-from-prod`) deploy log.
