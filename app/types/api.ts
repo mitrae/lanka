@@ -76,6 +76,44 @@ export interface MediaDetail extends Media {
   playlists: { id: number; name: string }[]
 }
 
+export type UploadStatus = 'pending' | 'queued' | 'processing' | 'done' | 'failed' | 'expired'
+
+/** Where the browser must PUT the bytes (presigned R2 URL or same-origin /file). */
+export interface UploadTicket {
+  method: 'PUT'
+  url: string
+  headers: Record<string, string>
+  expiresAt: number
+}
+
+export interface UploadJob {
+  id: string
+  filename: string
+  kind: 'video' | 'image'
+  quality: 'low' | 'standard' | 'high'
+  mimeType: string
+  bytes: number
+  status: UploadStatus
+  error: string | null
+  mediaId: number | null
+  attempts: number
+  createdAt: string
+  updatedAt: string
+  media?: Media | null
+}
+
+export interface CreateUploadBody {
+  filename: string
+  kind: 'video' | 'image'
+  quality: 'low' | 'standard' | 'high'
+  mimeType: string
+  bytes: number
+}
+
+export interface CreatedUpload extends UploadJob {
+  upload: UploadTicket
+}
+
 export interface PlaylistItem {
   id: number
   playlistId: number
