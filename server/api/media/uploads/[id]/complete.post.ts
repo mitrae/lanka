@@ -40,7 +40,9 @@ export async function handleCompleteUpload(
       .update(schema.mediaUploads)
       .set({ status: 'failed', error: message, updatedAt: new Date() })
       .where(and(eq(schema.mediaUploads.id, id), eq(schema.mediaUploads.status, 'pending')))
-    await store.deleteStaged(id)
+    // Tolerant: the row is already marked failed; don't turn a storage outage
+    // into a 500 for a client that just wants to see the failure.
+    await store.deleteStaged(id).catch(() => {})
     throw createError({ statusCode: 400, message })
   }
 

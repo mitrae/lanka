@@ -4,7 +4,7 @@
 // tests / any deployment without R2). Streams the raw request body into the
 // store's staging area. With R2 the client PUTs to the presigned URL instead
 // and this route is simply never offered.
-import { Transform, type Readable } from 'node:stream'
+import { Transform, pipeline, type Readable } from 'node:stream'
 import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
@@ -40,30 +40,39 @@ export async function handleReceiveUploadFile(
   }
 
   // Belt and braces: content-length can lie and a client can disconnect early,
-  // so require exactly the declared byte count end-to-end.
+  // so require exactly the declared byte count end-to-end. Both errors are
+  // createError()s (not plain Error) so a size mismatch reaches the client as
+  // 400, not an unhandled-shape 500.
   let seen = 0
   const declared = row.bytes
   const exact = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       seen += chunk.length
-      if (seen > declared) return cb(new Error(`Body exceeds declared ${declared} bytes`))
+      if (seen > declared) {
+        return cb(createError({ statusCode: 400, message: `Body exceeds declared ${declared} bytes` }))
+      }
       cb(null, chunk)
     },
     flush(cb) {
-      if (seen !== declared) return cb(new Error(`Body has ${seen} bytes, declared ${declared}`))
+      if (seen !== declared) {
+        return cb(createError({ statusCode: 400, message: `Body has ${seen} bytes, declared ${declared}` }))
+      }
       cb()
     }
   })
-  // LocalDiskStore.putStaged() awaits an mkdir() before it ever calls
-  // pipeline(exact, ...) — during that gap `body`'s already-flowing data can
-  // make `exact` emit 'error' with no listener attached yet, which is an
-  // unhandled-exception crash in Node regardless of the try/catch below (only
-  // an attached listener suppresses it; same gotcha documented in
-  // media-ingest-queue.ts). Attach a no-op listener up front so the real
-  // rejection below is the only thing that surfaces.
-  exact.on('error', () => {})
+  // `body.pipe(exact)` would NOT forward a source-side error/abort (a real
+  // client disconnecting mid-upload) into `exact` — `.pipe()` only forwards
+  // data, so `exact` would sit open forever waiting for more input that never
+  // arrives, hanging store.putStaged() indefinitely. The callback-style
+  // pipeline() below reads from `body` and writes into `exact`, destroying
+  // `exact` (and rejecting) the moment `body` errors or aborts. It also
+  // attaches its error handling on `exact` synchronously, before
+  // LocalDiskStore.putStaged()'s internal `await mkdir(...)` gap, so a
+  // same-tick size-mismatch error is never emitted with zero listeners
+  // attached (no separate no-op listener needed).
+  pipeline(body, exact, () => {})
   try {
-    await store.putStaged(id, body.pipe(exact), row.mimeType)
+    await store.putStaged(id, exact, row.mimeType)
   } catch (err) {
     await store.deleteStaged(id).catch(() => {})
     throw err

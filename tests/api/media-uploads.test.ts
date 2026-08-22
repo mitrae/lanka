@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Readable } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import { eq } from 'drizzle-orm'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { LocalDiskStore } from '~/server/services/media-store'
@@ -168,18 +168,32 @@ describe('upload job API', () => {
       await expect(handleReceiveUploadFile(db, store, A, body(), null, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 400 })
       await expect(handleReceiveUploadFile(db, store, A, body(), 4, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 400 })
       await expect(handleReceiveUploadFile(db, store, A, body(), 3, { maxBytes: 2 })).rejects.toMatchObject({ statusCode: 413 })
-      // body longer than declared → stream error, nothing staged
+      // body longer than declared → stream error (400), nothing staged
       await expect(
         handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('abcd')]), 3, { maxBytes: MAX })
-      ).rejects.toThrow(/declared/)
+      ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/declared/) })
       expect(await store.statStaged(A)).toBeNull()
-      // body shorter than declared (client disconnected) → error, nothing staged
+      // body shorter than declared (client disconnected) → error (400), nothing staged
       await expect(
         handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('ab')]), 3, { maxBytes: MAX })
-      ).rejects.toThrow(/declared/)
+      ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/declared/) })
       expect(await store.statStaged(A)).toBeNull()
       await db.update(schema.mediaUploads).set({ status: 'queued' }).where(eq(schema.mediaUploads.id, A))
       await expect(handleReceiveUploadFile(db, store, A, body(), 3, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 409 })
+    })
+
+    it('handleReceiveUploadFile rejects (does not hang) when the body aborts mid-stream', async () => {
+      await seedPending(3)
+      const body = new PassThrough()
+      body.write(Buffer.from('a'))
+      setTimeout(() => body.destroy(new Error('client aborted')), 5)
+      await expect(
+        Promise.race([
+          handleReceiveUploadFile(db, store, A, body, 3, { maxBytes: MAX }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('TIMED OUT — handler hung')), 2000))
+        ])
+      ).rejects.toThrow(/aborted/)
+      expect(await store.statStaged(A)).toBeNull()
     })
 
     it('handleCompleteUpload verifies the staged size, queues, enqueues once, and is idempotent', async () => {
