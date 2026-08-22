@@ -3,7 +3,7 @@
 import { useMediaStore } from '~/app/stores/media'
 import { kindOf } from './MediaUploadDialog.logic'
 
-const props = defineProps<{ modelValue: boolean }>()
+defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
   (e: 'uploaded'): void
@@ -112,6 +112,11 @@ function cancel() {
 // so an aborted XHR never outlives a hidden dialog.
 function onOpenChange(open: boolean) {
   if (open) return emit('update:modelValue', true)
+  // Drop stale rows (e.g. previously failed items) before closing so they
+  // don't reappear pre-populated the next time the dialog opens. Only when
+  // not uploading — cancel() itself decides whether this close actually
+  // goes through (an in-flight transfer aborts instead).
+  if (!uploading.value) items.value = []
   cancel()
 }
 

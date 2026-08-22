@@ -96,10 +96,17 @@ export const useMediaStore = defineStore('media', {
 
     /** Seed from the server's active list (newest first — survives reloads) and start polling. */
     async pollUploads() {
-      const active = await this._api.listActiveUploads()
-      // Apply oldest→newest so each unshift-of-a-new-id ends with the newest job at the front,
-      // matching the server's newest-first order; already-tracked ids are replaced in place.
-      for (const j of [...active].reverse()) this.applyUpload(j)
+      try {
+        const active = await this._api.listActiveUploads()
+        // Apply oldest→newest so each unshift-of-a-new-id ends with the newest job at the front,
+        // matching the server's newest-first order; already-tracked ids are replaced in place.
+        for (const j of [...active].reverse()) this.applyUpload(j)
+      } catch {
+        // A transient failure here (e.g. a 500 right after boot) must not
+        // disable placeholders for the rest of the session — fall through
+        // to arm polling anyway; the next tick() round will pick up
+        // whatever the server reports once it recovers.
+      }
       this._polling = true
       this.schedulePoll()
     },

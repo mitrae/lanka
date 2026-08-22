@@ -129,6 +129,24 @@ describe('useMediaStore uploads', () => {
     store.stopPolling()
   })
 
+  it('pollUploads(): a transient listActiveUploads failure does not throw and still arms polling', async () => {
+    const store = useMediaStore()
+    const api = {
+      listActiveUploads: vi.fn().mockRejectedValue(new Error('HTTP 500')),
+      getUpload: vi.fn(),
+      listMedia: vi.fn().mockResolvedValue([])
+    }
+    store.$patch({ _api: api as any })
+    await expect(store.pollUploads()).resolves.toBeUndefined()
+    expect(store.uploads).toEqual([])
+    expect(store._polling).toBe(true)
+    // Nothing is tracked (the seed failed), so schedulePoll() is a no-op —
+    // no timer got armed, and getUpload is never called.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getUpload).not.toHaveBeenCalled()
+    store.stopPolling()
+  })
+
   it('stopPolling() wins over an in-flight tick() — no re-arm once it resolves', async () => {
     const store = useMediaStore()
     let resolveGetUpload!: (value: UploadJob) => void
