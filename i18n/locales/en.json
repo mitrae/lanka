@@ -257,7 +257,9 @@
     "notUsed": "Not used in any playlist",
     "orgUpdated": "Organization updated",
     "orgUpdateFailed": "Failed to update organization",
-    "assignedToOrg": "Assigned to organization"
+    "assignedToOrg": "Assigned to organization",
+    "uploadStatus": { "pending": "Uploading", "queued": "Queued", "processing": "Processing…" },
+    "processingFailed": "Processing failed: {name}"
   },
   "users": {
     "pageTitle": "Users",
