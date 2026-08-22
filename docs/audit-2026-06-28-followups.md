@@ -82,6 +82,10 @@ nginx deny-list hardening, dashboard-SSE role gating + auth-guard-on-error.
 - **[Low] nginx access log records `?secret=` for `/ws`** — `ops/nginx/lanka.conf` tailnet `/ws` block. The default access-log format logs `$request`, so each device's secret lands in the box's access log at rest (tailnet-only, disk-local). **Fix:** a `/ws`-scoped `log_format` that strips the query (or `access_log off` for `/ws`).
 - **[Low] Web command-channel has no in-app recovery if localStorage is cleared after adoption** — `app/composables/player/usePlayerBoot.ts`. The device's WS then rejects (active + no secret); playback is unaffected (manifest/SSE/telemetry independent) but the command channel is dead until the device row is deleted + re-registered. **Fix/doc:** surface a telemetry warning on repeated active-rejections so the dashboard flags it; document the admin recovery path.
 
+## Media ingest (found 2026-08-22)
+
+- **Image uploads are stored as-is with the client-declared MIME type** (pre-existing; unchanged by the 2026-08-22 direct-to-R2 upload work). An admin can publish SVG (active content) or arbitrary bytes under `media.lanka.live`. Follow-up: decode/re-encode raster images with sharp at ingest, reject SVG and anything sharp can't parse, and derive the stored `mime_type` from the decoded format — also bounds decompression bombs (a bomb that OOM-kills the worker is retried at most `MAX_ATTEMPTS` boots, then `failed`).
+
 ## Manual / out-of-band (not code)
 
 - Push `main` to origin.
