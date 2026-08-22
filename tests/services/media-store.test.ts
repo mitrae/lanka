@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
-import { LocalDiskStore } from '~/server/services/media-store'
+import { LocalDiskStore, STAGED_UPLOAD_TTL_MS } from '~/server/services/media-store'
 
 describe('LocalDiskStore', () => {
   let dir: string
@@ -85,5 +85,43 @@ describe('LocalDiskStore', () => {
     const thumbsDir = join(dir, '.thumbs')
     const entries = await fs.readdir(thumbsDir)
     expect(entries.some((e) => e.endsWith('.tmp'))).toBe(false)
+  })
+})
+
+describe('LocalDiskStore staging', () => {
+  let dir: string
+  let store: LocalDiskStore
+  const id = '33333333-3333-4333-8333-333333333333'
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'lanka-test-'))
+    store = new LocalDiskStore(dir)
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  it('createStagedUpload returns a same-origin PUT ticket bound to the content type', async () => {
+    const before = Date.now()
+    const t = await store.createStagedUpload(id, { contentType: 'video/mp4', bytes: 10 })
+    expect(t.method).toBe('PUT')
+    expect(t.url).toBe(`/api/media/uploads/${id}/file`)
+    expect(t.headers).toEqual({ 'content-type': 'video/mp4' })
+    expect(t.expiresAt).toBeGreaterThanOrEqual(before + STAGED_UPLOAD_TTL_MS - 5)
+  })
+
+  it('putStaged / statStaged / openStaged round-trip under .uploads/', async () => {
+    await store.putStaged(id, Readable.from([Buffer.from('staged!')]), 'video/mp4')
+    expect(existsSync(join(dir, '.uploads', id))).toBe(true)
+    expect(await store.statStaged(id)).toEqual({ bytes: 7 })
+    const chunks: Buffer[] = []
+    for await (const c of await store.openStaged(id)) chunks.push(c as Buffer)
+    expect(Buffer.concat(chunks).toString()).toBe('staged!')
+  })
+
+  it('statStaged is null when absent; deleteStaged is idempotent', async () => {
+    expect(await store.statStaged(id)).toBeNull()
+    await expect(store.deleteStaged(id)).resolves.toBeUndefined()
+    await store.putStaged(id, Readable.from([Buffer.from('x')]), 'image/png')
+    await store.deleteStaged(id)
+    expect(await store.statStaged(id)).toBeNull()
   })
 })
