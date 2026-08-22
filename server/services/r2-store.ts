@@ -12,7 +12,7 @@
 // The AWS SDK is imported lazily (dynamic import) so dev/test runs that use
 // LocalDiskStore never load it.
 import type { Readable } from 'node:stream'
-import type { MediaStore } from './media-store'
+import { STAGED_UPLOAD_TTL_MS, type MediaStore, type StagedUploadTicket } from './media-store'
 
 export interface R2Config {
   endpoint: string
@@ -171,5 +171,70 @@ export class R2Store implements MediaStore {
     await s3.send(
       new DeleteObjectCommand({ Bucket: this.cfg.bucket, Key: key })
     )
+  }
+
+  private stagedKey(id: string): string {
+    return `uploads/${id}`
+  }
+
+  // --- staged uploads ---
+
+  async createStagedUpload(
+    id: string,
+    opts: { contentType: string; bytes: number }
+  ): Promise<StagedUploadTicket> {
+    const { PutObjectCommand } = await this.mod()
+    // Lazy like the rest of the SDK: only loaded when R2 is configured.
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner')
+    // ContentType is part of the signature so the client must send exactly it;
+    // ContentLength is deliberately NOT signed (browsers set it themselves) —
+    // the size is verified server-side on /complete via statStaged().
+    const url: string = await getSignedUrl(
+      await this.s3(),
+      new PutObjectCommand({
+        Bucket: this.cfg.bucket,
+        Key: this.stagedKey(id),
+        ContentType: opts.contentType
+      }),
+      { expiresIn: STAGED_UPLOAD_TTL_MS / 1000 }
+    )
+    return {
+      method: 'PUT',
+      url,
+      headers: { 'content-type': opts.contentType },
+      expiresAt: Date.now() + STAGED_UPLOAD_TTL_MS
+    }
+  }
+
+  async putStaged(id: string, stream: Readable, contentType: string): Promise<void> {
+    await this.upload(this.stagedKey(id), stream, contentType)
+  }
+
+  async statStaged(id: string): Promise<{ bytes: number } | null> {
+    const { HeadObjectCommand } = await this.mod()
+    try {
+      const s3 = await this.s3()
+      const res = await s3.send(
+        new HeadObjectCommand({ Bucket: this.cfg.bucket, Key: this.stagedKey(id) })
+      )
+      return { bytes: res.ContentLength ?? 0 }
+    } catch (err: any) {
+      if (
+        err?.$metadata?.httpStatusCode === 404 ||
+        err?.name === 'NotFound' ||
+        err?.name === 'NoSuchKey'
+      ) {
+        return null
+      }
+      throw err
+    }
+  }
+
+  async openStaged(id: string): Promise<Readable> {
+    return this.get(this.stagedKey(id))
+  }
+
+  async deleteStaged(id: string): Promise<void> {
+    await this.del(this.stagedKey(id))
   }
 }
