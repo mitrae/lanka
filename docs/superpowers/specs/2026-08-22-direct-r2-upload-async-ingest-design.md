@@ -1,6 +1,6 @@
 # Direct-to-R2 media upload + async ingest — design
 
-**Date:** 2026-08-22 · **Status:** approved (design), spec for implementation plan
+**Date:** 2026-08-22 · **Status:** approved (design); revised after Codex review (see `docs/superpowers/reviews/2026-08-22-codex-review-direct-r2-upload.md`)
 
 ## 1. Problem
 
@@ -40,6 +40,8 @@ there directly and take the transcode out of the request.
 - Multipart/resumable uploads (>5 GiB or flaky links) — single PUT is enough.
 - Cancelling a job that is already transcoding.
 - Per-user quotas or rate limiting on uploads.
+- Cross-process job leases/heartbeats (single Nitro instance; the atomic claim
+  is enough).
 - Pushing status over the dashboard SSE (polling is the baseline; SSE may be
   added later as an accelerator).
 
@@ -136,17 +138,21 @@ already 403s `client` for every non-portal `/api/*` route)
 |---|---|---|
 | `POST /api/media/uploads` | `{ filename, kind, quality?, mimeType, bytes }` | `201 { id, status:'pending', upload:{method,url,headers,expiresAt} }` · `400` bad kind/quality, `bytes ≤ 0`, non-integer, or `mimeType` not `video/*`/`image/*` matching `kind` · `413` `bytes > maxUploadBytes` |
 | `PUT /api/media/uploads/:id/file` | raw body (`event.node.req` streamed to `store.putStaged`) | `204` · `404` unknown · `409` not `pending` · `400` `content-length` ≠ declared `bytes` · `413` over cap. Handed out only by `LocalDiskStore`, but works for any store. |
-| `POST /api/media/uploads/:id/complete` | — | `200 { id, status:'queued' }` · `404` unknown · `409` not `pending` · `400` staged object missing or `statStaged().bytes ≠ bytes` (job → `failed`, staged deleted) |
+| `POST /api/media/uploads/:id/complete` | — | `200` the job — `pending` → `queued` (atomic conditional update; exactly one caller enqueues); **idempotent**: `queued`/`processing`/`done` return the job unchanged · `404` unknown · `409` `failed`/`expired` · `400` staged object missing or `statStaged().bytes ≠ bytes` (job → `failed`, staged deleted) |
 | `GET /api/media/uploads/:id` | — | `200 { id, filename, kind, quality, bytes, status, error, mediaId, media?: Media, createdAt, updatedAt }` (`media` embedded when `done`) · `404` |
 | `GET /api/media/uploads?active=1` | — | `200 UploadJob[]` with status in `pending|queued|processing`, newest first. Without `active=1`: last 50 jobs. |
-| `DELETE /api/media/uploads/:id` | — | `204` (deletes staged object + row) · `404` · `409` unless `pending` |
+| `DELETE /api/media/uploads/:id` | — | `204` (conditional delete of the `pending` row, then the staged object) · `404` (also when a concurrent request won) · `409` unless `pending` |
 
 Handlers export `handleXxx(db, store, queue, input)` functions (repo
 convention) so tests call them directly; the default export wires Nitro
 helpers. `quality` defaults to `standard`; `filename` is trimmed and capped at
-255 chars. `maxUploadBytes` comes from `runtimeConfig.maxUploadBytes`
-(`MAX_UPLOAD_BYTES`, default `2 * 1024 ** 3`; `entrypoint.sh` bridges it to
-`NUXT_MAX_UPLOAD_BYTES` like the other keys).
+255 code points. The ticket is presigned **before** the row is inserted (a
+presign failure leaves no orphan). `maxUploadBytes` comes from
+`runtimeConfig.maxUploadBytes` (`MAX_UPLOAD_BYTES`, default `2 * 1024 ** 3`,
+clamped to 5 GiB — R2's single-PUT limit; `entrypoint.sh` bridges it to
+`NUXT_MAX_UPLOAD_BYTES` like the other keys). The local `PUT /file` transport
+requires the body to be exactly the declared size and removes any partial
+staged file on failure.
 
 ### 4.4 Ingest service move
 
@@ -160,29 +166,53 @@ update their import path only.
 ### 4.5 Ingest queue + plugin
 
 **`server/services/media-ingest-queue.ts`** — `createIngestQueue({ db, store,
-ingest = ingestMedia, log })` returning `{ enqueue(id), drain(): Promise<void>,
-recover(): Promise<void>, sweep(now): Promise<void>, size }`.
+ingest = ingestMedia, log, retryDelayMs, freeBytes })` returning
+`{ enqueue(id), idle(): Promise<void>, recover(), reconcile(), sweep(now) }`.
 
-- **`enqueue(id)`** pushes onto an in-memory FIFO and kicks the loop; the loop
-  runs **one job at a time** (2-vCPU box; ffmpeg already uses all cores).
-- **Processing a job:** `processing` (+`attempts`) → `ingest(db, store, {
-  stream: await store.openStaged(id), filename, kind, mimeType, quality })` →
-  `done` + `media_id` → `deleteStaged(id)`. On any throw: `failed` with
-  `error = err.message` (the `createError` 422 message "Could not process this
-  video" surfaces as-is) → `deleteStaged(id)`. Deletion failures are logged,
-  never fatal (the sweeper won't see these rows again, so log loudly).
-- **`recover()`** (boot): rows in `processing` → `queued` if `attempts < 2`,
-  else `failed` ("interrupted"); then every `queued` row is enqueued (oldest
-  first). Rows' staged objects are still in place because deletion happens only
-  after a terminal state.
-- **`sweep(now)`** (boot + hourly): `pending` rows older than 24 h → delete
-  staged object → `expired`.
+- **`enqueue(id)`** pushes onto an in-memory FIFO (deduplicated) and kicks the
+  loop; the loop runs **one job at a time** (2-vCPU box; ffmpeg already uses
+  all cores). `idle()` resolves when nothing is queued, running, or waiting for
+  a retry (used by tests).
+- **Claim:** an atomic conditional update `queued → processing`
+  (`attempts + 1`) — a row that is not `queued` any more (cancelled, expired,
+  already claimed by another process) is skipped. Nothing is ever processed
+  twice concurrently.
+- **Preflight:** free space under `tmpdir()` must be ≥ `2 × bytes + 256 MiB`
+  (input copy + transcoded output), else the attempt fails as *retryable*.
+- **Processing:** `ingest(db, store, { stream: await store.openStaged(id),
+  filename, kind, mimeType, quality })` → `done` + `media_id` →
+  `deleteStaged(id)`. The staged object is deleted only **after** the terminal
+  status is written.
+- **Failure classes:** an error carrying an h3 `statusCode` 4xx (`ingestMedia`'s
+  400 "Empty upload" / 422 "Could not process this video") is *permanent* →
+  `failed` + staged deleted. Anything else (R2 GET, disk, DB, preflight) is
+  *retryable* → staged kept, row back to `queued` with `error` set, re-enqueued
+  after `30 s × attempts`; after `MAX_ATTEMPTS = 3` claims → `failed` + staged
+  deleted. Because `attempts` is incremented at claim, a job that crashes the
+  process (e.g. an image decompression bomb) is retried at most 3 boots.
+- **`recover()` — boot only:** `processing` rows (interrupted attempts) →
+  `queued` if `attempts < 3`, else `failed` ("Interrupted during processing") +
+  staged deleted; then `reconcile()`. It must never run periodically: it would
+  re-queue a legitimately running 30-minute transcode. Re-running an attempt
+  that crashed after `ingestMedia` committed is safe — ingest is
+  content-addressed (`(source_sha256, quality)` / `sha256` dedup) and
+  `store.put` is idempotent per key.
+- **`reconcile()` — periodic:** enqueue every `queued` row (repairs an
+  in-memory enqueue lost to a crash right after `/complete`). Harmless to
+  repeat thanks to the atomic claim and the FIFO dedupe.
+- **`sweep(now)`:** `pending` rows older than 24 h → delete staged object →
+  `expired`.
+- **`cleanupStaleTmp()`:** remove `lanka-ingest-*` scratch dirs in `tmpdir()`
+  older than 2 h (a SIGKILL mid-ffmpeg skips `ingestMedia`'s `finally`; the
+  container `/tmp` survives crash restarts).
 - **`server/plugins/ingest-worker.ts`** constructs the singleton
   (`useIngestQueue()` in `server/services/ingest-queue-singleton.ts`, same
-  shape as `media-store-singleton.ts` with a `_setIngestQueue` test hook), runs
-  `recover()` + `sweep()`, and `setInterval(sweep, 1 h).unref()`.
+  shape as `media-store-singleton.ts` with a `_setIngestQueue` test hook); at
+  boot runs `cleanupStaleTmp()` + `sweep()` + `recover()`, then every 5 min
+  `cleanupStaleTmp()` + `sweep()` + `reconcile()` (`unref`'d timer).
 - **Single instance assumption:** one Nitro process owns the queue. Documented
-  in CLAUDE.md; no DB-level locking.
+  in CLAUDE.md; no lease/heartbeat — the atomic claim already prevents
+  double-processing if a second process appears during a deploy.
 - `TRANSCODE_TIMEOUT_MS` in `transcode.ts` goes **10 → 30 min**: nothing holds
   an HTTP connection any more, and `high`/1080p on long clips can exceed 10 min
   on this box.
@@ -204,31 +234,40 @@ recover(): Promise<void>, sweep(now): Promise<void>, size }`.
   `startUpload(file, quality, onProgress, signal)` which runs create → PUT →
   complete and returns the job; `pollUploads()` seeds `uploads` from
   `?active=1` once, then — on a single 3 s timer that runs only while `uploads`
-  is non-empty — calls `GET /:id` for every tracked job (per-job reads are
-  needed to observe the terminal `done`/`failed` state, which `?active=1` no
-  longer lists). `done` → `refresh()` the media list and drop the job; `failed`
-  → move it to `failedUploads` for the page to toast once, then drop.
+  is non-empty — calls `GET /:id` for every tracked job **in parallel**
+  (`Promise.allSettled`; per-job reads are needed to observe the terminal
+  `done`/`failed` state, which `?active=1` no longer lists). `done` →
+  `refresh()` the media list and drop the job; `failed`/`expired` → move it to
+  `failedUploads` (deduplicated by id) for the page to toast once, then drop.
   `upload(form)` (legacy) is removed from the store.
 - **`MediaUploadDialog.vue`** — files upload **sequentially**; each list row
   gets a `UProgress` (0–100 %) and state text (uploading / queued / failed).
   "Upload" becomes disabled while in flight; "Cancel" aborts the current XHR
-  and `DELETE`s its pending job. When the last file is `queued` the dialog
-  closes and emits `uploaded`. Errors per file are toasted (as today).
+  and `DELETE`s its pending job. While a transfer runs the modal is
+  non-dismissible (`:dismissible="!uploading"`) and every close attempt is
+  routed through the same cancel path, so a hidden dialog can never leave an
+  XHR or a pending job behind. When the last file is `queued` the dialog
+  closes and emits `uploaded`. Errors per file are toasted (as today). Pure
+  logic (`kindOf` with the extension fallback for files whose `type` is empty)
+  lives in `MediaUploadDialog.logic.ts` and is unit-tested.
 - **`app/pages/media.vue`** — renders `store.uploads` as **placeholder cards**
   (`MediaProcessingCard.vue`: icon, filename, size, status label, spinner)
   before the real `MediaCard`s; calls `store.pollUploads()` on mount. Toasts
   `failedUploads` as they appear.
 - **i18n** — add to `en.json` and `uk.json`: uploading / queued / processing /
-  failed labels, cancel, "Max {n} GB per file" (replace the "Max 500 MB" copy),
-  processing-card strings.
+  failed labels, cancel, processing-card strings. The "Max 500 MB" copy is
+  replaced by a size-agnostic sentence; the configured limit is not exposed to
+  the client — the server's `413` message carries the number.
 
 ### 4.7 Config & ops
 
 - `runtimeConfig.maxUploadBytes` (+ `.env.example`, `entrypoint.sh` bridge).
 - `package.json`: `@aws-sdk/s3-request-presigner` (runtime dep).
-- **R2 CORS rule (one-off, prod):** `scripts/r2-cors.ts` (run with
-  `pnpm tsx scripts/r2-cors.ts`, reads `R2_*` + `APP_BASE_URL` from env) sends
-  `PutBucketCors` with:
+- **R2 bucket rules (one-off, prod):** `scripts/r2-bucket-setup.mjs` (plain
+  Node so it also runs inside the prod container; reads `R2_*`/`NUXT_R2_*`,
+  `--origin`) **merges** the CORS rule below into the bucket's existing rules
+  and installs a lifecycle rule expiring `uploads/` objects after 1 day (the
+  storage-level backstop for the app's sweeper). CORS rule:
   ```json
   [{ "AllowedOrigins": ["https://app.lanka.live"],
      "AllowedMethods": ["PUT"],
@@ -263,8 +302,18 @@ recover(): Promise<void>, sweep(now): Promise<void>, size }`.
   `content-type`, 1 h expiry. It is returned only to the authenticated creator
   and never logged.
 - Staged objects live in the public bucket under `uploads/<uuid-v4>`
-  (122 bits of entropy), are deleted on any terminal state, and expire after
-  24 h. A private second bucket is deliberately not introduced.
+  (122 bits of entropy), are deleted on any terminal state, expire after 24 h
+  (app sweeper) and after 1 day (bucket lifecycle rule). **Uploaded source
+  material is treated as non-confidential** — signage content is public by
+  nature and is served from a public CDN anyway — so a leaked staged URL being
+  anonymously readable until deletion is an accepted risk. A private second
+  bucket is deliberately not introduced.
+- The presigned URL stays valid for 1 h after `/complete`; the only holder is
+  the admin who created it, so an overwrite-after-verification is not a
+  privilege boundary here (accepted).
+- Image bytes are stored as-is with the client-declared MIME type — a
+  pre-existing property of `ingestMedia`, unchanged by this work and recorded
+  as a follow-up in `docs/audit-2026-06-28-followups.md`.
 - `mimeType`/`kind` from the client are hints only: video goes through
   ffprobe/ffmpeg regardless; images keep today's behaviour.
 - Size is enforced twice: `bytes ≤ maxUploadBytes` at create, and the actual
@@ -274,29 +323,42 @@ recover(): Promise<void>, sweep(now): Promise<void>, size }`.
 
 ## 7. Testing
 
-- **`tests/services/media-ingest-queue.test.ts`** — FIFO + concurrency 1;
-  done path (row updated, `media_id` set, staged deleted); failed path (error
-  stored, staged deleted); `recover()` re-queues `processing`/`queued` and
-  fails after 2 attempts; `sweep()` expires only `pending` > 24 h. Uses
-  `createTestDb()` + `LocalDiskStore` + an injected fake `ingest`.
-- **`tests/api/media-uploads.test.ts`** — the five handlers: validation
-  (kind/quality/mime/bytes/cap), ticket shape from `LocalDiskStore`, local
-  `PUT /file` size checks, `complete` transitions (`pending→queued`, `409` on
-  re-complete, `400` mismatch → `failed`), `GET` embeds `media` when done,
-  `?active=1` filter, `DELETE` only when `pending`.
+- **`tests/services/media-ingest-queue.test.ts`** — FIFO + concurrency 1
+  (explicit start signal, no sleeps); done path; permanent 4xx failure
+  (staged deleted); retryable failure (staged kept, retried, then done);
+  exhaustion after `MAX_ATTEMPTS`; preflight disk check; `reconcile()` leaves
+  `processing` alone; `recover()` re-queues/fails interrupted rows; `sweep()`;
+  `cleanupStaleTmp()`; `isPermanentIngestError`. Uses `createTestDb()` +
+  `LocalDiskStore` + an injected fake `ingest`.
+- **`tests/api/media-uploads.test.ts`** — the six handlers: validation
+  (kind/quality/mime/bytes/cap, Unicode filename cap), presign failure leaves
+  no row, ticket shape from `LocalDiskStore`, local `PUT /file` exact-size
+  checks (short and long bodies), `complete` transitions (`pending→queued`,
+  idempotent repeat, `409` on failed/expired, `400` mismatch → `failed`),
+  concurrent complete/complete (one enqueue) and complete/cancel (one winner),
+  `GET` embeds `media` when done, `?active=1` filter, `DELETE` only when
+  `pending`, concurrent cancels.
+- **`tests/services/auth-guard.test.ts`** — the new routes are not public,
+  401 anonymous, 403 `client`, ok `admin` (pins the policy against refactors).
 - **`tests/services/r2-store.test.ts`** — extend: `createStagedUpload` calls the
   presigner with `Bucket/Key=uploads/<id>/ContentType` and `expiresIn: 3600`
   (mock `@aws-sdk/s3-request-presigner`); `statStaged` maps 404 → `null`.
 - **`tests/services/media-store.test.ts`** — extend: local staging round-trip.
 - **`tests/composables/useUploader.test.ts`** — fake XHR: progress events,
-  2xx resolve, 4xx reject, abort.
+  2xx resolve, 4xx reject, abort, abort-listener detached after completion.
+- **`tests/components/MediaUploadDialog.test.ts`** — `kindOf` extension
+  fallback (the repo has no Vue component test harness; Escape/backdrop
+  behaviour is a manual check).
 - **`tests/stores/media.test.ts`** (new, following `tests/stores/*.test.ts`) —
   `startUpload` sequence and `pollUploads` transitions with a mocked `_api`.
 - Existing `media-upload*.test.ts` keep passing after the import move.
 - **Manual gate:** `pnpm build` + `node .output/server/index.mjs` locally
-  (local disk path), then on prod: run `scripts/r2-cors.ts`, upload a
-  >100 MB video from `app.lanka.live`, watch it go queued → processing → done,
-  confirm `uploads/<id>` is gone from the bucket and the media plays.
+  (local disk path) incl. curl checks that `/api/media/uploads` resolves to the
+  static route (not `/api/media/:id`) and is 401/403 for anonymous/client, and
+  that Escape/backdrop cannot dismiss the dialog mid-upload; then on prod: run
+  `scripts/r2-bucket-setup.mjs`, upload a >100 MB video from `app.lanka.live`,
+  watch it go queued → processing → done, confirm `uploads/<id>` is gone from
+  the bucket and the media plays.
 
 ## 8. Rollout
 
