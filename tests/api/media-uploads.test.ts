@@ -10,6 +10,8 @@ import { handleCreateUpload } from '~/server/api/media/uploads/index.post'
 import { handleListUploads } from '~/server/api/media/uploads/index.get'
 import { handleGetUpload } from '~/server/api/media/uploads/[id].get'
 import { handleCancelUpload } from '~/server/api/media/uploads/[id].delete'
+import { handleCompleteUpload } from '~/server/api/media/uploads/[id]/complete.post'
+import { handleReceiveUploadFile } from '~/server/api/media/uploads/[id]/file.put'
 import * as schema from '~/server/db/schema'
 
 const MAX = 2 * 1024 ** 3
@@ -141,6 +143,112 @@ describe('upload job API', () => {
       expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
       const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
       expect(failed.reason.statusCode).toBe(404)
+    })
+  })
+
+  describe('complete + file', () => {
+    const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+    async function seedPending(bytes = 3, status: schema.UploadStatus = 'pending') {
+      await db.insert(schema.mediaUploads).values({
+        id: A, filename: 'f.png', kind: 'image', quality: 'standard', mimeType: 'image/png', bytes, status
+      })
+    }
+    const jobRow = async () =>
+      (await db.select().from(schema.mediaUploads).where(eq(schema.mediaUploads.id, A)).get())!
+
+    it('handleReceiveUploadFile stages the body when content-length matches', async () => {
+      await seedPending(3)
+      await handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('abc')]), 3, { maxBytes: MAX })
+      expect(await store.statStaged(A)).toEqual({ bytes: 3 })
+    })
+
+    it('handleReceiveUploadFile rejects bad content-length / state / size', async () => {
+      await seedPending(3)
+      const body = () => Readable.from([Buffer.from('abc')])
+      await expect(handleReceiveUploadFile(db, store, A, body(), null, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 400 })
+      await expect(handleReceiveUploadFile(db, store, A, body(), 4, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 400 })
+      await expect(handleReceiveUploadFile(db, store, A, body(), 3, { maxBytes: 2 })).rejects.toMatchObject({ statusCode: 413 })
+      // body longer than declared → stream error, nothing staged
+      await expect(
+        handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('abcd')]), 3, { maxBytes: MAX })
+      ).rejects.toThrow(/declared/)
+      expect(await store.statStaged(A)).toBeNull()
+      // body shorter than declared (client disconnected) → error, nothing staged
+      await expect(
+        handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('ab')]), 3, { maxBytes: MAX })
+      ).rejects.toThrow(/declared/)
+      expect(await store.statStaged(A)).toBeNull()
+      await db.update(schema.mediaUploads).set({ status: 'queued' }).where(eq(schema.mediaUploads.id, A))
+      await expect(handleReceiveUploadFile(db, store, A, body(), 3, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 409 })
+    })
+
+    it('handleCompleteUpload verifies the staged size, queues, enqueues once, and is idempotent', async () => {
+      await seedPending(3)
+      await store.putStaged(A, Readable.from([Buffer.from('abc')]), 'image/png')
+      const enqueue = vi.fn()
+      const job = await handleCompleteUpload(db, store, { enqueue }, A)
+      expect(job.status).toBe('queued')
+      expect(enqueue).toHaveBeenCalledWith(A)
+      // repeat (lost response, client retry): same job back, no second enqueue
+      const again = await handleCompleteUpload(db, store, { enqueue }, A)
+      expect(again.status).toBe('queued')
+      expect(enqueue).toHaveBeenCalledTimes(1)
+      await db.update(schema.mediaUploads).set({ status: 'failed' }).where(eq(schema.mediaUploads.id, A))
+      await expect(handleCompleteUpload(db, store, { enqueue }, A)).rejects.toMatchObject({ statusCode: 409 })
+    })
+
+    it('two concurrent completes enqueue exactly once', async () => {
+      await seedPending(3)
+      await store.putStaged(A, Readable.from([Buffer.from('abc')]), 'image/png')
+      const enqueue = vi.fn()
+      const results = await Promise.allSettled([
+        handleCompleteUpload(db, store, { enqueue }, A),
+        handleCompleteUpload(db, store, { enqueue }, A)
+      ])
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true)
+      expect(enqueue).toHaveBeenCalledTimes(1)
+      expect((await jobRow()).status).toBe('queued')
+    })
+
+    it('complete vs cancel race: one wins, the other fails cleanly, no enqueue of a deleted row', async () => {
+      await seedPending(3)
+      await store.putStaged(A, Readable.from([Buffer.from('abc')]), 'image/png')
+      const enqueue = vi.fn()
+      const [c, d] = await Promise.allSettled([
+        handleCompleteUpload(db, store, { enqueue }, A),
+        handleCancelUpload(db, store, A)
+      ])
+      const row = await db.select().from(schema.mediaUploads).where(eq(schema.mediaUploads.id, A)).get()
+      if (c.status === 'fulfilled') {
+        expect(d.status).toBe('rejected')
+        expect(row?.status).toBe('queued')
+        expect(enqueue).toHaveBeenCalledTimes(1)
+      } else {
+        expect(d.status).toBe('fulfilled')
+        expect(row).toBeUndefined()
+        expect(enqueue).not.toHaveBeenCalled()
+        expect((c as PromiseRejectedResult).reason.statusCode).toBe(404)
+      }
+    })
+
+    it('handleCompleteUpload fails the job when the staged object is missing or mismatched', async () => {
+      await seedPending(3)
+      const enqueue = vi.fn()
+      await expect(handleCompleteUpload(db, store, { enqueue }, A)).rejects.toMatchObject({ statusCode: 400 })
+      expect((await jobRow()).status).toBe('failed')
+      expect((await jobRow()).error).toMatch(/not found/i)
+
+      await db.update(schema.mediaUploads).set({ status: 'pending', error: null }).where(eq(schema.mediaUploads.id, A))
+      await store.putStaged(A, Readable.from([Buffer.from('abcd')]), 'image/png')
+      await expect(handleCompleteUpload(db, store, { enqueue }, A)).rejects.toMatchObject({ statusCode: 400 })
+      expect((await jobRow()).status).toBe('failed')
+      expect((await jobRow()).error).toMatch(/4 does not match declared 3/)
+      expect(await store.statStaged(A)).toBeNull()
+      expect(enqueue).not.toHaveBeenCalled()
+    })
+
+    it('handleCompleteUpload 404s for unknown/invalid ids', async () => {
+      await expect(handleCompleteUpload(db, store, { enqueue: vi.fn() }, 'nope')).rejects.toMatchObject({ statusCode: 404 })
     })
   })
 })
