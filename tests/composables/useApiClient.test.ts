@@ -62,16 +62,6 @@ describe('useApiClient', () => {
     })
   })
 
-  it('uploadMedia sends FormData as multipart', async () => {
-    const form = new FormData()
-    form.append('kind', 'image')
-    await client.uploadMedia(form)
-    expect(fetchFn).toHaveBeenCalledWith('/api/media', {
-      method: 'POST',
-      body: form
-    })
-  })
-
   it('replacePlaylistItems PUTs items array', async () => {
     await client.replacePlaylistItems(4, {
       items: [{ mediaId: 1, durationMsOverride: 5000 }]

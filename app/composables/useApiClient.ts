@@ -82,7 +82,6 @@ export interface ApiClient {
   getMedia(id: number): Promise<Media>
   getMediaDetail(id: number): Promise<MediaDetail>
   deleteMedia(id: number, opts?: { force?: boolean }): Promise<void>
-  uploadMedia(body: FormData): Promise<Media>
   createUpload(body: CreateUploadBody): Promise<CreatedUpload>
   completeUpload(id: string): Promise<UploadJob>
   getUpload(id: string): Promise<UploadJob>
@@ -223,8 +222,6 @@ export function createApiClient(fetch: FetchFn): ApiClient {
         method: 'DELETE',
         query: opts.force ? { force: 'true' } : undefined
       }),
-    uploadMedia: (body) =>
-      fetch<Media>('/api/media', { method: 'POST', body }),
     createUpload: (body) =>
       fetch<CreatedUpload>('/api/media/uploads', { method: 'POST', body }),
     completeUpload: (id) =>
