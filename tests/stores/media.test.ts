@@ -98,4 +98,61 @@ describe('useMediaStore uploads', () => {
     await vi.advanceTimersByTimeAsync(6000)
     expect(api.getUpload).toHaveBeenCalledTimes(2)
   })
+
+  it('tick() keeps uploads in stable order when jobs stay active', async () => {
+    const store = useMediaStore()
+    const api = {
+      listMedia: vi.fn().mockResolvedValue([]),
+      getUpload: vi.fn(async (id: string) => job({ id, status: 'processing' }))
+    }
+    store.$patch({ _api: api as any, uploads: [job({ id: 'a' }), job({ id: 'b' })] })
+    await store.tick()
+    expect(store.uploads.map((u) => u.id)).toEqual(['a', 'b'])
+    await store.tick()
+    expect(store.uploads.map((u) => u.id)).toEqual(['a', 'b'])
+    store.stopPolling()
+  })
+
+  it('pollUploads() seeds newest-first and keeps the same order on re-seed', async () => {
+    const store = useMediaStore()
+    const jobs = [job({ id: 'a', status: 'processing' }), job({ id: 'b', status: 'processing' })]
+    const api = {
+      listActiveUploads: vi.fn().mockResolvedValue(jobs),
+      getUpload: vi.fn(),
+      listMedia: vi.fn().mockResolvedValue([])
+    }
+    store.$patch({ _api: api as any })
+    await store.pollUploads()
+    expect(store.uploads.map((u) => u.id)).toEqual(['a', 'b'])
+    await store.pollUploads()
+    expect(store.uploads.map((u) => u.id)).toEqual(['a', 'b'])
+    store.stopPolling()
+  })
+
+  it('stopPolling() wins over an in-flight tick() — no re-arm once it resolves', async () => {
+    const store = useMediaStore()
+    let resolveGetUpload!: (value: UploadJob) => void
+    const deferred = new Promise<UploadJob>((resolve) => {
+      resolveGetUpload = resolve
+    })
+    const api = {
+      listActiveUploads: vi.fn().mockResolvedValue([job({ id: 'j1', status: 'processing' })]),
+      getUpload: vi.fn().mockImplementation(() => deferred),
+      listMedia: vi.fn().mockResolvedValue([])
+    }
+    store.$patch({ _api: api as any })
+    await store.pollUploads()
+    expect(store.uploads.map((u) => u.id)).toEqual(['j1'])
+
+    // Fire the poll timer: tick() starts and blocks on the in-flight getUpload().
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getUpload).toHaveBeenCalledTimes(1)
+
+    store.stopPolling()
+    resolveGetUpload(job({ id: 'j1', status: 'processing' }))
+    await vi.advanceTimersByTimeAsync(0) // let the in-flight tick()'s continuation run
+
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(api.getUpload).toHaveBeenCalledTimes(1)
+  })
 })

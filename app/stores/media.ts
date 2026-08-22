@@ -20,6 +20,8 @@ interface State {
     'listMedia' | 'deleteMedia' | 'createUpload' | 'completeUpload' | 'getUpload' | 'listActiveUploads' | 'cancelUpload'
   >
   _pollTimer: ReturnType<typeof setTimeout> | null
+  /** True while polling should be active; stopPolling() flips this so an in-flight tick() can't re-arm the timer. */
+  _polling: boolean
 }
 
 export const useMediaStore = defineStore('media', {
@@ -30,7 +32,8 @@ export const useMediaStore = defineStore('media', {
     loading: false,
     error: null,
     _api: useApiClient(),
-    _pollTimer: null
+    _pollTimer: null,
+    _polling: false
   }),
   actions: {
     async refresh() {
@@ -87,18 +90,22 @@ export const useMediaStore = defineStore('media', {
 
     trackUpload(job: UploadJob) {
       this.applyUpload(job)
+      this._polling = true
       this.schedulePoll()
     },
 
-    /** Seed from the server's active list (survives reloads) and start polling. */
+    /** Seed from the server's active list (newest first — survives reloads) and start polling. */
     async pollUploads() {
       const active = await this._api.listActiveUploads()
-      for (const j of active) this.applyUpload(j)
+      // Apply oldest→newest so each unshift-of-a-new-id ends with the newest job at the front,
+      // matching the server's newest-first order; already-tracked ids are replaced in place.
+      for (const j of [...active].reverse()) this.applyUpload(j)
+      this._polling = true
       this.schedulePoll()
     },
 
     schedulePoll() {
-      if (this._pollTimer || this.uploads.length === 0) return
+      if (!this._polling || this._pollTimer || this.uploads.length === 0) return
       this._pollTimer = setTimeout(() => {
         this._pollTimer = null
         void this.tick()
@@ -125,13 +132,15 @@ export const useMediaStore = defineStore('media', {
       this.schedulePoll()
     },
 
+    /** Replace an already-tracked job in place (preserves order); only a newly-seen job moves to the front. */
     applyUpload(job: UploadJob) {
-      const rest = this.uploads.filter((u) => u.id !== job.id)
+      const idx = this.uploads.findIndex((u) => u.id === job.id)
       if (ACTIVE.has(job.status)) {
-        this.uploads = [job, ...rest]
+        if (idx >= 0) this.uploads.splice(idx, 1, job)
+        else this.uploads.unshift(job)
         return
       }
-      this.uploads = rest
+      if (idx >= 0) this.uploads.splice(idx, 1)
       if (
         (job.status === 'failed' || job.status === 'expired') &&
         !this.failedUploads.some((f) => f.id === job.id)
@@ -147,6 +156,7 @@ export const useMediaStore = defineStore('media', {
     },
 
     stopPolling() {
+      this._polling = false
       if (this._pollTimer) clearTimeout(this._pollTimer)
       this._pollTimer = null
     }
