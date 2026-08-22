@@ -70,3 +70,20 @@ describe('requireRole', () => {
     expect(() => requireRole(client, ['admin', 'super'])).toThrow(/permission/i)
   })
 })
+
+describe('upload job routes stay session-gated', () => {
+  const admin = { id: 1, email: 'a@x', role: 'admin' as const, organizationId: null }
+  const client = { id: 2, email: 'c@x', role: 'client' as const, organizationId: 1 }
+  const paths = [
+    '/api/media/uploads',
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111',
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111/file',
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111/complete'
+  ]
+  it.each(paths)('%s is not public, 401 anonymous, 403 client, ok admin', (p) => {
+    expect(isPublicRoute(p)).toBe(false)
+    expect(decideAccess(p, null)).toEqual({ ok: false, status: 401 })
+    expect(decideAccess(p, client)).toEqual({ ok: false, status: 403 })
+    expect(decideAccess(p, admin)).toEqual({ ok: true })
+  })
+})
