@@ -1,6 +1,7 @@
 <!-- app/components/MediaUploadDialog.vue -->
 <script setup lang="ts">
 import { useMediaStore } from '~/app/stores/media'
+import { kindOf } from './MediaUploadDialog.logic'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{
@@ -8,73 +9,120 @@ const emit = defineEmits<{
   (e: 'uploaded'): void
 }>()
 
+type ItemState = 'idle' | 'uploading' | 'queued' | 'failed'
+interface Item {
+  file: File
+  kind: 'video' | 'image'
+  state: ItemState
+  progress: number // 0..100
+  error?: string
+}
+
 const store = useMediaStore()
 const toast = useToast()
 const { t } = useI18n()
-const files = ref<File[]>([])
+const items = ref<Item[]>([])
 const uploading = ref(false)
 const dragOver = ref(false)
 const quality = ref<'low' | 'standard' | 'high'>('standard')
+let controller: AbortController | null = null
+
+function add(files: Iterable<File>) {
+  for (const f of files) items.value.push({ file: f, kind: kindOf(f), state: 'idle', progress: 0 })
+}
 
 function onDrop(e: DragEvent) {
   e.preventDefault()
   dragOver.value = false
-  if (!e.dataTransfer) return
-  files.value.push(...Array.from(e.dataTransfer.files))
+  if (e.dataTransfer) add(Array.from(e.dataTransfer.files))
 }
 
 function onPick(e: Event) {
   const input = e.target as HTMLInputElement
-  if (input.files) {
-    files.value.push(...Array.from(input.files))
-  }
+  if (input.files) add(Array.from(input.files))
+  input.value = ''
 }
 
 function remove(i: number) {
-  files.value.splice(i, 1)
-}
-
-function kindOf(f: File): 'video' | 'image' {
-  return f.type.startsWith('video/') ? 'video' : 'image'
+  if (uploading.value) return
+  items.value.splice(i, 1)
 }
 
 async function upload() {
-  if (files.value.length === 0) return
+  const todo = items.value.filter((it) => it.state !== 'queued')
+  if (todo.length === 0 || uploading.value) return
   uploading.value = true
-  let ok = 0
-  for (const f of files.value) {
-    const form = new FormData()
-    form.append('file', f)
-    form.append('kind', kindOf(f))
-    form.append('quality', quality.value)
+  controller = new AbortController()
+  let queued = 0
+  for (const it of todo) {
+    it.state = 'uploading'
+    it.progress = 0
+    it.error = undefined
     try {
-      await store.upload(form)
-      ok++
+      await store.startUpload(it.file, {
+        kind: it.kind,
+        quality: quality.value,
+        signal: controller.signal,
+        onProgress: (p) => {
+          it.progress = Math.round(p * 100)
+        }
+      })
+      it.state = 'queued'
+      it.progress = 100
+      queued++
     } catch (err: any) {
+      it.state = 'failed'
+      it.error = err.data?.message ?? err.message
+      if (err.aborted) break
       toast.add({
-        title: t('components.mediaUploadDialog.uploadFailed', { name: f.name }),
-        description: err.data?.message ?? err.message,
+        title: t('components.mediaUploadDialog.uploadFailed', { name: it.file.name }),
+        description: it.error,
         color: 'error'
       })
     }
   }
   uploading.value = false
-  if (ok > 0) {
+  controller = null
+  if (queued > 0) {
     toast.add({
-      title: t('components.mediaUploadDialog.uploadedFiles', ok, { named: { n: ok } }),
+      title: t('components.mediaUploadDialog.queuedFiles', queued, { named: { n: queued } }),
       color: 'success'
     })
     emit('uploaded')
   }
-  files.value = []
+  if (items.value.every((it) => it.state === 'queued')) {
+    items.value = []
+    emit('update:modelValue', false)
+  } else {
+    // Keep failed/aborted rows so the user can retry them.
+    items.value = items.value.filter((it) => it.state !== 'queued')
+  }
+}
+
+function cancel() {
+  if (uploading.value) {
+    controller?.abort()
+    return
+  }
   emit('update:modelValue', false)
 }
+
+// Escape / backdrop / X all arrive here. While a transfer is running the modal
+// is marked non-dismissible, but route any close attempt through cancel() anyway
+// so an aborted XHR never outlives a hidden dialog.
+function onOpenChange(open: boolean) {
+  if (open) return emit('update:modelValue', true)
+  cancel()
+}
+
+const pendingCount = computed(() => items.value.filter((it) => it.state !== 'queued').length)
 </script>
 
 <template>
   <UModal
     :open="modelValue"
-    @update:open="(v) => emit('update:modelValue', v)"
+    :dismissible="!uploading"
+    @update:open="onOpenChange"
     :ui="{ width: 'sm:max-w-2xl' }"
   >
     <template #content>
@@ -111,29 +159,45 @@ async function upload() {
           </i18n-t>
         </div>
 
-        <ul v-if="files.length > 0" class="mt-4 max-h-64 space-y-2 overflow-y-auto">
+        <ul v-if="items.length > 0" class="mt-4 max-h-64 space-y-2 overflow-y-auto">
           <li
-            v-for="(f, i) in files"
+            v-for="(it, i) in items"
             :key="i"
-            class="flex items-center justify-between rounded border border-(--ui-border) bg-(--ui-bg) p-2 text-sm"
+            class="rounded border border-(--ui-border) bg-(--ui-bg) p-2 text-sm"
           >
-            <div class="flex items-center gap-2 min-w-0">
-              <UIcon
-                :name="kindOf(f) === 'video' ? 'i-lucide-video' : 'i-lucide-image'"
-                class="size-4 text-(--ui-text-muted) shrink-0"
-              />
-              <span class="truncate">{{ f.name }}</span>
-              <span class="text-xs text-(--ui-text-muted) shrink-0">
-                {{ (f.size / 1024 / 1024).toFixed(1) }} MB
-              </span>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 min-w-0">
+                <UIcon
+                  :name="it.kind === 'video' ? 'i-lucide-video' : 'i-lucide-image'"
+                  class="size-4 text-(--ui-text-muted) shrink-0"
+                />
+                <span class="truncate">{{ it.file.name }}</span>
+                <span class="text-xs text-(--ui-text-muted) shrink-0">
+                  {{ (it.file.size / 1024 / 1024).toFixed(1) }} MB
+                </span>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <span v-if="it.state === 'uploading'" class="text-xs text-(--ui-text-muted)">
+                  {{ $t('components.mediaUploadDialog.uploading', { pct: it.progress }) }}
+                </span>
+                <UBadge v-else-if="it.state === 'queued'" size="sm" color="success" variant="soft">
+                  {{ $t('components.mediaUploadDialog.queued') }}
+                </UBadge>
+                <UBadge v-else-if="it.state === 'failed'" size="sm" color="error" variant="soft" :title="it.error">
+                  {{ $t('components.mediaUploadDialog.failed') }}
+                </UBadge>
+                <UButton
+                  icon="i-lucide-x"
+                  color="neutral"
+                  variant="ghost"
+                  size="xs"
+                  :disabled="uploading"
+                  @click="remove(i)"
+                />
+              </div>
             </div>
-            <UButton
-              icon="i-lucide-x"
-              color="neutral"
-              variant="ghost"
-              size="xs"
-              @click="remove(i)"
-            />
+            <UProgress v-if="it.state === 'uploading'" :model-value="it.progress" :max="100" size="xs" class="mt-2" />
+            <p v-if="it.state === 'failed' && it.error" class="mt-1 text-xs text-(--ui-error)">{{ it.error }}</p>
           </li>
         </ul>
 
@@ -154,16 +218,16 @@ async function upload() {
         </div>
 
         <div class="mt-6 flex justify-end gap-2">
-          <UButton variant="ghost" @click="emit('update:modelValue', false)">
-            {{ $t('common.cancel') }}
+          <UButton variant="ghost" @click="cancel">
+            {{ uploading ? $t('components.mediaUploadDialog.cancelUpload') : $t('common.cancel') }}
           </UButton>
           <UButton
             color="primary"
             :loading="uploading"
-            :disabled="files.length === 0"
+            :disabled="pendingCount === 0 || uploading"
             @click="upload"
           >
-            {{ files.length > 0 ? $t('components.mediaUploadDialog.uploadButtonCount', { n: files.length }) : $t('components.mediaUploadDialog.uploadButton') }}
+            {{ pendingCount > 0 ? $t('components.mediaUploadDialog.uploadButtonCount', { n: pendingCount }) : $t('components.mediaUploadDialog.uploadButton') }}
           </UButton>
         </div>
       </div>
