@@ -258,6 +258,20 @@ describe('createIngestQueue', () => {
     expect((await job(ID2)).status).toBe('pending')
   })
 
+  it('sweep() leaves a row untouched (and its staged object intact) if /complete raced it to `queued` first', async () => {
+    const now = Date.now()
+    await insertJob(ID1, { status: 'pending', createdAt: new Date(now - PENDING_TTL_MS - 1000) })
+    await stage(ID1)
+    // Selected as stale-pending, but by the time sweep tries to flip it,
+    // a concurrent /complete has already moved it to `queued` — the
+    // conditional write must no-op, not clobber the row or its bytes.
+    await db.update(schema.mediaUploads).set({ status: 'queued' }).where(eq(schema.mediaUploads.id, ID1))
+    const q = makeQueue(vi.fn() as IngestFn)
+    expect(await q.sweep(now)).toBe(0)
+    expect((await job(ID1)).status).toBe('queued')
+    expect(await store.statStaged(ID1)).toEqual({ bytes: 3 })
+  })
+
   it('isPermanentIngestError: only 4xx h3 errors are permanent', () => {
     expect(isPermanentIngestError(permanent(422, 'x'))).toBe(true)
     expect(isPermanentIngestError(permanent(400, 'x'))).toBe(true)
@@ -282,6 +296,25 @@ describe('cleanupStaleTmp', () => {
       expect(await cleanupStaleTmp(now, base)).toBe(1)
       expect(existsSync(old)).toBe(false)
       expect(existsSync(fresh)).toBe(true)
+      expect(existsSync(foreign)).toBe(true)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('with maxAgeMs = 0 (boot), removes a fresh lanka-ingest-* dir but keeps a foreign one', async () => {
+    // At boot nothing else is running, so even a scratch dir from a
+    // just-SIGKILLed transcode (fresh mtime) is abandoned and must go —
+    // otherwise recover() immediately re-queues the same job whose
+    // preflight needs 2x bytes + 256 MiB of scratch again.
+    const base = mkdtempSync(join(tmpdir(), 'lanka-tmpclean-'))
+    try {
+      const fresh = join(base, 'lanka-ingest-fresh')
+      const foreign = join(base, 'other-fresh')
+      for (const d of [fresh, foreign]) mkdirSync(d)
+      const now = Date.now()
+      expect(await cleanupStaleTmp(now, base, 0)).toBe(1)
+      expect(existsSync(fresh)).toBe(false)
       expect(existsSync(foreign)).toBe(true)
     } finally {
       rmSync(base, { recursive: true, force: true })

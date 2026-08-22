@@ -8,7 +8,7 @@
 //    whose in-memory enqueue was lost, e.g. a crash right after /complete).
 // Jobs are enqueued live by POST /api/media/uploads/:id/complete.
 import { useIngestQueue } from '~/server/services/ingest-queue-singleton'
-import { cleanupStaleTmp } from '~/server/services/media-ingest-queue'
+import { cleanupStaleTmp, TMP_STALE_MS } from '~/server/services/media-ingest-queue'
 
 const MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000
 
@@ -17,7 +17,13 @@ export default defineNitroPlugin(async () => {
 
   async function maintain(label: 'boot' | 'periodic') {
     try {
-      const tmp = await cleanupStaleTmp()
+      // At boot nothing else is running yet, so every lanka-ingest-* dir is
+      // an abandoned scratch dir regardless of age — recover() (called just
+      // below, boot-only) is about to re-queue the same job whose preflight
+      // needs 2x bytes + 256 MiB of scratch again. The periodic pass keeps
+      // the age filter (TMP_STALE_MS) because a dev box shares /tmp with a
+      // running ingest.
+      const tmp = await cleanupStaleTmp(Date.now(), undefined, label === 'boot' ? 0 : TMP_STALE_MS)
       const expired = await queue.sweep()
       if (label === 'boot') await queue.recover()
       else await queue.reconcile()

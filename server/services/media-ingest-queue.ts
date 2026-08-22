@@ -57,15 +57,27 @@ async function defaultFreeBytes(): Promise<number> {
   return Number(s.bavail) * Number(s.bsize)
 }
 
-/** Remove abandoned ingest scratch dirs (a SIGKILL mid-transcode skips ingestMedia's finally). */
-export async function cleanupStaleTmp(now: number = Date.now(), dir: string = tmpdir()): Promise<number> {
+/**
+ * Remove abandoned ingest scratch dirs (a SIGKILL mid-transcode skips
+ * ingestMedia's finally). `maxAgeMs` defaults to the periodic-tick age
+ * filter (TMP_STALE_MS) — a dev box shares /tmp with a running ingest, so
+ * only dirs older than that are safe to assume abandoned. Pass 0 at boot:
+ * nothing else is running yet, so every lanka-ingest-* dir left over is
+ * abandoned regardless of age, and recover() is about to re-queue the same
+ * job whose preflight needs 2x bytes + 256 MiB of scratch again.
+ */
+export async function cleanupStaleTmp(
+  now: number = Date.now(),
+  dir: string = tmpdir(),
+  maxAgeMs: number = TMP_STALE_MS
+): Promise<number> {
   let removed = 0
   for (const name of await readdir(dir).catch(() => [] as string[])) {
     if (!name.startsWith('lanka-ingest-')) continue
     const p = join(dir, name)
     try {
       const s = await stat(p)
-      if (s.isDirectory() && now - s.mtimeMs > TMP_STALE_MS) {
+      if (s.isDirectory() && now - s.mtimeMs > maxAgeMs) {
         await rm(p, { recursive: true, force: true })
         removed++
       }
@@ -200,8 +212,9 @@ export function createIngestQueue(deps: {
         await processOne(id)
       } catch (err) {
         // Only reachable if a status write itself failed; the row stays
-        // `processing` and recover() picks it up on the next maintenance tick.
-        log('[ingest-queue] unexpected error', { id, err: (err as Error).message })
+        // `processing` — recover() is boot-only, so it's stuck in
+        // processing until next boot, not picked up by periodic maintenance.
+        log('[ingest-queue] unexpected error — row stuck in processing until next boot', { id, err: (err as Error).message })
       }
     }
     running = null
@@ -270,14 +283,22 @@ export function createIngestQueue(deps: {
           lt(schema.mediaUploads.createdAt, new Date(at - PENDING_TTL_MS))
         )
       )
+    let expired = 0
     for (const row of stale) {
-      await deleteStagedQuiet(row.id)
-      await db
+      // Conditional: a /complete that raced the sweep between the select
+      // above and here may have already moved the row past `pending` — in
+      // that case this is a no-op and the staged object stays (it's no
+      // longer ours to delete; the queue owns it now).
+      const [updated] = await db
         .update(schema.mediaUploads)
         .set({ status: 'expired', error: 'Upload was never completed', updatedAt: new Date(at) })
-        .where(eq(schema.mediaUploads.id, row.id))
+        .where(and(eq(schema.mediaUploads.id, row.id), eq(schema.mediaUploads.status, 'pending')))
+        .returning()
+      if (!updated) continue
+      await deleteStagedQuiet(row.id)
+      expired++
     }
-    return stale.length
+    return expired
   }
 
   return { enqueue, idle, recover, reconcile, sweep }
