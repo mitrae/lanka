@@ -13,7 +13,10 @@ import ffmpeg from 'fluent-ffmpeg'
 ffmpeg.setFfmpegPath(ffmpegPath.path)
 ffmpeg.setFfprobePath(ffprobePath.path)
 
-const TRANSCODE_TIMEOUT_MS = 10 * 60 * 1000 // 10 minutes
+// 30 min: ingest runs in the background worker (services/media-ingest-queue),
+// so no HTTP request is held open during transcode; long/`high` clips on the
+// 2-vCPU prod box can legitimately take this long.
+const TRANSCODE_TIMEOUT_MS = 30 * 60 * 1000
 
 export interface VideoProbe {
   codec: string

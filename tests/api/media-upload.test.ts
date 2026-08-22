@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import { LocalDiskStore } from '~/server/services/media-store'
-import { ingestMedia } from '~/server/api/media.post'
+import { ingestMedia } from '~/server/services/media-ingest'
 import * as schema from '~/server/db/schema'
 
 describe('ingestMedia', () => {
