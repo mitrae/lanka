@@ -29,7 +29,10 @@ class ManifestClient(
     private val onReload: (() -> Unit)? = null,
     // Called with the raw command-channel secret the FIRST time /register issues
     // one (TOFU). The caller persists it (DeviceSecretStore) for the command WS.
-    private val onCommandSecret: ((String) -> Unit)? = null
+    private val onCommandSecret: ((String) -> Unit)? = null,
+    // Survives reboots so a boot with no reachable server can replay the last
+    // playlist from the media cache. Null disables persistence entirely.
+    private val manifestStore: ManifestStore? = null
 ) {
     private val differ = ManifestDiffer()
     private val poll = Executors.newSingleThreadScheduledExecutor { r ->
@@ -90,9 +93,17 @@ class ManifestClient(
                 }
                 when (val d = differ.onFetched(manifest)) {
                     is ManifestDecision.Ignore -> {}
-                    is ManifestDecision.EmitNull -> onManifest(null)
+                    is ManifestDecision.EmitNull -> {
+                        // Playlist genuinely unassigned — forget it so the next
+                        // boot doesn't resurrect pulled content.
+                        manifestStore?.clear()
+                        onManifest(null)
+                    }
                     is ManifestDecision.Emit -> {
                         prefetch(d.manifest)
+                        // Save only after prefetch, so what we persist is what we
+                        // just tried to cache.
+                        manifestStore?.save(d.manifest)
                         onManifest(d.manifest)
                     }
                 }
@@ -101,6 +112,33 @@ class ManifestClient(
             onError(e)
             poll.schedule({ reconcile() }, backoff(attempt), TimeUnit.MILLISECONDS)
             attempt += 1
+        }
+    }
+
+    /**
+     * Replay the last persisted manifest from the media cache, with no network.
+     *
+     * Call this BEFORE [register]/[reconcile] on boot: it fills the screen
+     * immediately from disk, so a box that comes up before its VPN (or while the
+     * server is down) keeps playing instead of showing the standby banner. The
+     * subsequent live fetch then either resolves to `Ignore` (same version —
+     * playback continues untouched) or emits the newer playlist.
+     *
+     * Returns the replayed manifest, or null when there was nothing usable.
+     */
+    fun restorePersisted(): Manifest? {
+        val store = manifestStore ?: return null
+        return when (val d = restorableManifest(store.load()) { mediaCache.exists(it) }) {
+            is RestoreDecision.Nothing -> null
+            is RestoreDecision.Replay -> {
+                // Seeding a degraded replay would make the differ Ignore the
+                // server's complete manifest — see RestoreDecision.Replay.
+                if (d.complete) {
+                    differ.seed(ManifestKey(d.manifest.playlistId, d.manifest.version))
+                }
+                onManifest(d.manifest)
+                d.manifest
+            }
         }
     }
 

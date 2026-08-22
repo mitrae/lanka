@@ -115,8 +115,6 @@ export function usePlayerBoot(
   }
 
   async function boot(): Promise<void> {
-    await ensureRegistered()
-
     const mediaBase = useRuntimeConfig().public.mediaPublicBase as string
     const nativeFS = (globalThis as any).NativeFS as NativeFSBridge | undefined
     const cdnUrl = nativeFS
@@ -171,6 +169,14 @@ export function usePlayerBoot(
     onBeforeUnmount(() => {
       window.clearInterval(stateTimer)
     })
+
+    // Replay the last playlist from storage FIRST — no network at all, so the
+    // screen fills even when the box comes up before its VPN or the server is
+    // down. This must precede ensureRegistered(): that call is a network round
+    // trip, and offline it would hold the screen on standby until it times out.
+    reconciler.restorePersisted()
+
+    await ensureRegistered()
 
     await reconciler.reconcile()
     reconciler.openStream()

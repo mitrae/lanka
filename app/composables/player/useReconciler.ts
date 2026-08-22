@@ -3,6 +3,7 @@ import type { ApiClient } from '~/app/composables/useApiClient'
 import type { Manifest } from '~/app/types/api'
 import { shouldReconcile } from './shouldReconcile'
 import { backoff } from './backoff'
+import { restorableManifest } from './restorableManifest'
 
 export type StreamState = 'connecting' | 'connected' | 'disconnected'
 
@@ -38,6 +39,51 @@ export interface NativeFSBridge {
   setKioskLock?(enabled: boolean): void
 }
 
+/**
+ * Persists the last manifest the server handed us, so a reload/reboot with no
+ * server reachable can replay it from the media cache instead of sitting on the
+ * standby screen with the bytes already on disk.
+ */
+export interface ManifestStore {
+  load(): Manifest | null
+  save(m: Manifest): void
+  clear(): void
+}
+
+/**
+ * localStorage-backed store, keyed per device so two players sharing an origin
+ * can't inherit each other's playlist. Every call is best-effort: storage can be
+ * absent or throw (private mode, disabled site data), and that must never take
+ * down the player.
+ */
+export function createLocalManifestStore(deviceId: string): ManifestStore {
+  const key = `lanka:last-manifest:${deviceId}`
+  return {
+    load() {
+      try {
+        const raw = globalThis.localStorage?.getItem(key)
+        return raw ? (JSON.parse(raw) as Manifest) : null
+      } catch {
+        return null
+      }
+    },
+    save(m) {
+      try {
+        globalThis.localStorage?.setItem(key, JSON.stringify(m))
+      } catch {
+        /* no storage — offline replay is simply unavailable */
+      }
+    },
+    clear() {
+      try {
+        globalThis.localStorage?.removeItem(key)
+      } catch {
+        /* nothing to do */
+      }
+    }
+  }
+}
+
 export interface ReconcilerDeps {
   api: ApiClient
   deviceId: string
@@ -47,10 +93,27 @@ export interface ReconcilerDeps {
   cdnUrl?: (sha256: string) => string
   eventSourceFactory?: EventSourceFactory
   onReload?: () => void
+  /**
+   * Where the last manifest is persisted for offline replay. Defaults to
+   * localStorage; pass an explicit store in tests, or `null` to disable
+   * persistence entirely.
+   */
+  manifestStore?: ManifestStore | null
 }
 
 export interface ReconcilerHandle {
   reconcile(): Promise<void>
+  /**
+   * Replay the last persisted manifest from the local cache, with no network.
+   *
+   * Call BEFORE the first `reconcile()`: it fills the screen immediately from
+   * storage, so a player that comes up before its VPN (or while the server is
+   * down) keeps playing instead of showing standby. The subsequent live fetch
+   * then either dedupes to a no-op (same version) or emits the newer playlist.
+   *
+   * Returns the replayed manifest, or null when there was nothing usable.
+   */
+  restorePersisted(): Manifest | null
   openStream(): void
   startPolling(): void
   close(): void
@@ -77,6 +140,11 @@ export interface ReconcilerHandle {
 export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   const factory: EventSourceFactory =
     deps.eventSourceFactory ?? ((url) => new EventSource(url))
+
+  const manifestStore: ManifestStore | null =
+    deps.manifestStore === undefined
+      ? createLocalManifestStore(deps.deviceId)
+      : deps.manifestStore
 
   let last: { playlistId: number; version: number } | null = null
   let hasEmitted = false
@@ -118,6 +186,9 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
         if (last !== null || !hasEmitted) {
           last = null
           hasEmitted = true
+          // Playlist genuinely unassigned — forget it, so the next boot doesn't
+          // resurrect content the operator pulled.
+          manifestStore?.clear()
           emitManifest(null)
         }
         return
@@ -139,6 +210,8 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
         }
         deps.nativeFS!.evictExcept(JSON.stringify(sha256s))
       }
+      // Save after the download pass, so what we persist is what we just cached.
+      manifestStore?.save(m)
       emitManifest(m)
     } catch (err) {
       emitError(err)
@@ -147,6 +220,28 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
       }, backoff(attempt))
       attempt += 1
     }
+  }
+
+  function restorePersisted(): Manifest | null {
+    if (!manifestStore) return null
+    // Without the NativeFS bridge there is no local media cache — but if the SPA
+    // itself loaded, the server was reachable, so treat everything as playable.
+    const isCached = deps.nativeFS
+      ? (sha256: string) => deps.nativeFS!.exists(sha256)
+      : () => true
+    const decision = restorableManifest(manifestStore.load(), isCached)
+    if (decision.kind === 'nothing') return null
+    // Adopting the key on a degraded replay would make the live manifest look
+    // unchanged — see RestoreDecision above.
+    if (decision.complete) {
+      last = {
+        playlistId: decision.manifest.playlistId,
+        version: decision.manifest.version
+      }
+      hasEmitted = true
+    }
+    emitManifest(decision.manifest)
+    return decision.manifest
   }
 
   function openStream(): void {
@@ -196,6 +291,7 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
 
   return {
     reconcile,
+    restorePersisted,
     openStream,
     startPolling,
     close,

@@ -5,6 +5,7 @@ import ai.lanka.kiosk.player.CommandActions
 import ai.lanka.kiosk.player.CommandClient
 import ai.lanka.kiosk.player.Manifest
 import ai.lanka.kiosk.player.ManifestClient
+import ai.lanka.kiosk.player.ManifestStore
 import ai.lanka.kiosk.player.OkHttpTelemetryPoster
 import ai.lanka.kiosk.player.PlaybackView
 import ai.lanka.kiosk.player.Scheduler
@@ -24,6 +25,7 @@ import androidx.media3.common.util.UnstableApi
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -110,12 +112,16 @@ class PlayerActivity : KioskActivity() {
             onManifest = { m -> runOnUiThread { onManifest(m) } },
             onError = { runOnUiThread { showStandbyIfNeverPlayed() } },
             onReload = { runOnUiThread { recreate() } },
-            onCommandSecret = { DeviceSecretStore.put(this, deviceId, it) }
+            onCommandSecret = { DeviceSecretStore.put(this, deviceId, it) },
+            manifestStore = ManifestStore(File(filesDir, ManifestStore.FILE_NAME), json)
         )
         this.manifestClient = manifestClient
 
         // Register + start network off the UI thread (NetworkOnMainThread-safe).
         bootIo.execute {
+            // Replay the last playlist from disk FIRST — no network, so the screen
+            // fills even when the box boots before its VPN or the server is down.
+            manifestClient.restorePersisted()
             manifestClient.register("native", PLAYER_VERSION)
             manifestClient.reconcile()
             manifestClient.openStream()

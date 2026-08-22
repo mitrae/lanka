@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createReconciler } from '~/app/composables/player/useReconciler'
+import { createReconciler, createLocalManifestStore } from '~/app/composables/player/useReconciler'
 import type { ApiClient } from '~/app/composables/useApiClient'
 import type { Manifest, ManifestItem } from '~/app/types/api'
 import type { NativeFSBridge } from '~/app/composables/player/useReconciler'
@@ -373,5 +373,207 @@ describe('createReconciler — NativeFS pre-download', () => {
     await r.reconcile()
 
     expect(got).toEqual([m(1, 1, items)])
+  })
+})
+
+describe('createReconciler — offline manifest replay', () => {
+  const items: ManifestItem[] = [
+    { id: 1, type: 'video', sha256: 'sha1', durationMs: 5000 },
+    { id: 2, type: 'image', sha256: 'sha2', durationMs: 3000 }
+  ]
+
+  function fakeStore(initial: Manifest | null = null) {
+    let saved: Manifest | null = initial
+    return {
+      load: vi.fn(() => saved),
+      save: vi.fn((mf: Manifest) => { saved = mf }),
+      clear: vi.fn(() => { saved = null }),
+      current: () => saved
+    }
+  }
+
+  const mk = (api: ApiClient, store: any, nativeFS?: NativeFSBridge) =>
+    createReconciler({
+      api,
+      deviceId: 'tv-1',
+      nativeFS,
+      cdnUrl: nativeFS ? (s: string) => `https://cdn/${s}` : undefined,
+      manifestStore: store,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+
+  it('persists the manifest after a successful fetch', async () => {
+    const store = fakeStore()
+    const r = mk(fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) }), store)
+    await r.reconcile()
+    expect(store.save).toHaveBeenCalledWith(m(1, 1, items))
+  })
+
+  it('clears the persisted manifest when the playlist is unassigned', async () => {
+    const store = fakeStore(m(1, 1, items))
+    const r = mk(fakeApi({ getManifest: vi.fn().mockResolvedValue(null) }), store)
+    await r.reconcile()
+    expect(store.clear).toHaveBeenCalled()
+    expect(store.current()).toBeNull()
+  })
+
+  it('replays the persisted manifest with no network call', () => {
+    const getManifest = vi.fn()
+    const store = fakeStore(m(1, 1, items))
+    const r = mk(fakeApi({ getManifest }), store)
+    const got: Array<Manifest | null> = []
+    r.onManifest(man => got.push(man))
+
+    const replayed = r.restorePersisted()
+
+    expect(replayed).toEqual(m(1, 1, items))
+    expect(got).toEqual([m(1, 1, items)])
+    expect(getManifest).not.toHaveBeenCalled()
+  })
+
+  it('returns null when nothing was persisted', () => {
+    const store = fakeStore(null)
+    const r = mk(fakeApi(), store)
+    const got: Array<Manifest | null> = []
+    r.onManifest(man => got.push(man))
+
+    expect(r.restorePersisted()).toBeNull()
+    expect(got).toEqual([])
+  })
+
+  it('does not re-emit when the server later returns the same version', async () => {
+    // The replayed playlist is already on screen; re-emitting would tear the
+    // stage down and restart playback for identical content.
+    const store = fakeStore(m(1, 1, items))
+    const r = mk(fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) }), store)
+    const got: Array<Manifest | null> = []
+    r.onManifest(man => got.push(man))
+
+    r.restorePersisted()
+    await r.reconcile()
+
+    expect(got).toHaveLength(1)
+  })
+
+  it('still emits when the server returns a newer version', async () => {
+    const store = fakeStore(m(1, 1, items))
+    const r = mk(fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 2, items)) }), store)
+    const got: Array<Manifest | null> = []
+    r.onManifest(man => got.push(man))
+
+    r.restorePersisted()
+    await r.reconcile()
+
+    expect(got).toEqual([m(1, 1, items), m(1, 2, items)])
+  })
+
+  it('drops uncached items and still accepts the full manifest afterwards', async () => {
+    // Degraded replay: sha2 is missing locally, so it is dropped. Because the
+    // replay is incomplete the key is NOT adopted, so the server's complete
+    // manifest at the same version must still get through.
+    const store = fakeStore(m(1, 1, items))
+    const nativeFS = fakeNativeFS(['sha1'])
+    const r = mk(fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) }), store, nativeFS)
+    const got: Array<Manifest | null> = []
+    r.onManifest(man => got.push(man))
+
+    const replayed = r.restorePersisted()
+    expect(replayed?.items.map(i => i.sha256)).toEqual(['sha1'])
+
+    await r.reconcile()
+    expect(got).toHaveLength(2)
+    expect(got[1]).toEqual(m(1, 1, items))
+  })
+
+  it('replays nothing when none of the media is cached', () => {
+    const store = fakeStore(m(1, 1, items))
+    const r = mk(fakeApi(), store, fakeNativeFS([]))
+    expect(r.restorePersisted()).toBeNull()
+  })
+
+  it('disables persistence entirely when manifestStore is null', async () => {
+    const r = createReconciler({
+      api: fakeApi({ getManifest: vi.fn().mockResolvedValue(m(1, 1, items)) }),
+      deviceId: 'tv-1',
+      manifestStore: null,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    await r.reconcile()
+    expect(r.restorePersisted()).toBeNull()
+  })
+})
+
+describe('createLocalManifestStore', () => {
+  const mf = (): Manifest => ({
+    playlistId: 4,
+    playlistName: 'Lobby',
+    version: 2,
+    items: [{ id: 1, type: 'video', sha256: 'sha1', durationMs: 1000 }]
+  })
+
+  function withFakeStorage(impl?: Partial<Storage>) {
+    const data = new Map<string, string>()
+    const storage = {
+      getItem: (k: string) => data.get(k) ?? null,
+      setItem: (k: string, v: string) => { data.set(k, v) },
+      removeItem: (k: string) => { data.delete(k) },
+      ...impl
+    } as unknown as Storage
+    const prev = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
+    return () => {
+      if (prev) Object.defineProperty(globalThis, 'localStorage', prev)
+      else delete (globalThis as any).localStorage
+    }
+  }
+
+  it('round-trips a manifest and clears it', () => {
+    const restore = withFakeStorage()
+    try {
+      const s = createLocalManifestStore('tv-1')
+      expect(s.load()).toBeNull()
+      s.save(mf())
+      expect(s.load()).toEqual(mf())
+      s.clear()
+      expect(s.load()).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  it('keys storage per device so players do not share a playlist', () => {
+    const restore = withFakeStorage()
+    try {
+      createLocalManifestStore('tv-1').save(mf())
+      expect(createLocalManifestStore('tv-2').load()).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  it('survives storage that throws (private mode / disabled site data)', () => {
+    const restore = withFakeStorage({
+      getItem: () => { throw new Error('denied') },
+      setItem: () => { throw new Error('denied') },
+      removeItem: () => { throw new Error('denied') }
+    })
+    try {
+      const s = createLocalManifestStore('tv-1')
+      expect(s.load()).toBeNull()
+      expect(() => s.save(mf())).not.toThrow()
+      expect(() => s.clear()).not.toThrow()
+    } finally {
+      restore()
+    }
+  })
+
+  it('returns null for corrupt stored JSON', () => {
+    const restore = withFakeStorage()
+    try {
+      globalThis.localStorage.setItem('lanka:last-manifest:tv-1', '{ not json')
+      expect(createLocalManifestStore('tv-1').load()).toBeNull()
+    } finally {
+      restore()
+    }
   })
 })
