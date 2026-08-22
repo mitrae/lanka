@@ -261,6 +261,23 @@ describe('upload job API', () => {
       expect(enqueue).not.toHaveBeenCalled()
     })
 
+    it('handleCompleteUpload 404s when a concurrent cancel deletes the row while statStaged is in flight (size-mismatch arm)', async () => {
+      await seedPending(3)
+      // No staged object at all — this exercises the "missing" mismatch arm.
+      // Simulate the lost race deterministically: by the time statStaged
+      // resolves, the row is already gone (a concurrent cancel won).
+      const racy = Object.assign(Object.create(store), {
+        statStaged: async (staId: string) => {
+          await db.delete(schema.mediaUploads).where(eq(schema.mediaUploads.id, staId))
+          return null
+        }
+      })
+      const enqueue = vi.fn()
+      await expect(handleCompleteUpload(db, racy, { enqueue }, A)).rejects.toMatchObject({ statusCode: 404 })
+      expect(await db.select().from(schema.mediaUploads).where(eq(schema.mediaUploads.id, A)).get()).toBeUndefined()
+      expect(enqueue).not.toHaveBeenCalled()
+    })
+
     it('handleCompleteUpload 404s for unknown/invalid ids', async () => {
       await expect(handleCompleteUpload(db, store, { enqueue: vi.fn() }, 'nope')).rejects.toMatchObject({ statusCode: 404 })
     })

@@ -36,12 +36,29 @@ export async function handleCompleteUpload(
       ? 'Uploaded file not found in storage'
       : `Uploaded size ${staged.bytes} does not match declared ${row.bytes}`
     // Conditional too: don't resurrect a row a concurrent cancel just deleted.
-    await db
+    const [failedRow] = await db
       .update(schema.mediaUploads)
       .set({ status: 'failed', error: message, updatedAt: new Date() })
       .where(and(eq(schema.mediaUploads.id, id), eq(schema.mediaUploads.status, 'pending')))
-    // Tolerant: the row is already marked failed; don't turn a storage outage
-    // into a 500 for a client that just wants to see the failure.
+      .returning()
+    if (!failedRow) {
+      // Lost the race while we were statting the store (e.g. a concurrent
+      // cancel deleted the row): re-read and report whatever state won.
+      const current = await db
+        .select()
+        .from(schema.mediaUploads)
+        .where(eq(schema.mediaUploads.id, id))
+        .get()
+      if (!current) throw createError({ statusCode: 404, message: 'Upload not found' })
+      if (current.status === 'queued' || current.status === 'processing' || current.status === 'done') {
+        return toUploadJob(current)
+      }
+      throw createError({ statusCode: 409, message: `Upload is ${current.status}` })
+    }
+    // We own the failure: only now do we own the staged bytes, so only now
+    // do we delete them. Tolerant: the row is already marked failed; don't
+    // turn a storage outage into a 500 for a client that just wants to see
+    // the failure.
     await store.deleteStaged(id).catch(() => {})
     throw createError({ statusCode: 400, message })
   }
