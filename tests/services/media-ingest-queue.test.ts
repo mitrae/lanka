@@ -112,8 +112,23 @@ describe('createIngestQueue', () => {
     await stage(ID1)
     const media = await insertMedia()
     const ingest: IngestFn = vi.fn()
-      .mockRejectedValueOnce(new Error('R2 connection reset'))
-      .mockResolvedValueOnce(media)
+      .mockImplementationOnce(async () => {
+        // Before this rejects, the staged object must still be intact —
+        // asserted by the SECOND call below, which proves attempt 1 never
+        // touched it (a retryable failure keeps the staged object).
+        throw new Error('R2 connection reset')
+      })
+      .mockImplementationOnce(async (_db, _store, input) => {
+        // Prove the bytes survived the first (retryable) failure: the fake
+        // ingest never reads `input.stream`, so a queue bug that deleted the
+        // staged object after attempt 1 would go undetected by a plain
+        // "it eventually succeeds" assertion — this reads it back directly.
+        expect(await store.statStaged(ID1)).toEqual({ bytes: 3 })
+        const chunks: Buffer[] = []
+        for await (const c of input.stream) chunks.push(c as Buffer)
+        expect(Buffer.concat(chunks).toString()).toBe('abc')
+        return media
+      })
     const q = makeQueue(ingest)
     q.enqueue(ID1)
     await q.idle()

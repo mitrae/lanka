@@ -14,6 +14,7 @@
 import { readdir, rm, stat, statfs } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Readable } from 'node:stream'
 import { and, asc, eq, lt, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
@@ -118,18 +119,27 @@ export function createIngestQueue(deps: {
   async function processOne(id: string): Promise<void> {
     const row = await claim(id)
     if (!row) return // cancelled / expired / already taken / unknown
+    // Declared outside the try so the finally below can always reach it, even
+    // when openStaged() itself throws (stream stays undefined) or `ingest`
+    // throws before ever consuming the stream.
+    let stream: Readable | undefined
     try {
       const free = await freeBytes()
       const need = requiredScratchBytes(row.bytes)
       if (free < need) {
         throw new Error(`Not enough free disk space for ingest (need ${need} bytes, have ${free})`)
       }
-      const stream = await store.openStaged(id)
-      // A ReadStream's fd open() happens lazily; if `ingest` never touches
-      // the stream (permanent-failure short-circuit, or a test double), an
-      // unrelated later unlink() can race it and fire an 'error' with no
-      // listener, crashing the process. Swallow it here — a real read error
-      // still reaches `ingest`'s own rejection via its consumption path.
+      stream = await store.openStaged(id)
+      // A ReadStream's fd open() is lazy. If `ingest` throws/returns before
+      // ever consuming the stream, the pending open() can still resolve
+      // later with an error (e.g. a raced deleteStaged() unlink) — Node's fs
+      // stream destroy machinery emits that as an 'error' event regardless
+      // of whether destroy() below already ran, and EventEmitter throws an
+      // 'error' with zero listeners even if a destroy(err, cb) callback also
+      // observed it. Confirmed empirically on this repo's Node (v20.20.0):
+      // destroy() alone does NOT suppress it — only an attached listener
+      // does. Swallow it here; a real read error during actual consumption
+      // still reaches `ingest`'s own rejection via its own error handling.
       stream.on('error', () => {})
       const media = await ingest(db, store, {
         stream,
@@ -170,6 +180,15 @@ export function createIngestQueue(deps: {
         enqueue(id)
       }, retryDelayMs * row.attempts)
       t.unref?.()
+    } finally {
+      // Always release the fd (or, on R2Store, the HTTP body socket)
+      // promptly rather than waiting on GC — idempotent, a no-op once the
+      // stream is already fully consumed/closed. This does NOT by itself
+      // prevent the unhandled-'error' race described above (verified
+      // empirically); the listener attached right after openStaged() is
+      // what does that. Both are kept: destroy() for prompt cleanup,
+      // the listener for crash-safety.
+      stream?.destroy()
     }
   }
 
