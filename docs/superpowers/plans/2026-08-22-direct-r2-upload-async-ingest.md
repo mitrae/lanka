@@ -264,11 +264,11 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
-- [ ] **Step 3: Update the two test imports**
+- [ ] **Step 3: Update every test import**
 
-In `tests/api/media-upload.test.ts` and `tests/api/media-upload-transcode.test.ts` replace
+Run `grep -rln "server/api/media.post" tests/` — expected hits: `tests/api/media-upload.test.ts`, `tests/api/media-upload-transcode.test.ts`, `tests/integration/admin-flow.test.ts` (check `tests/integration/sync-flow.test.ts` too). In each, replace
 `import { ingestMedia } from '~/server/api/media.post'` with
-`import { ingestMedia } from '~/server/services/media-ingest'`.
+`import { ingestMedia } from '~/server/services/media-ingest'`. The grep must come back empty afterwards.
 
 - [ ] **Step 4: Raise the transcode timeout**
 
@@ -286,7 +286,7 @@ const TRANSCODE_TIMEOUT_MS = 30 * 60 * 1000
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/services/media-ingest.ts server/api/media.post.ts server/services/transcode.ts tests/api/media-upload.test.ts tests/api/media-upload-transcode.test.ts
+git add server/services/media-ingest.ts server/api/media.post.ts server/services/transcode.ts tests/
 git commit -m "refactor(media): move ingestMedia to services/media-ingest; 30 min transcode timeout"
 ```
 
@@ -619,26 +619,39 @@ git commit -m "feat(r2-store): presigned staged uploads (uploads/<id>)"
 - Produces:
   ```ts
   export const PENDING_TTL_MS = 24 * 60 * 60 * 1000
-  export const MAX_ATTEMPTS = 2
+  export const MAX_ATTEMPTS = 3            // total tries per job (claims)
+  export const RETRY_DELAY_MS = 30_000     // × attempts, for retryable failures
+  export const TMP_STALE_MS = 2 * 60 * 60 * 1000
   export type IngestFn = (db: Db, store: MediaStore, input: IngestInput) => Promise<IngestedMedia>
   export interface IngestQueue {
     enqueue(id: string): void
-    idle(): Promise<void>            // resolves once nothing is running/queued
-    recover(): Promise<void>
-    sweep(now?: number): Promise<number> // returns #expired
+    idle(): Promise<void>            // resolves once nothing is running/queued/retry-scheduled
+    recover(): Promise<void>         // BOOT ONLY: processing→queued (or failed when exhausted), then reconcile()
+    reconcile(): Promise<void>       // periodic: enqueue every `queued` row (never touches `processing`)
+    sweep(now?: number): Promise<number> // expire pending > 24 h; returns #expired
   }
-  export function createIngestQueue(deps: { db: Db; store: MediaStore; ingest?: IngestFn; log?: (msg: string, meta?: unknown) => void }): IngestQueue
+  export function createIngestQueue(deps: {
+    db: Db; store: MediaStore; ingest?: IngestFn
+    log?: (msg: string, meta?: unknown) => void
+    retryDelayMs?: number                       // default RETRY_DELAY_MS
+    freeBytes?: () => Promise<number>           // default statfs(tmpdir())
+  }): IngestQueue
+  export function isPermanentIngestError(err: unknown): boolean   // statusCode 400–499
+  export function requiredScratchBytes(bytes: number): number     // 2 × bytes + 256 MiB (input copy + transcoded output)
+  export async function cleanupStaleTmp(now?: number, dir?: string): Promise<number> // rm lanka-ingest-* older than TMP_STALE_MS
   // singleton
   export function useIngestQueue(): IngestQueue
   export function _setIngestQueue(q: IngestQueue | null): void
   ```
+
+**Failure model (decided in review):** `ingestMedia` throws h3 errors with `statusCode` 400 (empty) / 422 (ffmpeg rejected) for *permanent* problems → job `failed`, staged object deleted. Anything else (R2 GET/HEAD error, disk full, DB error, preflight "not enough free space") is *retryable* → staged object is kept, job goes back to `queued` with the error text recorded, and is re-enqueued after `retryDelayMs × attempts`; after `MAX_ATTEMPTS` claims it is `failed` and the staged object deleted. Claiming is an atomic conditional update, so a row can never be processed twice concurrently (even by a second process). `recover()` (which resets `processing` rows) runs **only at boot** — a periodic reset would re-queue a legitimately running 30-minute transcode; the periodic tick calls `reconcile()`, which only enqueues `queued` rows. Re-running a job whose previous attempt crashed after `ingestMedia` committed is safe: `ingestMedia` is content-addressed (`(source_sha256, quality)` / `sha256` dedup) and `store.put` is idempotent per key. Because `attempts` is incremented at claim time, a job that OOM-kills the process is retried at most `MAX_ATTEMPTS` boots and then marked `failed` by `recover()`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 // tests/services/media-ingest-queue.test.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -647,13 +660,20 @@ import { createTestDb, type TestDb } from '../helpers/test-db'
 import { LocalDiskStore } from '~/server/services/media-store'
 import {
   createIngestQueue,
+  cleanupStaleTmp,
+  isPermanentIngestError,
+  requiredScratchBytes,
+  MAX_ATTEMPTS,
   PENDING_TTL_MS,
+  TMP_STALE_MS,
   type IngestFn
 } from '~/server/services/media-ingest-queue'
 import * as schema from '~/server/db/schema'
 
 const ID1 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const ID2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const ID3 = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+const PLENTY = 100 * 1024 ** 3
 
 describe('createIngestQueue', () => {
   let db: TestDb
@@ -673,41 +693,33 @@ describe('createIngestQueue', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  async function insertJob(
-    id: string,
-    over: Partial<typeof schema.mediaUploads.$inferInsert> = {}
-  ) {
+  function makeQueue(ingest: IngestFn, over: { freeBytes?: () => Promise<number> } = {}) {
+    return createIngestQueue({
+      db, store, ingest, log: () => {}, retryDelayMs: 0,
+      freeBytes: over.freeBytes ?? (async () => PLENTY)
+    })
+  }
+
+  async function insertJob(id: string, over: Partial<typeof schema.mediaUploads.$inferInsert> = {}) {
     const [row] = await db
       .insert(schema.mediaUploads)
       .values({
-        id,
-        filename: 'clip.mp4',
-        kind: 'video',
-        quality: 'standard',
-        mimeType: 'video/mp4',
-        bytes: 3,
-        status: 'queued',
-        ...over
+        id, filename: 'clip.mp4', kind: 'video', quality: 'standard', mimeType: 'video/mp4',
+        bytes: 3, status: 'queued', ...over
       })
       .returning()
     return row
   }
-
-  async function stage(id: string, text = 'abc') {
-    await store.putStaged(id, Readable.from([Buffer.from(text)]), 'video/mp4')
-  }
-
-  async function job(id: string) {
-    return (await db.select().from(schema.mediaUploads).where(eq(schema.mediaUploads.id, id)).get())!
-  }
-
+  const stage = (id: string, text = 'abc') =>
+    store.putStaged(id, Readable.from([Buffer.from(text)]), 'video/mp4')
+  const job = async (id: string) =>
+    (await db.select().from(schema.mediaUploads).where(eq(schema.mediaUploads.id, id)).get())!
   async function insertMedia(sha = 'c'.repeat(64)) {
-    const [m] = await db
-      .insert(schema.media)
-      .values({ sha256: sha, kind: 'video', filename: 'clip.mp4', bytes: 3 })
-      .returning()
+    const [m] = await db.insert(schema.media)
+      .values({ sha256: sha, kind: 'video', filename: 'clip.mp4', bytes: 3 }).returning()
     return m
   }
+  const permanent = (code: number, message: string) => Object.assign(new Error(message), { statusCode: code })
 
   it('processes a queued job: ingests the staged stream, marks done, deletes the staged object', async () => {
     await insertJob(ID1)
@@ -720,7 +732,7 @@ describe('createIngestQueue', () => {
       expect(input).toMatchObject({ filename: 'clip.mp4', kind: 'video', mimeType: 'video/mp4', quality: 'standard' })
       return media
     })
-    const q = createIngestQueue({ db, store, ingest, log: () => {} })
+    const q = makeQueue(ingest)
     q.enqueue(ID1)
     await q.idle()
     const row = await job(ID1)
@@ -731,50 +743,102 @@ describe('createIngestQueue', () => {
     expect(await store.statStaged(ID1)).toBeNull()
   })
 
-  it('marks failed with the error message and still deletes the staged object', async () => {
+  it('permanent ingest error (4xx) → failed immediately, staged object deleted', async () => {
     await insertJob(ID1)
     await stage(ID1)
-    const ingest: IngestFn = vi.fn().mockRejectedValue(new Error('Could not process this video'))
-    const q = createIngestQueue({ db, store, ingest, log: () => {} })
+    const ingest: IngestFn = vi.fn().mockRejectedValue(permanent(422, 'Could not process this video'))
+    const q = makeQueue(ingest)
     q.enqueue(ID1)
     await q.idle()
     const row = await job(ID1)
     expect(row.status).toBe('failed')
     expect(row.error).toBe('Could not process this video')
+    expect(row.attempts).toBe(1)
+    expect(ingest).toHaveBeenCalledTimes(1)
     expect(await store.statStaged(ID1)).toBeNull()
   })
 
-  it('runs one job at a time, FIFO', async () => {
+  it('retryable error keeps the staged object and retries until it succeeds', async () => {
     await insertJob(ID1)
-    await insertJob(ID2)
+    await stage(ID1)
+    const media = await insertMedia()
+    const ingest: IngestFn = vi.fn()
+      .mockRejectedValueOnce(new Error('R2 connection reset'))
+      .mockResolvedValueOnce(media)
+    const q = makeQueue(ingest)
+    q.enqueue(ID1)
+    await q.idle()
+    const row = await job(ID1)
+    expect(row.status).toBe('done')
+    expect(row.attempts).toBe(2)
+    expect(ingest).toHaveBeenCalledTimes(2)
+    expect(await store.statStaged(ID1)).toBeNull()
+  })
+
+  it('gives up after MAX_ATTEMPTS retryable failures and then deletes the staged object', async () => {
+    await insertJob(ID1)
+    await stage(ID1)
+    const ingest: IngestFn = vi.fn().mockRejectedValue(new Error('disk I/O error'))
+    const q = makeQueue(ingest)
+    q.enqueue(ID1)
+    await q.idle()
+    const row = await job(ID1)
+    expect(row.status).toBe('failed')
+    expect(row.attempts).toBe(MAX_ATTEMPTS)
+    expect(row.error).toMatch(/disk I\/O error/)
+    expect(ingest).toHaveBeenCalledTimes(MAX_ATTEMPTS)
+    expect(await store.statStaged(ID1)).toBeNull()
+  })
+
+  it('preflight: not enough free scratch space is retryable (staged kept, error recorded)', async () => {
+    await insertJob(ID1, { bytes: 1024 ** 3 })
+    await stage(ID1)
+    const ingest = vi.fn()
+    const q = makeQueue(ingest as IngestFn, { freeBytes: async () => 1024 ** 3 })
+    q.enqueue(ID1)
+    await q.idle()
+    const row = await job(ID1)
+    expect(row.status).toBe('failed') // exhausted MAX_ATTEMPTS with retryDelayMs 0
+    expect(row.error).toMatch(/free disk space/i)
+    expect(ingest).not.toHaveBeenCalled()
+    expect(requiredScratchBytes(1024 ** 3)).toBe(2 * 1024 ** 3 + 256 * 1024 ** 2)
+  })
+
+  it('runs one job at a time, FIFO (explicit start signal, no sleeps)', async () => {
+    await insertJob(ID1, { filename: 'one' })
+    await insertJob(ID2, { filename: 'two' })
     await stage(ID1)
     await stage(ID2)
     const media = await insertMedia()
     const order: string[] = []
-    let release!: () => void
-    const gate = new Promise<void>((r) => (release = r))
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((r) => (releaseFirst = r))
+    let firstStarted!: () => void
+    const started = new Promise<void>((r) => (firstStarted = r))
     const ingest: IngestFn = vi.fn(async (_db, _store, input) => {
       order.push(`start:${input.filename}`)
-      if (order.length === 1) await gate
+      if (input.filename === 'one') {
+        firstStarted()
+        await firstGate
+      }
       order.push(`end:${input.filename}`)
       return media
     })
-    await db.update(schema.mediaUploads).set({ filename: 'one' }).where(eq(schema.mediaUploads.id, ID1))
-    await db.update(schema.mediaUploads).set({ filename: 'two' }).where(eq(schema.mediaUploads.id, ID2))
-    const q = createIngestQueue({ db, store, ingest, log: () => {} })
+    const q = makeQueue(ingest)
     q.enqueue(ID1)
     q.enqueue(ID2)
-    await new Promise((r) => setTimeout(r, 20))
-    expect(order).toEqual(['start:one']) // second has not started
-    release()
+    await started
+    expect(order).toEqual(['start:one'])
+    releaseFirst()
     await q.idle()
     expect(order).toEqual(['start:one', 'end:one', 'start:two', 'end:two'])
   })
 
-  it('skips ids that are no longer queued (cancelled meanwhile)', async () => {
+  it('skips ids that are not queued (cancelled / unknown) and never double-claims', async () => {
     await insertJob(ID1, { status: 'pending' })
     const ingest = vi.fn()
-    const q = createIngestQueue({ db, store, ingest: ingest as IngestFn, log: () => {} })
+    const q = makeQueue(ingest as IngestFn)
+    q.enqueue(ID1)
     q.enqueue(ID1)
     q.enqueue('not-a-row')
     await q.idle()
@@ -782,22 +846,39 @@ describe('createIngestQueue', () => {
     expect((await job(ID1)).status).toBe('pending')
   })
 
-  it('recover() re-queues interrupted jobs once, fails them on the second interruption, and enqueues queued rows', async () => {
+  it('reconcile(): enqueues queued rows and never touches processing rows', async () => {
     await insertJob(ID1, { status: 'processing', attempts: 1 })
-    await insertJob(ID2, { status: 'processing', attempts: 2 })
-    await insertJob('cccccccc-cccc-4ccc-8ccc-cccccccccccc', { status: 'queued' })
-    await stage(ID1)
-    await stage('cccccccc-cccc-4ccc-8ccc-cccccccccccc')
+    await insertJob(ID2, { status: 'queued' })
+    await stage(ID2)
     const media = await insertMedia()
     const ingest: IngestFn = vi.fn().mockResolvedValue(media)
-    const q = createIngestQueue({ db, store, ingest, log: () => {} })
+    const q = makeQueue(ingest)
+    await q.reconcile()
+    await q.idle()
+    expect((await job(ID1)).status).toBe('processing') // a live transcode is left alone
+    expect((await job(ID1)).attempts).toBe(1)
+    expect((await job(ID2)).status).toBe('done')
+    expect(ingest).toHaveBeenCalledTimes(1)
+  })
+
+  it('recover() (boot): processing rows are re-queued (or failed when exhausted); queued rows are enqueued', async () => {
+    await insertJob(ID1, { status: 'processing', attempts: 1 })
+    await insertJob(ID2, { status: 'processing', attempts: MAX_ATTEMPTS })
+    await insertJob(ID3, { status: 'queued' })
+    await stage(ID1)
+    await stage(ID2)
+    await stage(ID3)
+    const media = await insertMedia()
+    const ingest: IngestFn = vi.fn().mockResolvedValue(media)
+    const q = makeQueue(ingest)
     await q.recover()
     await q.idle()
     expect((await job(ID1)).status).toBe('done')
     expect((await job(ID1)).attempts).toBe(2)
     expect((await job(ID2)).status).toBe('failed')
     expect((await job(ID2)).error).toMatch(/interrupted/i)
-    expect((await job('cccccccc-cccc-4ccc-8ccc-cccccccccccc')).status).toBe('done')
+    expect(await store.statStaged(ID2)).toBeNull()
+    expect((await job(ID3)).status).toBe('done')
     expect(ingest).toHaveBeenCalledTimes(2)
   })
 
@@ -806,11 +887,41 @@ describe('createIngestQueue', () => {
     await insertJob(ID1, { status: 'pending', createdAt: new Date(now - PENDING_TTL_MS - 1000) })
     await insertJob(ID2, { status: 'pending', createdAt: new Date(now - 1000) })
     await stage(ID1)
-    const q = createIngestQueue({ db, store, ingest: vi.fn() as IngestFn, log: () => {} })
+    const q = makeQueue(vi.fn() as IngestFn)
     expect(await q.sweep(now)).toBe(1)
     expect((await job(ID1)).status).toBe('expired')
     expect(await store.statStaged(ID1)).toBeNull()
     expect((await job(ID2)).status).toBe('pending')
+  })
+
+  it('isPermanentIngestError: only 4xx h3 errors are permanent', () => {
+    expect(isPermanentIngestError(permanent(422, 'x'))).toBe(true)
+    expect(isPermanentIngestError(permanent(400, 'x'))).toBe(true)
+    expect(isPermanentIngestError(permanent(500, 'x'))).toBe(false)
+    expect(isPermanentIngestError(new Error('ECONNRESET'))).toBe(false)
+    expect(isPermanentIngestError('nope')).toBe(false)
+  })
+})
+
+describe('cleanupStaleTmp', () => {
+  it('removes lanka-ingest-* dirs older than TMP_STALE_MS and keeps fresh/foreign ones', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'lanka-tmpclean-'))
+    try {
+      const old = join(base, 'lanka-ingest-old')
+      const fresh = join(base, 'lanka-ingest-fresh')
+      const foreign = join(base, 'other-old')
+      for (const d of [old, fresh, foreign]) mkdirSync(d)
+      const now = Date.now()
+      const stale = new Date(now - TMP_STALE_MS - 60_000)
+      utimesSync(old, stale, stale)
+      utimesSync(foreign, stale, stale)
+      expect(await cleanupStaleTmp(now, base)).toBe(1)
+      expect(existsSync(old)).toBe(false)
+      expect(existsSync(fresh)).toBe(true)
+      expect(existsSync(foreign)).toBe(true)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
   })
 })
 ```
@@ -824,10 +935,19 @@ describe('createIngestQueue', () => {
 //
 // Single in-process worker that turns staged uploads (media_uploads rows whose
 // bytes already sit in the media store under uploads/<id>) into media rows by
-// running the same ingestMedia() the synchronous endpoint uses. Concurrency is
-// 1 on purpose: ffmpeg already saturates the 2-vCPU prod box. One Nitro
-// process owns the queue — there is no cross-process locking.
-import { and, asc, eq, lt } from 'drizzle-orm'
+// running the same ingestMedia() the synchronous endpoint uses.
+//
+// - Concurrency 1 on purpose: ffmpeg already saturates the 2-vCPU prod box.
+// - Claiming is an atomic conditional UPDATE (queued → processing), so a row is
+//   never processed twice — even if a second process shows up during a deploy.
+// - Failures are classified: h3 4xx from ingestMedia (empty / unprocessable) are
+//   permanent → failed + staged object deleted. Everything else (R2, disk, DB,
+//   preflight) is retryable → staged object kept, back to queued, retried with
+//   a linear backoff, failed after MAX_ATTEMPTS claims.
+import { readdir, rm, stat, statfs } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { and, asc, eq, lt, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import type { MediaStore } from './media-store'
@@ -836,18 +956,56 @@ import { ingestMedia, type IngestInput, type IngestedMedia } from './media-inges
 type Db = BetterSQLite3Database<typeof schema>
 
 export const PENDING_TTL_MS = 24 * 60 * 60 * 1000
-export const MAX_ATTEMPTS = 2
+export const MAX_ATTEMPTS = 3
+export const RETRY_DELAY_MS = 30_000
+export const TMP_STALE_MS = 2 * 60 * 60 * 1000
+const SCRATCH_HEADROOM_BYTES = 256 * 1024 ** 2
 
 export type IngestFn = (db: Db, store: MediaStore, input: IngestInput) => Promise<IngestedMedia>
 
 export interface IngestQueue {
   enqueue(id: string): void
-  /** Resolves once the worker has nothing queued or running. */
   idle(): Promise<void>
-  /** Boot: re-queue jobs interrupted mid-processing (once), enqueue all queued rows. */
+  /** BOOT ONLY — resets `processing` rows left by the previous process, then reconcile(). */
   recover(): Promise<void>
-  /** Expire `pending` jobs older than PENDING_TTL_MS; returns how many. */
+  /** Safe any time — enqueues every `queued` row (lost in-memory enqueue after a crash). */
+  reconcile(): Promise<void>
   sweep(now?: number): Promise<number>
+}
+
+/** ingestMedia signals "this file is bad" with h3 4xx errors; everything else is infrastructure. */
+export function isPermanentIngestError(err: unknown): boolean {
+  const code = (err as { statusCode?: unknown } | null)?.statusCode
+  return typeof code === 'number' && code >= 400 && code < 500
+}
+
+/** Worst case on disk at once: the downloaded input + the transcoded output, plus headroom. */
+export function requiredScratchBytes(bytes: number): number {
+  return 2 * bytes + SCRATCH_HEADROOM_BYTES
+}
+
+async function defaultFreeBytes(): Promise<number> {
+  const s = await statfs(tmpdir())
+  return Number(s.bavail) * Number(s.bsize)
+}
+
+/** Remove abandoned ingest scratch dirs (a SIGKILL mid-transcode skips ingestMedia's finally). */
+export async function cleanupStaleTmp(now: number = Date.now(), dir: string = tmpdir()): Promise<number> {
+  let removed = 0
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    if (!name.startsWith('lanka-ingest-')) continue
+    const p = join(dir, name)
+    try {
+      const s = await stat(p)
+      if (s.isDirectory() && now - s.mtimeMs > TMP_STALE_MS) {
+        await rm(p, { recursive: true, force: true })
+        removed++
+      }
+    } catch {
+      // vanished meanwhile — ignore
+    }
+  }
+  return removed
 }
 
 export function createIngestQueue(deps: {
@@ -855,28 +1013,50 @@ export function createIngestQueue(deps: {
   store: MediaStore
   ingest?: IngestFn
   log?: (msg: string, meta?: unknown) => void
+  retryDelayMs?: number
+  freeBytes?: () => Promise<number>
 }): IngestQueue {
   const { db, store } = deps
   const ingest = deps.ingest ?? ingestMedia
   const log = deps.log ?? ((msg, meta) => console.warn(msg, meta ?? ''))
+  const retryDelayMs = deps.retryDelayMs ?? RETRY_DELAY_MS
+  const freeBytes = deps.freeBytes ?? defaultFreeBytes
+
   const fifo: string[] = []
+  const inFifo = new Set<string>()
   let running: Promise<void> | null = null
+  let pendingRetries = 0
   let idleWaiters: (() => void)[] = []
 
-  async function processOne(id: string): Promise<void> {
-    const row = await db
-      .select()
-      .from(schema.mediaUploads)
-      .where(eq(schema.mediaUploads.id, id))
-      .get()
-    // Cancelled/expired (or never existed) while waiting in the FIFO.
-    if (!row || row.status !== 'queued') return
+  const now = () => new Date()
 
-    await db
-      .update(schema.mediaUploads)
-      .set({ status: 'processing', attempts: row.attempts + 1, updatedAt: new Date() })
-      .where(eq(schema.mediaUploads.id, id))
+  async function deleteStagedQuiet(id: string): Promise<void> {
     try {
+      await store.deleteStaged(id)
+    } catch (err) {
+      log('[ingest-queue] could not delete staged object', { id, err: (err as Error).message })
+    }
+  }
+
+  /** Atomic claim: only a `queued` row flips to `processing`; returns the claimed row or undefined. */
+  async function claim(id: string) {
+    const [row] = await db
+      .update(schema.mediaUploads)
+      .set({ status: 'processing', attempts: sql`${schema.mediaUploads.attempts} + 1`, updatedAt: now() })
+      .where(and(eq(schema.mediaUploads.id, id), eq(schema.mediaUploads.status, 'queued')))
+      .returning()
+    return row
+  }
+
+  async function processOne(id: string): Promise<void> {
+    const row = await claim(id)
+    if (!row) return // cancelled / expired / already taken / unknown
+    try {
+      const free = await freeBytes()
+      const need = requiredScratchBytes(row.bytes)
+      if (free < need) {
+        throw new Error(`Not enough free disk space for ingest (need ${need} bytes, have ${free})`)
+      }
       const stream = await store.openStaged(id)
       const media = await ingest(db, store, {
         stream,
@@ -887,51 +1067,85 @@ export function createIngestQueue(deps: {
       })
       await db
         .update(schema.mediaUploads)
-        .set({ status: 'done', mediaId: media.id, error: null, updatedAt: new Date() })
+        .set({ status: 'done', mediaId: media.id, error: null, updatedAt: now() })
         .where(eq(schema.mediaUploads.id, id))
+      await deleteStagedQuiet(id)
     } catch (err) {
+      const message = (err as Error)?.message || 'Ingest failed'
+      const exhausted = row.attempts >= MAX_ATTEMPTS
+      if (isPermanentIngestError(err) || exhausted) {
+        await db
+          .update(schema.mediaUploads)
+          .set({
+            status: 'failed',
+            error: exhausted && !isPermanentIngestError(err) ? `${message} (gave up after ${row.attempts} attempts)` : message,
+            updatedAt: now()
+          })
+          .where(eq(schema.mediaUploads.id, id))
+        await deleteStagedQuiet(id)
+        return
+      }
+      // Retryable: keep the staged object, surface the last error, back off.
       await db
         .update(schema.mediaUploads)
-        .set({
-          status: 'failed',
-          error: (err as Error).message || 'Ingest failed',
-          updatedAt: new Date()
-        })
+        .set({ status: 'queued', error: message, updatedAt: now() })
         .where(eq(schema.mediaUploads.id, id))
-    } finally {
-      try {
-        await store.deleteStaged(id)
-      } catch (err) {
-        log('[ingest-queue] could not delete staged object', { id, err: (err as Error).message })
-      }
+      log('[ingest-queue] retryable failure, will retry', { id, attempt: row.attempts, err: message })
+      pendingRetries++
+      const t = setTimeout(() => {
+        pendingRetries--
+        enqueue(id)
+      }, retryDelayMs * row.attempts)
+      t.unref?.()
     }
   }
 
   async function loop(): Promise<void> {
     while (fifo.length > 0) {
       const id = fifo.shift()!
+      inFifo.delete(id)
       try {
         await processOne(id)
       } catch (err) {
+        // Only reachable if a status write itself failed; the row stays
+        // `processing` and recover() picks it up on the next maintenance tick.
         log('[ingest-queue] unexpected error', { id, err: (err as Error).message })
       }
     }
     running = null
+    settleIdle()
+  }
+
+  function settleIdle() {
+    if (running || fifo.length > 0 || pendingRetries > 0) return
     const waiters = idleWaiters
     idleWaiters = []
     for (const w of waiters) w()
   }
 
   function enqueue(id: string): void {
+    if (inFifo.has(id)) return
     fifo.push(id)
+    inFifo.add(id)
     if (!running) running = loop()
   }
 
   function idle(): Promise<void> {
-    if (!running) return Promise.resolve()
+    if (!running && fifo.length === 0 && pendingRetries === 0) return Promise.resolve()
     return new Promise((resolve) => idleWaiters.push(resolve))
   }
 
+  async function reconcile(): Promise<void> {
+    const queued = await db
+      .select({ id: schema.mediaUploads.id })
+      .from(schema.mediaUploads)
+      .where(eq(schema.mediaUploads.status, 'queued'))
+      .orderBy(asc(schema.mediaUploads.createdAt))
+    for (const r of queued) enqueue(r.id)
+  }
+
+  // Boot only: nothing else is running, so every `processing` row is an
+  // interrupted attempt. Running this periodically would reset live jobs.
   async function recover(): Promise<void> {
     const stuck = await db
       .select()
@@ -941,57 +1155,46 @@ export function createIngestQueue(deps: {
       if (row.attempts >= MAX_ATTEMPTS) {
         await db
           .update(schema.mediaUploads)
-          .set({ status: 'failed', error: 'Interrupted during processing', updatedAt: new Date() })
+          .set({ status: 'failed', error: 'Interrupted during processing', updatedAt: now() })
           .where(eq(schema.mediaUploads.id, row.id))
-        try {
-          await store.deleteStaged(row.id)
-        } catch (err) {
-          log('[ingest-queue] could not delete staged object', { id: row.id, err: (err as Error).message })
-        }
+        await deleteStagedQuiet(row.id)
       } else {
         await db
           .update(schema.mediaUploads)
-          .set({ status: 'queued', updatedAt: new Date() })
+          .set({ status: 'queued', updatedAt: now() })
           .where(eq(schema.mediaUploads.id, row.id))
       }
     }
-    const queued = await db
-      .select({ id: schema.mediaUploads.id })
-      .from(schema.mediaUploads)
-      .where(eq(schema.mediaUploads.status, 'queued'))
-      .orderBy(asc(schema.mediaUploads.createdAt))
-    for (const r of queued) enqueue(r.id)
+    await reconcile()
   }
 
-  async function sweep(now: number = Date.now()): Promise<number> {
+  async function sweep(at: number = Date.now()): Promise<number> {
     const stale = await db
       .select()
       .from(schema.mediaUploads)
       .where(
         and(
           eq(schema.mediaUploads.status, 'pending'),
-          lt(schema.mediaUploads.createdAt, new Date(now - PENDING_TTL_MS))
+          lt(schema.mediaUploads.createdAt, new Date(at - PENDING_TTL_MS))
         )
       )
     for (const row of stale) {
-      try {
-        await store.deleteStaged(row.id)
-      } catch (err) {
-        log('[ingest-queue] could not delete staged object', { id: row.id, err: (err as Error).message })
-      }
+      await deleteStagedQuiet(row.id)
       await db
         .update(schema.mediaUploads)
-        .set({ status: 'expired', error: 'Upload was never completed', updatedAt: new Date(now) })
+        .set({ status: 'expired', error: 'Upload was never completed', updatedAt: new Date(at) })
         .where(eq(schema.mediaUploads.id, row.id))
     }
     return stale.length
   }
 
-  return { enqueue, idle, recover, sweep }
+  return { enqueue, idle, recover, reconcile, sweep }
 }
 ```
 
-- [ ] **Step 4: Run** — `pnpm vitest run tests/services/media-ingest-queue.test.ts` — Expected: PASS (6 tests).
+Note on the retry test with `retryDelayMs: 0`: the `setTimeout(…, 0)` still yields to the event loop, so `idle()` must count `pendingRetries` (it does) — otherwise tests would resolve before the retry ran.
+
+- [ ] **Step 4: Run** — `pnpm vitest run tests/services/media-ingest-queue.test.ts` — Expected: PASS (12 tests).
 
 - [ ] **Step 5: Singleton + plugin** (no tests — thin wiring; the plugin must never be imported by tests)
 
@@ -1016,36 +1219,48 @@ export function _setIngestQueue(queue: IngestQueue | null): void {
 ```ts
 // server/plugins/ingest-worker.ts
 //
-// Boots the async media-ingest worker: expire abandoned uploads, re-queue jobs
-// interrupted by the last restart, then sweep hourly. Jobs are enqueued live by
-// POST /api/media/uploads/:id/complete.
+// Boots the async media-ingest worker and keeps it honest:
+//  - boot: drop abandoned ingest scratch dirs, expire stale pending uploads,
+//    re-queue jobs interrupted by the last restart (recover — boot ONLY: it
+//    resets `processing` rows, which would clobber a live transcode if run later);
+//  - every 5 min: scratch cleanup + sweep + reconcile (re-enqueue `queued` rows
+//    whose in-memory enqueue was lost, e.g. a crash right after /complete).
+// Jobs are enqueued live by POST /api/media/uploads/:id/complete.
 import { useIngestQueue } from '~/server/services/ingest-queue-singleton'
+import { cleanupStaleTmp } from '~/server/services/media-ingest-queue'
 
-const SWEEP_INTERVAL_MS = 60 * 60 * 1000
+const MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000
 
 export default defineNitroPlugin(async () => {
   const queue = useIngestQueue()
-  try {
-    const expired = await queue.sweep()
-    if (expired > 0) console.log(`[ingest-queue] expired ${expired} abandoned upload(s)`)
-    await queue.recover()
-  } catch (err) {
-    console.error('[ingest-queue] boot recovery failed', err)
+
+  async function maintain(label: 'boot' | 'periodic') {
+    try {
+      const tmp = await cleanupStaleTmp()
+      const expired = await queue.sweep()
+      if (label === 'boot') await queue.recover()
+      else await queue.reconcile()
+      if (tmp > 0 || expired > 0) {
+        console.log(`[ingest-queue] ${label}: removed ${tmp} stale tmp dir(s), expired ${expired} upload(s)`)
+      }
+    } catch (err) {
+      console.error(`[ingest-queue] ${label} maintenance failed`, err)
+    }
   }
-  const timer = setInterval(() => {
-    queue.sweep().catch((err) => console.warn('[ingest-queue] sweep failed', err))
-  }, SWEEP_INTERVAL_MS)
+
+  await maintain('boot')
+  const timer = setInterval(() => void maintain('periodic'), MAINTENANCE_INTERVAL_MS)
   timer.unref()
 })
 ```
 
-- [ ] **Step 6: Full suite + build** — `pnpm test` then `pnpm build` — Expected: green; build succeeds (the plugin compiles; no runtime check yet).
+- [ ] **Step 6: Full suite + build** — `pnpm test` then `pnpm build` — Expected: green; build succeeds.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add server/services/media-ingest-queue.ts server/services/ingest-queue-singleton.ts server/plugins/ingest-worker.ts tests/services/media-ingest-queue.test.ts
-git commit -m "feat(media): in-process ingest queue with boot recovery + pending sweep"
+git commit -m "feat(media): in-process ingest queue — atomic claim, retry/permanent failure split, recovery + sweep"
 ```
 
 ---
@@ -1055,7 +1270,7 @@ git commit -m "feat(media): in-process ingest queue with boot recovery + pending
 **Files:**
 - Create: `server/services/media-uploads.ts`, `server/api/media/uploads/index.post.ts`, `server/api/media/uploads/index.get.ts`, `server/api/media/uploads/[id].get.ts`, `server/api/media/uploads/[id].delete.ts`
 - Modify: `nuxt.config.ts` (runtimeConfig), `scripts/entrypoint.sh:54`, `.env.example`
-- Test: `tests/api/media-uploads.test.ts`
+- Test: `tests/api/media-uploads.test.ts`, `tests/services/auth-guard.test.ts` (append)
 
 **Interfaces:**
 - Consumes: `schema.mediaUploads` (Task 1), `MediaStore.createStagedUpload/deleteStaged` (Task 3).
@@ -1066,6 +1281,7 @@ git commit -m "feat(media): in-process ingest queue with boot recovery + pending
   export interface UploadJob extends UploadJobRow { media?: IngestedMedia | null }
   export const ACTIVE_UPLOAD_STATUSES = ['pending', 'queued', 'processing'] as const
   export const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 ** 3
+  export const HARD_MAX_UPLOAD_BYTES = 5 * 1024 ** 3   // R2 single-PUT limit; config is clamped to it
   export function isUuid(s: unknown): s is string
   export function parseKind(raw: unknown): 'video' | 'image'          // throws 400
   export function parseQuality(raw: unknown): QualityPreset           // throws 400, default 'standard'
@@ -1159,9 +1375,19 @@ describe('upload job API', () => {
       await expect(handleCreateUpload(db, store, input as any, { maxBytes: MAX })).rejects.toThrow(re)
     })
 
-    it('caps the filename at 255 chars', async () => {
+    it('caps the filename at 255 characters (code points, not UTF-16 units)', async () => {
       const res = await handleCreateUpload(db, store, { ...valid, filename: 'x'.repeat(300) }, { maxBytes: MAX })
       expect(res.filename).toHaveLength(255)
+      const emoji = await handleCreateUpload(db, store, { ...valid, filename: '😀'.repeat(300) }, { maxBytes: MAX })
+      expect(Array.from(emoji.filename)).toHaveLength(255)
+    })
+
+    it('does not leave a row behind when presigning fails', async () => {
+      const broken = Object.assign(Object.create(store), {
+        createStagedUpload: async () => { throw new Error('presign exploded') }
+      })
+      await expect(handleCreateUpload(db, broken, valid, { maxBytes: MAX })).rejects.toThrow('presign exploded')
+      expect(await db.select().from(schema.mediaUploads)).toHaveLength(0)
     })
   })
 
@@ -1207,6 +1433,14 @@ describe('upload job API', () => {
       await expect(handleCancelUpload(db, store, B)).rejects.toMatchObject({ statusCode: 409 })
       await expect(handleCancelUpload(db, store, C)).rejects.toMatchObject({ statusCode: 404 })
     })
+
+    it('two concurrent cancels: exactly one succeeds, the other 404s', async () => {
+      await seed(A, 'pending')
+      const results = await Promise.allSettled([handleCancelUpload(db, store, A), handleCancelUpload(db, store, A)])
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+      const failed = results.find((r) => r.status === 'rejected') as PromiseRejectedResult
+      expect(failed.reason.statusCode).toBe(404)
+    })
   })
 })
 ```
@@ -1228,6 +1462,8 @@ export interface UploadJob extends UploadJobRow {
 
 export const ACTIVE_UPLOAD_STATUSES = ['pending', 'queued', 'processing'] as const
 export const DEFAULT_MAX_UPLOAD_BYTES = 2 * 1024 ** 3 // 2 GiB
+/** R2 accepts at most 5 GiB in a single PUT; the design uses single PUTs, so never allow more. */
+export const HARD_MAX_UPLOAD_BYTES = 5 * 1024 ** 3
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const QUALITIES: readonly QualityPreset[] = ['low', 'standard', 'high']
@@ -1267,6 +1503,7 @@ import { useMediaStore } from '~/server/services/media-store-singleton'
 import type { MediaStore, StagedUploadTicket } from '~/server/services/media-store'
 import {
   DEFAULT_MAX_UPLOAD_BYTES,
+  HARD_MAX_UPLOAD_BYTES,
   parseKind,
   parseQuality,
   toUploadJob,
@@ -1292,7 +1529,9 @@ export async function handleCreateUpload(
   const kind = parseKind(input.kind)
   const quality = parseQuality(input.quality)
 
-  const filename = typeof input.filename === 'string' ? input.filename.trim().slice(0, 255) : ''
+  // 255 code points (slice() would cut UTF-16 surrogate pairs in half).
+  const filename =
+    typeof input.filename === 'string' ? Array.from(input.filename.trim()).slice(0, 255).join('') : ''
   if (!filename) throw createError({ statusCode: 400, message: 'filename is required' })
 
   // Browser-supplied hint only (ffprobe decides for video). Browsers report an
@@ -1313,18 +1552,21 @@ export async function handleCreateUpload(
     })
   }
 
+  // Presign first: if the store/SDK fails there is no orphaned `pending` row.
   const id = randomUUID()
+  const upload = await store.createStagedUpload(id, { contentType: mimeType, bytes })
   const [row] = await db
     .insert(schema.mediaUploads)
     .values({ id, filename, kind, quality, mimeType, bytes, status: 'pending' })
     .returning()
-  const upload = await store.createStagedUpload(id, { contentType: mimeType, bytes })
   return { ...toUploadJob(row), upload }
 }
 
+/** runtimeConfig.maxUploadBytes, defaulted and clamped to the single-PUT limit. */
 export function maxUploadBytesFromConfig(): number {
   const raw = Number((useRuntimeConfig() as any).maxUploadBytes)
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_UPLOAD_BYTES
+  const value = Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_UPLOAD_BYTES
+  return Math.min(value, HARD_MAX_UPLOAD_BYTES)
 }
 
 export default defineEventHandler(async (event) => {
@@ -1425,7 +1667,7 @@ export default defineEventHandler((event) => {
 
 ```ts
 // server/api/media/uploads/[id].delete.ts
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
@@ -1449,8 +1691,15 @@ export async function handleCancelUpload(
   if (row.status !== 'pending') {
     throw createError({ statusCode: 409, message: `Upload is ${row.status}; only pending uploads can be cancelled` })
   }
+  // Conditional delete: a concurrent /complete may have moved it on (or a
+  // concurrent cancel may have won). Only the request that actually removed
+  // the pending row cleans up storage.
+  const deleted = await db
+    .delete(schema.mediaUploads)
+    .where(and(eq(schema.mediaUploads.id, id), eq(schema.mediaUploads.status, 'pending')))
+    .returning({ id: schema.mediaUploads.id })
+  if (deleted.length === 0) throw createError({ statusCode: 404, message: 'Upload not found' })
   await store.deleteStaged(id)
-  await db.delete(schema.mediaUploads).where(eq(schema.mediaUploads.id, id))
 }
 
 export default defineEventHandler(async (event) => {
@@ -1461,12 +1710,33 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
-- [ ] **Step 6: Run** — `pnpm vitest run tests/api/media-uploads.test.ts` — Expected: PASS. Then `pnpm test` green.
+- [ ] **Step 6: Pin the auth policy for the new routes** — append to `tests/services/auth-guard.test.ts` (uses the existing `decideAccess`/`isPublicRoute` imports and user fixtures of that file):
 
-- [ ] **Step 7: Commit**
+```ts
+describe('upload job routes stay session-gated', () => {
+  const admin = { id: 1, email: 'a@x', role: 'admin' as const, organizationId: null }
+  const client = { id: 2, email: 'c@x', role: 'client' as const, organizationId: 1 }
+  const paths = [
+    '/api/media/uploads',
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111',
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111/file',
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111/complete'
+  ]
+  it.each(paths)('%s is not public, 401 anonymous, 403 client, ok admin', (p) => {
+    expect(isPublicRoute(p)).toBe(false)
+    expect(decideAccess(p, null)).toEqual({ ok: false, status: 401 })
+    expect(decideAccess(p, client)).toEqual({ ok: false, status: 403 })
+    expect(decideAccess(p, admin)).toEqual({ ok: true })
+  })
+})
+```
+
+- [ ] **Step 7: Run** — `pnpm vitest run tests/api/media-uploads.test.ts tests/services/auth-guard.test.ts` — Expected: PASS. Then `pnpm test` green.
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add server/services/media-uploads.ts server/api/media/uploads nuxt.config.ts scripts/entrypoint.sh .env.example tests/api/media-uploads.test.ts
+git add server/services/media-uploads.ts server/api/media/uploads nuxt.config.ts scripts/entrypoint.sh .env.example tests/api/media-uploads.test.ts tests/services/auth-guard.test.ts
 git commit -m "feat(api): upload jobs — create/list/get/cancel + MAX_UPLOAD_BYTES"
 ```
 
@@ -1483,10 +1753,12 @@ git commit -m "feat(api): upload jobs — create/list/get/cancel + MAX_UPLOAD_BY
 - Produces:
   ```ts
   handleCompleteUpload(db, store, queue: Pick<IngestQueue, 'enqueue'>, id: string): Promise<UploadJob>
+    // idempotent: pending → queued (+enqueue); queued/processing/done → returns the job unchanged; failed/expired → 409
   handleReceiveUploadFile(db, store, id: string, body: Readable, contentLength: number | null, opts: { maxBytes: number }): Promise<void>
+    // requires seen === declared bytes; deletes any staged remnant on failure
   ```
 
-- [ ] **Step 1: Write the failing tests** (append inside the top-level `describe('upload job API')`; add imports `import { handleCompleteUpload } from '~/server/api/media/uploads/[id]/complete.post'` and `import { handleReceiveUploadFile } from '~/server/api/media/uploads/[id]/file.put'`)
+- [ ] **Step 1: Write the failing tests** (append inside the top-level `describe('upload job API')`; add imports `import { handleCompleteUpload } from '~/server/api/media/uploads/[id]/complete.post'` and `import { handleReceiveUploadFile } from '~/server/api/media/uploads/[id]/file.put'`; `handleCancelUpload` is already imported)
 
 ```ts
   describe('complete + file', () => {
@@ -1516,18 +1788,62 @@ git commit -m "feat(api): upload jobs — create/list/get/cancel + MAX_UPLOAD_BY
         handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('abcd')]), 3, { maxBytes: MAX })
       ).rejects.toThrow(/declared/)
       expect(await store.statStaged(A)).toBeNull()
+      // body shorter than declared (client disconnected) → error, nothing staged
+      await expect(
+        handleReceiveUploadFile(db, store, A, Readable.from([Buffer.from('ab')]), 3, { maxBytes: MAX })
+      ).rejects.toThrow(/declared/)
+      expect(await store.statStaged(A)).toBeNull()
       await db.update(schema.mediaUploads).set({ status: 'queued' }).where(eq(schema.mediaUploads.id, A))
       await expect(handleReceiveUploadFile(db, store, A, body(), 3, { maxBytes: MAX })).rejects.toMatchObject({ statusCode: 409 })
     })
 
-    it('handleCompleteUpload verifies the staged size, queues, and enqueues', async () => {
+    it('handleCompleteUpload verifies the staged size, queues, enqueues once, and is idempotent', async () => {
       await seedPending(3)
       await store.putStaged(A, Readable.from([Buffer.from('abc')]), 'image/png')
       const enqueue = vi.fn()
       const job = await handleCompleteUpload(db, store, { enqueue }, A)
       expect(job.status).toBe('queued')
       expect(enqueue).toHaveBeenCalledWith(A)
+      // repeat (lost response, client retry): same job back, no second enqueue
+      const again = await handleCompleteUpload(db, store, { enqueue }, A)
+      expect(again.status).toBe('queued')
+      expect(enqueue).toHaveBeenCalledTimes(1)
+      await db.update(schema.mediaUploads).set({ status: 'failed' }).where(eq(schema.mediaUploads.id, A))
       await expect(handleCompleteUpload(db, store, { enqueue }, A)).rejects.toMatchObject({ statusCode: 409 })
+    })
+
+    it('two concurrent completes enqueue exactly once', async () => {
+      await seedPending(3)
+      await store.putStaged(A, Readable.from([Buffer.from('abc')]), 'image/png')
+      const enqueue = vi.fn()
+      const results = await Promise.allSettled([
+        handleCompleteUpload(db, store, { enqueue }, A),
+        handleCompleteUpload(db, store, { enqueue }, A)
+      ])
+      expect(results.every((r) => r.status === 'fulfilled')).toBe(true)
+      expect(enqueue).toHaveBeenCalledTimes(1)
+      expect((await jobRow()).status).toBe('queued')
+    })
+
+    it('complete vs cancel race: one wins, the other fails cleanly, no enqueue of a deleted row', async () => {
+      await seedPending(3)
+      await store.putStaged(A, Readable.from([Buffer.from('abc')]), 'image/png')
+      const enqueue = vi.fn()
+      const [c, d] = await Promise.allSettled([
+        handleCompleteUpload(db, store, { enqueue }, A),
+        handleCancelUpload(db, store, A)
+      ])
+      const row = await db.select().from(schema.mediaUploads).where(eq(schema.mediaUploads.id, A)).get()
+      if (c.status === 'fulfilled') {
+        expect(d.status).toBe('rejected')
+        expect(row?.status).toBe('queued')
+        expect(enqueue).toHaveBeenCalledTimes(1)
+      } else {
+        expect(d.status).toBe('fulfilled')
+        expect(row).toBeUndefined()
+        expect(enqueue).not.toHaveBeenCalled()
+        expect((c as PromiseRejectedResult).reason.statusCode).toBe(404)
+      }
     })
 
     it('handleCompleteUpload fails the job when the staged object is missing or mismatched', async () => {
@@ -1558,7 +1874,7 @@ git commit -m "feat(api): upload jobs — create/list/get/cancel + MAX_UPLOAD_BY
 
 ```ts
 // server/api/media/uploads/[id]/complete.post.ts
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
@@ -1582,8 +1898,12 @@ export async function handleCompleteUpload(
     .where(eq(schema.mediaUploads.id, id))
     .get()
   if (!row) throw createError({ statusCode: 404, message: 'Upload not found' })
+  // Idempotent for a client whose first /complete response was lost.
+  if (row.status === 'queued' || row.status === 'processing' || row.status === 'done') {
+    return toUploadJob(row)
+  }
   if (row.status !== 'pending') {
-    throw createError({ statusCode: 409, message: `Upload is already ${row.status}` })
+    throw createError({ statusCode: 409, message: `Upload is ${row.status}` })
   }
 
   const staged = await store.statStaged(id)
@@ -1591,19 +1911,34 @@ export async function handleCompleteUpload(
     const message = !staged
       ? 'Uploaded file not found in storage'
       : `Uploaded size ${staged.bytes} does not match declared ${row.bytes}`
-    await store.deleteStaged(id)
+    // Conditional too: don't resurrect a row a concurrent cancel just deleted.
     await db
       .update(schema.mediaUploads)
       .set({ status: 'failed', error: message, updatedAt: new Date() })
-      .where(eq(schema.mediaUploads.id, id))
+      .where(and(eq(schema.mediaUploads.id, id), eq(schema.mediaUploads.status, 'pending')))
+    await store.deleteStaged(id)
     throw createError({ statusCode: 400, message })
   }
 
+  // Atomic transition: only the request that flips pending → queued enqueues.
   const [updated] = await db
     .update(schema.mediaUploads)
     .set({ status: 'queued', updatedAt: new Date() })
-    .where(eq(schema.mediaUploads.id, id))
+    .where(and(eq(schema.mediaUploads.id, id), eq(schema.mediaUploads.status, 'pending')))
     .returning()
+  if (!updated) {
+    // Lost the race: re-read and report whatever state won.
+    const current = await db
+      .select()
+      .from(schema.mediaUploads)
+      .where(eq(schema.mediaUploads.id, id))
+      .get()
+    if (!current) throw createError({ statusCode: 404, message: 'Upload not found' })
+    if (current.status === 'queued' || current.status === 'processing' || current.status === 'done') {
+      return toUploadJob(current)
+    }
+    throw createError({ statusCode: 409, message: `Upload is ${current.status}` })
+  }
   queue.enqueue(id)
   return toUploadJob(updated)
 }
@@ -1658,17 +1993,27 @@ export async function handleReceiveUploadFile(
     throw createError({ statusCode: 413, message: 'File exceeds the upload limit' })
   }
 
-  // Belt and braces: a client can lie in content-length, so count the bytes.
+  // Belt and braces: content-length can lie and a client can disconnect early,
+  // so require exactly the declared byte count end-to-end.
   let seen = 0
   const declared = row.bytes
-  const limiter = new Transform({
+  const exact = new Transform({
     transform(chunk: Buffer, _enc, cb) {
       seen += chunk.length
       if (seen > declared) return cb(new Error(`Body exceeds declared ${declared} bytes`))
       cb(null, chunk)
+    },
+    flush(cb) {
+      if (seen !== declared) return cb(new Error(`Body has ${seen} bytes, declared ${declared}`))
+      cb()
     }
   })
-  await store.putStaged(id, body.pipe(limiter), row.mimeType)
+  try {
+    await store.putStaged(id, body.pipe(exact), row.mimeType)
+  } catch (err) {
+    await store.deleteStaged(id).catch(() => {})
+    throw err
+  }
 }
 
 export default defineEventHandler(async (event) => {
@@ -1795,21 +2140,33 @@ describe('uploadFile', () => {
     const p = uploadFile({ method: 'PUT', url: '/u', headers: {}, file }, factory)
     xhr.status = 403
     xhr.onload!()
-    await expect(p).rejects.toMatchObject({ status: 403, aborted: false })
-    await expect(p).rejects.toBeInstanceOf(UploadError)
+    const err = await p.catch((e) => e)
+    expect(err).toBeInstanceOf(UploadError)
+    expect(err).toMatchObject({ status: 403, aborted: false })
   })
 
-  it('rejects on network error and on abort via AbortSignal', async () => {
+  it('rejects on network error and on abort via AbortSignal; abort listener is detached afterwards', async () => {
     const a = setup()
     const p1 = uploadFile({ method: 'PUT', url: '/u', headers: {}, file: a.file }, a.factory)
     a.xhr.onerror!()
-    await expect(p1).rejects.toMatchObject({ status: null, aborted: false })
+    expect(await p1.catch((e) => e)).toMatchObject({ status: null, aborted: false })
 
     const b = setup()
     const ctrl = new AbortController()
     const p2 = uploadFile({ method: 'PUT', url: '/u', headers: {}, file: b.file, signal: ctrl.signal }, b.factory)
     ctrl.abort()
-    await expect(p2).rejects.toMatchObject({ aborted: true })
+    expect(await p2.catch((e) => e)).toMatchObject({ aborted: true })
+
+    // completed upload: a later abort() on the same signal must not call xhr.abort()
+    const c = setup()
+    const ctrl2 = new AbortController()
+    const abortSpy = vi.spyOn(c.xhr, 'abort')
+    const p3 = uploadFile({ method: 'PUT', url: '/u', headers: {}, file: c.file, signal: ctrl2.signal }, c.factory)
+    c.xhr.status = 200
+    c.xhr.onload!()
+    await p3
+    ctrl2.abort()
+    expect(abortSpy).not.toHaveBeenCalled()
   })
 })
 ```
@@ -1920,6 +2277,15 @@ export function uploadFile(
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const xhr = factory()
+    const onAbortSignal = () => xhr.abort()
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      req.signal?.removeEventListener('abort', onAbortSignal)
+      fn()
+    }
+
     xhr.open(req.method, req.url, true)
     xhr.withCredentials = false
     for (const [k, v] of Object.entries(req.headers)) xhr.setRequestHeader(k, v)
@@ -1927,23 +2293,24 @@ export function uploadFile(
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && e.total > 0) req.onProgress?.(e.loaded / e.total)
     }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        req.onProgress?.(1)
-        resolve()
-      } else {
-        reject(new UploadError(`Upload failed with HTTP ${xhr.status}`, xhr.status))
-      }
-    }
-    xhr.onerror = () => reject(new UploadError('Network error during upload', null))
-    xhr.onabort = () => reject(new UploadError('Upload cancelled', null, true))
+    xhr.onload = () =>
+      settle(() => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          req.onProgress?.(1)
+          resolve()
+        } else {
+          reject(new UploadError(`Upload failed with HTTP ${xhr.status}`, xhr.status))
+        }
+      })
+    xhr.onerror = () => settle(() => reject(new UploadError('Network error during upload', null)))
+    xhr.onabort = () => settle(() => reject(new UploadError('Upload cancelled', null, true)))
 
     if (req.signal) {
       if (req.signal.aborted) {
-        xhr.abort()
+        settle(() => reject(new UploadError('Upload cancelled', null, true)))
         return
       }
-      req.signal.addEventListener('abort', () => xhr.abort(), { once: true })
+      req.signal.addEventListener('abort', onAbortSignal, { once: true })
     }
     xhr.send(req.file)
   })
@@ -2200,20 +2567,22 @@ export const useMediaStore = defineStore('media', {
       }, POLL_INTERVAL_MS)
     },
 
-    /** One polling round over every tracked job. */
+    /** One polling round over every tracked job (in parallel — one slow job must not stall the round). */
     async tick() {
+      const tracked = [...this.uploads]
+      const results = await Promise.allSettled(tracked.map((u) => this._api.getUpload(u.id)))
       let refresh = false
-      for (const tracked of [...this.uploads]) {
-        try {
-          const fresh = await this._api.getUpload(tracked.id)
-          this.applyUpload(fresh)
-          if (fresh.status === 'done') refresh = true
-        } catch (err: any) {
-          const status = err?.status ?? err?.statusCode ?? err?.response?.status
-          if (status === 404) this.uploads = this.uploads.filter((u) => u.id !== tracked.id)
-          // other errors: keep the job, retry next round
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          this.applyUpload(r.value)
+          if (r.value.status === 'done') refresh = true
+          return
         }
-      }
+        const err: any = r.reason
+        const status = err?.status ?? err?.statusCode ?? err?.response?.status
+        if (status === 404) this.uploads = this.uploads.filter((u) => u.id !== tracked[i].id)
+        // other errors: keep the job, retry next round
+      })
       if (refresh) await this.refresh()
       this.schedulePoll()
     },
@@ -2225,7 +2594,12 @@ export const useMediaStore = defineStore('media', {
         return
       }
       this.uploads = rest
-      if (job.status === 'failed' || job.status === 'expired') this.failedUploads.push(job)
+      if (
+        (job.status === 'failed' || job.status === 'expired') &&
+        !this.failedUploads.some((f) => f.id === job.id)
+      ) {
+        this.failedUploads.push(job)
+      }
     },
 
     takeFailedUploads(): UploadJob[] {
@@ -2258,13 +2632,50 @@ git commit -m "feat(dashboard): media store drives async uploads + polls job sta
 ### Task 10: `MediaUploadDialog.vue` — sequential uploads with progress + cancel (+ i18n)
 
 **Files:**
+- Create: `app/components/MediaUploadDialog.logic.ts`
 - Modify: `app/components/MediaUploadDialog.vue` (rewrite script + file list), `i18n/locales/en.json`, `i18n/locales/uk.json` (`components.mediaUploadDialog`)
+- Test: `tests/components/MediaUploadDialog.test.ts`
 
 **Interfaces:**
 - Consumes: `store.startUpload(file, { kind, quality, onProgress, signal })` (Task 9).
-- Produces: emits `uploaded` once ≥1 file is queued; closes itself when every file is queued.
+- Produces: `kindOf(file: { name: string; type: string }): 'video' | 'image'` in the `.logic.ts` file; the dialog emits `uploaded` once ≥1 file is queued and closes itself when every file is queued. While uploading the modal is **not dismissible** (`:dismissible="!uploading"`) and any `update:open=false` goes through `cancel()`.
 
-No unit test (SFC); verified by `pnpm build` + the manual check in Task 13.
+The SFC itself has no unit test (no @vue/test-utils in this repo — same as every other component); its pure logic lives in `.logic.ts` and is tested like `PlaylistEditor.logic.ts`. Escape/backdrop behaviour is verified by hand in Task 13.
+
+- [ ] **Step 0: Logic module + test**
+
+```ts
+// app/components/MediaUploadDialog.logic.ts
+const VIDEO_EXT = /\.(mp4|m4v|mov|mkv|webm|avi|mpe?g|ts)$/i
+
+/** Browsers report an empty type for unknown extensions (.mkv, .ts); fall back to the extension. */
+export function kindOf(f: { name: string; type: string }): 'video' | 'image' {
+  if (f.type.startsWith('video/')) return 'video'
+  if (f.type.startsWith('image/')) return 'image'
+  return VIDEO_EXT.test(f.name) ? 'video' : 'image'
+}
+```
+
+```ts
+// tests/components/MediaUploadDialog.test.ts
+import { describe, it, expect } from 'vitest'
+import { kindOf } from '~/app/components/MediaUploadDialog.logic'
+
+describe('kindOf', () => {
+  it.each([
+    [{ name: 'a.mp4', type: 'video/mp4' }, 'video'],
+    [{ name: 'a.png', type: 'image/png' }, 'image'],
+    [{ name: 'clip.mkv', type: '' }, 'video'],
+    [{ name: 'clip.TS', type: '' }, 'video'],
+    [{ name: 'photo.heic', type: '' }, 'image'],
+    [{ name: 'weird.mp4', type: 'image/png' }, 'image'] // explicit type wins
+  ])('%o → %s', (f, expected) => {
+    expect(kindOf(f)).toBe(expected)
+  })
+})
+```
+
+Run `pnpm vitest run tests/components/MediaUploadDialog.test.ts` — expected FAIL (module missing) before creating the `.logic.ts` file, PASS after.
 
 - [ ] **Step 1: i18n strings**
 
@@ -2295,6 +2706,7 @@ In `i18n/locales/uk.json` the same keys:
 ```ts
 <script setup lang="ts">
 import { useMediaStore } from '~/app/stores/media'
+import { kindOf } from './MediaUploadDialog.logic'
 
 const props = defineProps<{ modelValue: boolean }>()
 const emit = defineEmits<{
@@ -2319,16 +2731,6 @@ const uploading = ref(false)
 const dragOver = ref(false)
 const quality = ref<'low' | 'standard' | 'high'>('standard')
 let controller: AbortController | null = null
-
-const VIDEO_EXT = /\.(mp4|m4v|mov|mkv|webm|avi|mpe?g|ts)$/i
-
-// Browsers report an empty type for unknown extensions (.mkv, .ts) — fall
-// back to the extension so such clips are still treated as video.
-function kindOf(f: File): 'video' | 'image' {
-  if (f.type.startsWith('video/')) return 'video'
-  if (f.type.startsWith('image/')) return 'image'
-  return VIDEO_EXT.test(f.name) ? 'video' : 'image'
-}
 
 function add(files: Iterable<File>) {
   for (const f of files) items.value.push({ file: f, kind: kindOf(f), state: 'idle', progress: 0 })
@@ -2410,8 +2812,27 @@ function cancel() {
   emit('update:modelValue', false)
 }
 
+// Escape / backdrop / X all arrive here. While a transfer is running the modal
+// is marked non-dismissible, but route any close attempt through cancel() anyway
+// so an aborted XHR never outlives a hidden dialog.
+function onOpenChange(open: boolean) {
+  if (open) return emit('update:modelValue', true)
+  cancel()
+}
+
 const pendingCount = computed(() => items.value.filter((it) => it.state !== 'queued').length)
 </script>
+```
+
+Also change the `<UModal>` opening tag to:
+
+```html
+  <UModal
+    :open="modelValue"
+    :dismissible="!uploading"
+    @update:open="onOpenChange"
+    :ui="{ width: 'sm:max-w-2xl' }"
+  >
 ```
 
 - [ ] **Step 3: Update the template's file list and buttons**
@@ -2482,12 +2903,12 @@ Replace the footer buttons with:
 
 Everything else in the template (modal, drop zone, quality select) stays. The drop zone's `<input type="file">` keeps calling `onPick`.
 
-- [ ] **Step 4: Build** — `pnpm build` — Expected: succeeds with no Vue compiler errors (Task 9 removed `store.upload`, so any leftover reference would fail here).
+- [ ] **Step 4: Build + tests** — `pnpm build && pnpm vitest run tests/components` — Expected: build succeeds with no Vue compiler errors (Task 9 removed `store.upload`, so any leftover reference would fail here); logic tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add app/components/MediaUploadDialog.vue i18n/locales/en.json i18n/locales/uk.json
+git add app/components/MediaUploadDialog.vue app/components/MediaUploadDialog.logic.ts tests/components/MediaUploadDialog.test.ts i18n/locales/en.json i18n/locales/uk.json
 git commit -m "feat(dashboard): upload dialog streams files one by one with progress + cancel"
 ```
 
@@ -2604,25 +3025,35 @@ git commit -m "feat(dashboard): processing placeholder cards for in-flight uploa
 
 ---
 
-### Task 12: Ops + docs — R2 CORS script, README, CLAUDE.md
+### Task 12: Ops + docs — R2 bucket setup script (CORS + lifecycle), README, CLAUDE.md, follow-ups
 
 **Files:**
-- Create: `scripts/r2-cors.mjs`
-- Modify: `README.md` (Environment variables §, "Known limitations" §, Media §), `CLAUDE.md` (Architecture gotchas)
+- Create: `scripts/r2-bucket-setup.mjs`
+- Modify: `README.md` (Environment variables §, "Known limitations" §, Media §, Common tasks §), `CLAUDE.md` (Architecture gotchas), `docs/audit-2026-06-28-followups.md` (append)
 
-- [ ] **Step 1: CORS script** (plain `.mjs` so it runs with bare `node` inside the prod container, where `@aws-sdk/client-s3` already lives in `/app/node_modules`; accepts both the plain and the `NUXT_`-bridged env names)
+- [ ] **Step 1: Bucket setup script** (plain `.mjs` so it runs with bare `node` inside the prod container, where `@aws-sdk/client-s3` already lives in `/app/node_modules`; accepts both the plain and the `NUXT_`-bridged env names). It **merges** the Lanka CORS rule into whatever rules already exist (never clobbers other consumers) and installs a **lifecycle rule expiring `uploads/` objects after 1 day** — the storage-level backstop for the app's 24 h sweeper.
 
 ```js
-// scripts/r2-cors.mjs
+// scripts/r2-bucket-setup.mjs
 //
-// One-off: install the CORS rule that lets the dashboard PUT presigned uploads
-// straight to the R2 S3 endpoint (see docs/superpowers/specs/2026-08-22-direct-
-// r2-upload-async-ingest-design.md). Idempotent — re-running replaces the rule.
+// One-off bucket configuration for direct-to-R2 uploads (see
+// docs/superpowers/specs/2026-08-22-direct-r2-upload-async-ingest-design.md):
+//   1. CORS: allow the dashboard origin to PUT presigned uploads (merged into
+//      any existing rules — other rules are preserved).
+//   2. Lifecycle: expire staged objects under uploads/ after 1 day, in case
+//      the app's own sweeper never gets to them (downtime, rollback, lost row).
+// Idempotent — re-running replaces only the Lanka-managed rules.
 //
-// Local:   set -a; . ./.env; set +a; node scripts/r2-cors.mjs --origin https://app.lanka.live
-// Prod:    docker cp scripts/r2-cors.mjs lanka:/tmp/r2-cors.mjs \
-//          && docker exec -w /app lanka node /tmp/r2-cors.mjs --origin https://app.lanka.live
-import { S3Client, PutBucketCorsCommand, GetBucketCorsCommand } from '@aws-sdk/client-s3'
+// Local:   set -a; . ./.env; set +a; node scripts/r2-bucket-setup.mjs --origin https://app.lanka.live
+// Prod:    docker cp scripts/r2-bucket-setup.mjs lanka:/tmp/r2-bucket-setup.mjs \
+//          && docker exec -w /app lanka node /tmp/r2-bucket-setup.mjs --origin https://app.lanka.live
+import {
+  S3Client,
+  GetBucketCorsCommand,
+  PutBucketCorsCommand,
+  GetBucketLifecycleConfigurationCommand,
+  PutBucketLifecycleConfigurationCommand
+} from '@aws-sdk/client-s3'
 
 function env(...names) {
   for (const n of names) if (process.env[n]) return process.env[n]
@@ -2647,24 +3078,45 @@ const s3 = new S3Client({
   }
 })
 
-await s3.send(
-  new PutBucketCorsCommand({
-    Bucket,
-    CORSConfiguration: {
-      CORSRules: [
-        {
-          AllowedOrigins: [origin],
-          AllowedMethods: ['PUT'],
-          AllowedHeaders: ['content-type'],
-          MaxAgeSeconds: 3600
-        }
-      ]
-    }
-  })
-)
-const { CORSRules } = await s3.send(new GetBucketCorsCommand({ Bucket }))
-console.log(`CORS on ${Bucket}:`, JSON.stringify(CORSRules, null, 2))
+const LANKA_CORS_ID = 'lanka-dashboard-upload'
+const LANKA_LIFECYCLE_ID = 'lanka-expire-staged-uploads'
+
+async function getOr404(cmd) {
+  try {
+    return await s3.send(cmd)
+  } catch (err) {
+    const code = err?.$metadata?.httpStatusCode
+    if (code === 404 || err?.name === 'NoSuchCORSConfiguration' || err?.name === 'NoSuchLifecycleConfiguration') return null
+    throw err
+  }
+}
+
+// --- CORS: keep every foreign rule, replace ours (matched by ID or by identical origin+PUT) ---
+const existingCors = (await getOr404(new GetBucketCorsCommand({ Bucket })))?.CORSRules ?? []
+const isOurs = (r) =>
+  r.ID === LANKA_CORS_ID ||
+  ((r.AllowedOrigins ?? []).length === 1 && r.AllowedOrigins[0] === origin && (r.AllowedMethods ?? []).join() === 'PUT')
+const CORSRules = [
+  ...existingCors.filter((r) => !isOurs(r)),
+  { ID: LANKA_CORS_ID, AllowedOrigins: [origin], AllowedMethods: ['PUT'], AllowedHeaders: ['content-type'], MaxAgeSeconds: 3600 }
+]
+await s3.send(new PutBucketCorsCommand({ Bucket, CORSConfiguration: { CORSRules } }))
+
+// --- Lifecycle: expire staged objects after 1 day; keep foreign rules ---
+const existingRules = (await getOr404(new GetBucketLifecycleConfigurationCommand({ Bucket })))?.Rules ?? []
+const Rules = [
+  ...existingRules.filter((r) => r.ID !== LANKA_LIFECYCLE_ID),
+  { ID: LANKA_LIFECYCLE_ID, Status: 'Enabled', Filter: { Prefix: 'uploads/' }, Expiration: { Days: 1 } }
+]
+await s3.send(new PutBucketLifecycleConfigurationCommand({ Bucket, LifecycleConfiguration: { Rules } }))
+
+const cors = await s3.send(new GetBucketCorsCommand({ Bucket }))
+const lifecycle = await s3.send(new GetBucketLifecycleConfigurationCommand({ Bucket }))
+console.log(`CORS on ${Bucket}:`, JSON.stringify(cors.CORSRules, null, 2))
+console.log(`Lifecycle on ${Bucket}:`, JSON.stringify(lifecycle.Rules, null, 2))
 ```
+
+(R2 supports `PutBucketCors` and `PutBucketLifecycleConfiguration` via the S3 API; if `GetBucketLifecycleConfiguration` on a bucket without rules throws something other than 404/`NoSuchLifecycleConfiguration`, print the error name and extend `getOr404`.)
 
 - [ ] **Step 2: README** — (a) in "Environment variables" add a row/bullet `MAX_UPLOAD_BYTES` — "cap for dashboard uploads, default 2147483648 (2 GiB)"; (b) replace the first "Known limitations" bullet with:
 
@@ -2674,32 +3126,43 @@ console.log(`CORS on ${Bucket}:`, JSON.stringify(CORSRules, null, 2))
   go `POST /api/media/uploads` → presigned **PUT straight to the R2 S3 endpoint**
   (up to 5 GiB per object; app cap `MAX_UPLOAD_BYTES`, default 2 GiB) → `…/complete`,
   and the transcode runs in a background worker (no request is held open). This
-  needs a **one-time CORS rule on the bucket** — run `scripts/r2-cors.mjs` (see
-  "Common tasks") or paste in the Cloudflare dashboard (R2 → bucket → Settings →
-  CORS policy):
+  needs a **one-time bucket setup** — run `scripts/r2-bucket-setup.mjs` (see
+  "Common tasks"; it installs the CORS rule below *and* a lifecycle rule that
+  expires `uploads/*` after 1 day as a backstop) or paste the CORS rule in the
+  Cloudflare dashboard (R2 → bucket → Settings → CORS policy):
   ```json
   [{ "AllowedOrigins": ["https://app.lanka.live"], "AllowedMethods": ["PUT"],
      "AllowedHeaders": ["content-type"], "MaxAgeSeconds": 3600 }]
   ```
   Without it the browser's PUT fails with a CORS error and the job stays `pending`
   (expired automatically after 24 h). Staged objects live under `uploads/<uuid>` and
-  are deleted once ingested.
+  are deleted once ingested. Uploaded source material is treated as **non-confidential**
+  (signage content is public by nature): a staged object is anonymously readable by
+  anyone who obtains its unguessable URL until it is deleted. Transient ingest failures
+  (R2/disk/DB) are retried up to 3 times with backoff; ffmpeg rejecting the file fails
+  the job immediately.
 ```
 
-(c) in "Common tasks" add: `` - Install/refresh the R2 CORS rule: `docker cp scripts/r2-cors.mjs lanka:/tmp/ && docker exec -w /app lanka node /tmp/r2-cors.mjs --origin https://app.lanka.live` ``; (d) in the "Media" endpoints section list the six new routes one line each (`POST /api/media/uploads`, `PUT /api/media/uploads/:id/file` (local-disk only), `POST /api/media/uploads/:id/complete`, `GET /api/media/uploads/:id`, `GET /api/media/uploads?active=1`, `DELETE /api/media/uploads/:id`) and mark `POST /api/media` as legacy/sync.
+(c) in "Common tasks" add: `` - Install/refresh the R2 bucket rules (CORS + 1-day lifecycle on uploads/): `docker cp scripts/r2-bucket-setup.mjs lanka:/tmp/ && docker exec -w /app lanka node /tmp/r2-bucket-setup.mjs --origin https://app.lanka.live` ``; (d) in the "Media" endpoints section list the six new routes one line each (`POST /api/media/uploads`, `PUT /api/media/uploads/:id/file` (local-disk only), `POST /api/media/uploads/:id/complete`, `GET /api/media/uploads/:id`, `GET /api/media/uploads?active=1`, `DELETE /api/media/uploads/:id`) and mark `POST /api/media` as legacy/sync.
 
 - [ ] **Step 3: CLAUDE.md** — add one bullet under "Architecture gotchas":
 
 ```markdown
-- **Media uploads are async and direct-to-store.** The dashboard never POSTs file bytes to the app: `POST /api/media/uploads` creates a `media_uploads` job and returns a ticket — a **presigned PUT to the R2 S3 endpoint** (`uploads/<uuid>`, 1 h, `ContentType` signed) or, on `LocalDiskStore`, `PUT /api/media/uploads/:id/file`. `…/complete` verifies the staged size and enqueues; `server/services/media-ingest-queue.ts` (single in-process worker, started by `server/plugins/ingest-worker.ts`) runs the same `ingestMedia()` and deletes the staged object. Why: Cloudflare's proxy caps bodies at 100 MB and times out at 100 s — the presigned PUT must go to `<account>.r2.cloudflarestorage.com`, **never** through `app.lanka.live` or `media.lanka.live`. Prod needs the bucket CORS rule (`scripts/r2-cors.mjs`). One Nitro instance is assumed (no cross-process job locking). The sync `POST /api/media` still exists for curl/scripts only.
+- **Media uploads are async and direct-to-store.** The dashboard never POSTs file bytes to the app: `POST /api/media/uploads` creates a `media_uploads` job and returns a ticket — a **presigned PUT to the R2 S3 endpoint** (`uploads/<uuid>`, 1 h, `ContentType` signed) or, on `LocalDiskStore`, `PUT /api/media/uploads/:id/file`. `…/complete` verifies the staged size and enqueues; `server/services/media-ingest-queue.ts` (single in-process worker, started by `server/plugins/ingest-worker.ts`) runs the same `ingestMedia()` and deletes the staged object. Why: Cloudflare's proxy caps bodies at 100 MB and times out at 100 s — the presigned PUT must go to `<account>.r2.cloudflarestorage.com`, **never** through `app.lanka.live` or `media.lanka.live`. Prod needs the bucket CORS + lifecycle rules (`scripts/r2-bucket-setup.mjs`). Worker rules: atomic `queued→processing` claim; h3 4xx from `ingestMedia` = permanent failure, anything else is retried (3 attempts, staged object kept); `recover()` (resets `processing`) runs at **boot only** — periodic maintenance only `reconcile()`s `queued` rows, or a live 30-min transcode would be re-queued. One Nitro instance is assumed. The sync `POST /api/media` still exists for curl/scripts only.
+```
+
+- [ ] **Step 3b: Record the out-of-scope finding** — append to `docs/audit-2026-06-28-followups.md`:
+
+```markdown
+- **Image uploads are stored as-is with the client-declared MIME type** (pre-existing; unchanged by the 2026-08-22 direct-to-R2 upload work). An admin can publish SVG (active content) or arbitrary bytes under `media.lanka.live`. Follow-up: decode/re-encode raster images with sharp at ingest, reject SVG and anything sharp can't parse, and derive the stored `mime_type` from the decoded format — also bounds decompression bombs (a bomb that OOM-kills the worker is retried at most `MAX_ATTEMPTS` boots, then `failed`).
 ```
 
 - [ ] **Step 4: Commit** (stage only the files from this task; if `CLAUDE.md` already carries the user's unrelated uncommitted hunk, use `git add -p CLAUDE.md` and pick only the new bullet)
 
 ```bash
-git add scripts/r2-cors.mjs README.md
+git add scripts/r2-bucket-setup.mjs README.md docs/audit-2026-06-28-followups.md
 git add -p CLAUDE.md
-git commit -m "docs(media): direct-to-R2 upload flow, CORS script, MAX_UPLOAD_BYTES"
+git commit -m "docs(media): direct-to-R2 upload flow, bucket setup script, MAX_UPLOAD_BYTES"
 ```
 
 ---
@@ -2717,8 +3180,16 @@ git commit -m "docs(media): direct-to-R2 upload flow, CORS script, MAX_UPLOAD_BY
 ```bash
 B=http://localhost:5100; J=/tmp/lanka-cookies.txt
 curl -s -c $J -H 'content-type: application/json' -d '{"email":"super@lanka.live","password":"lanka-dev"}' $B/api/auth/login >/dev/null
-head -c 3M /dev/urandom > /tmp/probe.png   # "image" — ingest stores it as-is, no ffmpeg needed
-CREATE=$(curl -s -b $J -H 'content-type: application/json' -d '{"filename":"probe.png","kind":"image","quality":"standard","mimeType":"image/png","bytes":3145728}' $B/api/media/uploads)
+# a real PNG (1×1, then padded? no — keep it genuine): generate with python
+python3 - <<'PYG'
+import zlib, struct
+def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+raw = b''.join(b'\x00' + b'\xff\x00\x00' * 64 for _ in range(64))  # 64×64 red
+png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 64, 64, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+open('/tmp/probe.png', 'wb').write(png)
+PYG
+BYTES=$(stat -c %s /tmp/probe.png)
+CREATE=$(curl -s -b $J -H 'content-type: application/json' -d "{\"filename\":\"probe.png\",\"kind\":\"image\",\"quality\":\"standard\",\"mimeType\":\"image/png\",\"bytes\":$BYTES}" $B/api/media/uploads)
 echo "$CREATE"; ID=$(echo "$CREATE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
 URL=$(echo "$CREATE" | python3 -c 'import sys,json;print(json.load(sys.stdin)["upload"]["url"])')
 curl -s -o /dev/null -w 'PUT %{http_code}\n' -b $J -X PUT -H 'content-type: image/png' --data-binary @/tmp/probe.png "$B$URL"   # expect 204
@@ -2728,11 +3199,20 @@ curl -s -b $J "$B/api/media/uploads?active=1"; echo                 # expect []
 ls data/media/.uploads/ 2>/dev/null | wc -l                           # expect 0 (staged file deleted)
 ```
 
-Also exercise the negative paths: `complete` again → 409; create with `bytes: 9999999999` → 413; `DELETE` a fresh pending job → 204 and the row is gone.
+Also exercise the negative paths: `complete` again → 200 with the same job (idempotent); create with `bytes: 9999999999` → 413; `DELETE` a fresh pending job → 204 and the row is gone.
+
+Routing + auth (the things unit tests cannot prove):
+```bash
+curl -s -o /dev/null -w 'list via static route: %{http_code}\n' -b $J "$B/api/media/uploads"          # 200 (JSON array), NOT the /api/media/:id handler's 400/404
+curl -s -o /dev/null -w 'anonymous: %{http_code}\n' "$B/api/media/uploads"                           # 401
+curl -s -c /tmp/cl.txt -H 'content-type: application/json' -d '{"email":"client@lanka.live","password":"lanka-dev"}' $B/api/auth/login >/dev/null
+curl -s -o /dev/null -w 'client role: %{http_code}\n' -b /tmp/cl.txt "$B/api/media/uploads"         # 403
+curl -s -o /dev/null -w 'complete anonymous: %{http_code}\n' -X POST "$B/api/media/uploads/$ID/complete"  # 401
+```
 
 - [ ] **Step 4: Video path** — repeat with a real small `.mp4` (`kind: "video"`, `mimeType: "video/mp4"`): status should go `queued` → `processing` → `done` and the resulting media row has `mimeType: "video/mp4"`, `width/height` set, `quality` as requested.
 
-- [ ] **Step 5: Dashboard check** — open `http://localhost:5100/media`, upload two files via the dialog: per-file progress visible, dialog closes when both are queued, placeholder cards appear and are replaced by real cards within a few seconds. Reload mid-processing: the placeholder is still there. (Use a browser by hand — do not drive the dev SPA with chrome-devtools.)
+- [ ] **Step 5: Dashboard check** — open `http://localhost:5100/media`, upload two files via the dialog: per-file progress visible, dialog closes when both are queued, placeholder cards appear and are replaced by real cards within a few seconds. Reload mid-processing: the placeholder is still there. **While a large file is uploading press Escape and click the backdrop: the dialog must stay open; the Cancel button must abort and leave a "Failed"/cancelled row with no pending job left on the server (`GET /api/media/uploads?active=1` → `[]`).** (Use a browser by hand — do not drive the dev SPA with chrome-devtools.)
 
 - [ ] **Step 6: Stop the server.** Nothing to commit.
 
@@ -2742,7 +3222,7 @@ Also exercise the negative paths: `complete` again → 409; create with `bytes: 
 
 - [ ] **Step 1: Push** — `git push origin main`.
 - [ ] **Step 2: Deploy** — `ssh lanka-prod 'cd /opt/lanka && nohup setsid ./scripts/deploy.sh > /root/lanka-deploy-$(date +%Y%m%d-%H%M%S).log 2>&1 < /dev/null &'`; poll the log until `Healthy after N attempt(s)`; confirm `sqlite3 /opt/lanka/data/signage.db ".tables"` lists `media_uploads` and `docker logs lanka` has no `[ingest-queue]` errors.
-- [ ] **Step 3: CORS** — `scp scripts/r2-cors.mjs lanka-prod:/tmp/ && ssh lanka-prod 'docker cp /tmp/r2-cors.mjs lanka:/tmp/r2-cors.mjs && docker exec -w /app lanka node /tmp/r2-cors.mjs --origin https://app.lanka.live'` — Expected: prints the single rule with `AllowedOrigins: ["https://app.lanka.live"]`.
+- [ ] **Step 3: Bucket rules** — `scp scripts/r2-bucket-setup.mjs lanka-prod:/tmp/ && ssh lanka-prod 'docker cp /tmp/r2-bucket-setup.mjs lanka:/tmp/r2-bucket-setup.mjs && docker exec -w /app lanka node /tmp/r2-bucket-setup.mjs --origin https://app.lanka.live'` — Expected: prints the CORS rules including `lanka-dashboard-upload` with `AllowedOrigins: ["https://app.lanka.live"]` and the lifecycle rule `lanka-expire-staged-uploads` (prefix `uploads/`, 1 day).
 - [ ] **Step 4: Preflight from outside** — `curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS -H 'Origin: https://app.lanka.live' -H 'Access-Control-Request-Method: PUT' -H 'Access-Control-Request-Headers: content-type' https://<account>.r2.cloudflarestorage.com/lanka-media/uploads/x` → expect `200` with `access-control-allow-origin: https://app.lanka.live` (`-D -` to see headers).
 - [ ] **Step 5: Real test** — from the dashboard at `https://app.lanka.live/media`, upload a **>100 MB** video: progress bar → "Queued" → placeholder "Processing…" → real card; `docker logs lanka` shows no errors; the bucket's `uploads/` prefix is empty afterwards (`aws s3 ls`-equivalent via the script or the Cloudflare dashboard).
 - [ ] **Step 6: Record** the outcome in the memory note (`keep-local-dev-separate-from-prod`) deploy log.
