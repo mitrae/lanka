@@ -152,6 +152,35 @@ adb shell appops set ai.lanka.kiosk REQUEST_INSTALL_PACKAGES allow
 adb shell appops set ai.lanka.kiosk SYSTEM_ALERT_WINDOW allow
 ```
 
+### On-device PIN escape hatch
+
+Bake a PIN into the build so a box can be taken out of kiosk mode from the
+remote when the dashboard is unreachable (tailnet down, WebSocket wedged,
+app server offline):
+
+```bash
+./gradlew :app:assembleNativeDebug \
+  -PLANKA_SERVER_URL=http://lanka-server:3000 \
+  -PKIOSK_PIN=4931
+```
+
+**Long-press BACK** on the remote — or, if the ROM reserves long-BACK or the
+remote never auto-repeats, **tap BACK five times within 2 s** — opens a PIN pad
+over the player. A correct PIN clears the kiosk lock, releases lock task, and
+opens Android Settings — the last part matters on a device-owner box, where
+Lanka is the HOME launcher and there would otherwise be nowhere to navigate to.
+
+- The PIN is stored as a **sha256** in `BuildConfig`, so `strings` on the APK
+  does not reveal it. This is friction, not security: four digits brute-force
+  offline instantly for anyone holding the APK. The real control is that
+  having the APK already implies fleet access.
+- **Omitting `-PKIOSK_PIN` disables the feature** — neither trigger does
+  anything. There is no default PIN.
+- 5 wrong entries trigger a 60 s lockout that survives closing and reopening
+  the pad. The pad auto-dismisses after 20 s idle.
+- The unlock lasts until reboot, matching the dashboard `kiosk-unlock` command.
+  Rebooting always returns the box to locked.
+
 What you get without device owner:
 - **BACK** is swallowed; **HOME / app-switch snap back** — pressing them flashes
   the launcher for ~1s, then `MainActivity.onUserLeaveHint`/`onStop` re-foregrounds

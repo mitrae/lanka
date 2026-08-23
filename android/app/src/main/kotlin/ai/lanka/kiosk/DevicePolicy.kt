@@ -96,6 +96,12 @@ object DevicePolicy {
         )
     }
 
+    /** True while lock-task mode is active on the device (screen pinning or device-owner lock task). `lockTaskModeState` is global, not scoped to the caller's task. */
+    fun isLockTaskActive(activity: Activity): Boolean {
+        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    }
+
     /**
      * Pins the kiosk to the foreground so the remote can't escape to the Google
      * TV launcher or other apps.
@@ -109,12 +115,6 @@ object DevicePolicy {
      * Guarded by the current lock-task state so onResume can call it repeatedly
      * without re-pinning / re-prompting.
      */
-    /** True while this app's task is pinned (screen pinning) or locked (device-owner lock task). */
-    fun isLockTaskActive(activity: Activity): Boolean {
-        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-    }
-
     fun startKioskMode(activity: Activity) {
         if (isLockTaskActive(activity)) return
         runCatching { activity.startLockTask() }

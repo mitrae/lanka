@@ -1,5 +1,6 @@
 import java.io.FileInputStream
 import java.util.Properties
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -36,6 +37,24 @@ android {
             "LANKA_SERVER_URL",
             "\"${providers.gradleProperty("LANKA_SERVER_URL").getOrElse("http://lanka-server:3000")}\""
         )
+
+        // On-device PIN escape hatch (see docs/superpowers/specs/2026-08-23-kiosk-pin-unlock-design.md).
+        // Hashed at configure time so the plaintext PIN never ships in the APK.
+        // Empty default = feature DISABLED, so a build without -PKIOSK_PIN has no
+        // hatch at all rather than a fleet-wide well-known one.
+        val kioskPin = providers.gradleProperty("KIOSK_PIN").getOrElse("")
+        // A PIN the pad can never complete (non-digits — KioskPin ignores them —
+        // or a stray space from shell quoting) must fail the BUILD, not the 11pm
+        // site visit. Empty stays allowed: it disables the feature.
+        require(kioskPin.isEmpty() || (kioskPin.length >= 4 && kioskPin.all(Char::isDigit))) {
+            "KIOSK_PIN must be 4+ digits (0-9) or unset; got ${kioskPin.length} chars"
+        }
+        val kioskPinSha = if (kioskPin.isEmpty()) "" else
+            MessageDigest.getInstance("SHA-256")
+                .digest(kioskPin.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        buildConfigField("String", "KIOSK_PIN_SHA256", "\"$kioskPinSha\"")
+        buildConfigField("int", "KIOSK_PIN_LENGTH", "${kioskPin.length}")
     }
 
     buildFeatures {
