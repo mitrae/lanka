@@ -109,11 +109,34 @@ object DevicePolicy {
      * Guarded by the current lock-task state so onResume can call it repeatedly
      * without re-pinning / re-prompting.
      */
-    fun startKioskMode(activity: Activity) {
+    /** True while this app's task is pinned (screen pinning) or locked (device-owner lock task). */
+    fun isLockTaskActive(activity: Activity): Boolean {
         val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        if (am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE) return
+        return am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    }
+
+    fun startKioskMode(activity: Activity) {
+        if (isLockTaskActive(activity)) return
         runCatching { activity.startLockTask() }
             .onFailure { Log.w(TAG, "startLockTask: ${it.message}") }
+    }
+
+    /**
+     * Releases the lock-task pin so an operator can leave the player. Returns
+     * true if the task is actually unpinned afterwards — stopLockTask() validates
+     * task/UID ownership and an OEM can refuse it, and an escape hatch must never
+     * report success it cannot verify.
+     *
+     * Guarded by the current lock-task state (mirroring [startKioskMode]) rather
+     * than by device-owner status: [startKioskMode] also pins UNprovisioned boxes
+     * via plain screen pinning, so gating the release on isDeviceOwner would
+     * strand exactly those devices.
+     */
+    fun stopKioskMode(activity: Activity): Boolean {
+        if (!isLockTaskActive(activity)) return true
+        runCatching { activity.stopLockTask() }
+            .onFailure { Log.w(TAG, "stopLockTask: ${it.message}") }
+        return !isLockTaskActive(activity)
     }
 
     /** Reboots the device. Device-owner only; returns false if it couldn't. */

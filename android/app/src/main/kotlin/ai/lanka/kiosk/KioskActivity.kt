@@ -18,13 +18,51 @@ open class KioskActivity : Activity() {
         )
     }
 
+    /**
+     * Mirrors KioskLock into real lock-task state so an unlock from ANY source
+     * (dashboard command or PIN pad) takes effect.
+     *
+     * Runs inline when already on the main thread and hops the handler otherwise:
+     * startLockTask/stopLockTask are main-thread-only, but the dashboard path sets
+     * the flag off-thread (NativeFSBridge on a JavaBridge thread, the native
+     * CommandDispatcher on the WebSocket thread). Running inline on the main
+     * thread also guarantees ordering for the PIN unlock, which must release the
+     * pin BEFORE it can startActivity() to another package.
+     */
+    private val lockListener: (Boolean) -> Unit = {
+        if (Looper.myLooper() == Looper.getMainLooper()) applyLockState()
+        else mainHandler.post { applyLockState() }
+    }
+
+    /**
+     * Applies the CURRENT flag — re-read here, never captured — so a post queued
+     * before a later assignment cannot roll state backwards. Bails unless this
+     * Activity is still the registered observer, so a post that lands after
+     * onPause never pins/unpins a backgrounded instance.
+     */
+    private fun applyLockState() {
+        if (KioskLock.listener !== lockListener || isFinishing) return
+        if (KioskLock.locked) DevicePolicy.startKioskMode(this)
+        else DevicePolicy.stopKioskMode(this)
+    }
+
     override fun onResume() {
         super.onResume()
-        // Enter lock task once the activity is foregrounded. Pins the kiosk with
-        // no "screen pinned" UI when device owner; no-op otherwise. Idempotent.
-        DevicePolicy.startKioskMode(this)
+        KioskLock.listener = lockListener
+        // Reconcile UNCONDITIONALLY. A dashboard unlock that arrived while we
+        // were paused fired with no listener registered; an `if (locked)` guard
+        // here would skip it and leave the task pinned with the flag saying
+        // unlocked. This also recovers from onDestroy/renderer-recovery wiping
+        // mainHandler, which drops any queued lock-state post.
+        applyLockState()
         // Cancel a pending snap-back — we're already in front.
         mainHandler.removeCallbacks(kioskReturnRunnable)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Clear only OUR listener — never silently deregister another instance's.
+        if (KioskLock.listener === lockListener) KioskLock.listener = null
     }
 
     /**
