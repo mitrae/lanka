@@ -8,12 +8,28 @@
 // If a server handler's return shape changes, update the matching interface
 // here and let TypeScript surface the affected pages.
 
+/**
+ * Playlist assignment context returned by the Address / Group / Device detail
+ * endpoints: the row the assignment picker edits (`direct*`) and the playlist
+ * that actually wins after Device > Group > Address resolution (`effective*`).
+ */
+export interface AssignmentContext {
+  directPlaylistId: number | null
+  directPlaylistName: string | null
+  effectivePlaylistId: number | null
+  effectivePlaylistName: string | null
+  effectiveLevel: 'device' | 'group' | 'address' | null
+}
+
 export interface Address {
   id: number
   name: string
   createdAt: string
   updatedAt: string
 }
+
+/** GET /api/addresses/:id */
+export interface AddressDetail extends Address, AssignmentContext {}
 
 export interface Group {
   id: number
@@ -22,6 +38,9 @@ export interface Group {
   createdAt: string
   updatedAt: string
 }
+
+/** GET /api/groups/:id */
+export interface GroupDetail extends Group, AssignmentContext {}
 
 export type DeviceStatus = 'online' | 'idle' | 'offline'
 
@@ -40,6 +59,9 @@ export interface Device {
 export interface DeviceListRow extends Device {
   status: DeviceStatus
 }
+
+/** GET /api/devices/:id */
+export interface DeviceDetail extends Device, AssignmentContext {}
 
 export interface RegisterResult {
   deviceId: string

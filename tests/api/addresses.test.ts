@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestDb, type TestDb } from '../helpers/test-db'
-import { seedAddress, seedGroup } from '../helpers/fixtures'
+import { assign, seedAddress, seedGroup, seedPlaylist } from '../helpers/fixtures'
 import {
   handleListAddresses,
   handleCreateAddress
@@ -53,6 +53,37 @@ describe('addresses CRUD', () => {
 
   it('get 404s on unknown id', async () => {
     await expect(handleGetAddress(db, 9999)).rejects.toThrow(/not found/i)
+  })
+
+  it('get returns no assignment when nothing is assigned', async () => {
+    const a = await seedAddress(db, 'X')
+    const row = await handleGetAddress(db, a.id)
+    expect(row.directPlaylistId).toBeNull()
+    expect(row.directPlaylistName).toBeNull()
+    expect(row.effectivePlaylistId).toBeNull()
+    expect(row.effectiveLevel).toBeNull()
+  })
+
+  it('get returns the direct address-level assignment', async () => {
+    const a = await seedAddress(db, 'X')
+    const pl = await seedPlaylist(db, { name: 'Clinic default' })
+    await assign(db, { playlistId: pl.id, addressId: a.id })
+
+    const row = await handleGetAddress(db, a.id)
+    expect(row.directPlaylistId).toBe(pl.id)
+    expect(row.directPlaylistName).toBe('Clinic default')
+    expect(row.effectivePlaylistId).toBe(pl.id)
+    expect(row.effectiveLevel).toBe('address')
+  })
+
+  it('get ignores assignments belonging to another address', async () => {
+    const a = await seedAddress(db, 'X')
+    const other = await seedAddress(db, 'Y')
+    const pl = await seedPlaylist(db, { name: 'Other' })
+    await assign(db, { playlistId: pl.id, addressId: other.id })
+
+    const row = await handleGetAddress(db, a.id)
+    expect(row.directPlaylistId).toBeNull()
   })
 
   it('update changes name and bumps updatedAt', async () => {

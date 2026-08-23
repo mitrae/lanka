@@ -27,6 +27,23 @@ async function refreshStatus() {
 onMounted(() => { refreshStatus(); statusTimer = setInterval(refreshStatus, 5000) })
 onBeforeUnmount(() => { if (statusTimer) clearInterval(statusTimer) })
 
+const effectivePlaylistLabel = computed(() => {
+  const d = device.value
+  if (!d) return null
+  if (!d.effectivePlaylistId) return t('devices.effectivePlaylistNone')
+  const name = d.effectivePlaylistName ?? `#${d.effectivePlaylistId}`
+  switch (d.effectiveLevel) {
+    case 'device':
+      return t('devices.effectivePlaylistDevice', { name })
+    case 'group':
+      return t('devices.effectivePlaylistGroup', { name })
+    case 'address':
+      return t('devices.effectivePlaylistAddress', { name })
+    default:
+      return null
+  }
+})
+
 const editing = ref(false)
 const editName = ref('')
 const editGroupId = ref<number | null>(null)
@@ -51,11 +68,13 @@ onMounted(load)
 async function save() {
   if (!device.value) return
   try {
-    const updated = await devicesStore.updateDevice(device.value.id, {
+    await devicesStore.updateDevice(device.value.id, {
       name: editName.value.trim() || null,
       groupId: editGroupId.value
     })
-    device.value = updated
+    // Reload rather than reuse the PATCH row: moving the device to another
+    // group changes which playlist it inherits.
+    await load()
     editing.value = false
     toast.add({ title: t('devices.saved'), color: 'success' })
   } catch (err: any) {
@@ -297,14 +316,23 @@ async function confirmOta() {
         <p class="mt-1 text-xs text-(--ui-text-muted)">
           {{ $t('devices.playlistSectionDescription') }}
         </p>
-        <!-- Note: currentPlaylistId requires a query to assignments; we pass null for v1 -->
         <AssignmentPicker
           class="mt-4"
           target="device"
           :target-id="device.id"
-          :current-playlist-id="null"
+          :current-playlist-id="device.directPlaylistId"
           @changed="load"
         />
+        <p
+          v-if="effectivePlaylistLabel"
+          class="mt-3 flex items-center gap-1.5 text-xs text-(--ui-text-muted)"
+        >
+          <UIcon
+            :name="device.effectivePlaylistId ? 'i-lucide-list-video' : 'i-lucide-triangle-alert'"
+            class="size-4 shrink-0"
+          />
+          {{ effectivePlaylistLabel }}
+        </p>
       </section>
 
       <!-- Remote Control card -->

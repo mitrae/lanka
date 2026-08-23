@@ -22,7 +22,7 @@ const editName = ref('')
 
 const newGroupName = ref('')
 
-onMounted(async () => {
+async function load() {
   try {
     address.value = await api.getAddress(id.value)
     editName.value = address.value.name
@@ -34,15 +34,28 @@ onMounted(async () => {
       color: 'error'
     })
   }
+}
+
+onMounted(load)
+
+const effectivePlaylistLabel = computed(() => {
+  const a = address.value
+  if (!a) return null
+  if (!a.effectivePlaylistId) return t('addresses.effectivePlaylistNone')
+  const name = a.effectivePlaylistName ?? `#${a.effectivePlaylistId}`
+  return t('addresses.effectivePlaylistAddress', { name })
 })
 
 async function save() {
-  if (!address.value || !editName.value.trim()) return
+  const current = address.value
+  if (!current || !editName.value.trim()) return
   try {
-    const updated = await addressesStore.update(address.value.id, {
+    const updated = await addressesStore.update(current.id, {
       name: editName.value.trim()
     })
-    address.value = updated
+    // Merge: the PATCH row carries no assignment fields, and a rename can't
+    // change them.
+    address.value = { ...current, ...updated }
     editing.value = false
     toast.add({ title: t('addresses.saved'), color: 'success' })
   } catch (err: any) {
@@ -165,6 +178,30 @@ async function remove() {
             </template>
           </div>
         </div>
+      </section>
+
+      <section class="soft-card mt-8 p-6">
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('addresses.playlistSectionTitle') }}</h3>
+        <p class="mt-1 text-xs text-(--ui-text-muted)">
+          {{ $t('addresses.playlistSectionDescription') }}
+        </p>
+        <AssignmentPicker
+          class="mt-4"
+          target="address"
+          :target-id="address.id"
+          :current-playlist-id="address.directPlaylistId"
+          @changed="load"
+        />
+        <p
+          v-if="effectivePlaylistLabel"
+          class="mt-3 flex items-center gap-1.5 text-xs text-(--ui-text-muted)"
+        >
+          <UIcon
+            :name="address.effectivePlaylistId ? 'i-lucide-list-video' : 'i-lucide-triangle-alert'"
+            class="size-4 shrink-0"
+          />
+          {{ effectivePlaylistLabel }}
+        </p>
       </section>
 
       <section class="mt-8">

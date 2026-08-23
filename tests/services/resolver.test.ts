@@ -96,6 +96,23 @@ describe('resolvePlaylistForDevice', () => {
     expect(r).toEqual({ playlistId: grpPl.id, level: 'group' })
   })
 
+  it('honours precedence regardless of insertion order', async () => {
+    const addr = await seedAddress(db)
+    const group = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: group.id })
+    const m = await seedMedia(db, { sha256: 'a', kind: 'video' })
+    const addrPl = await seedPlaylist(db, { name: 'addr', items: [{ mediaId: m.id }] })
+    const grpPl = await seedPlaylist(db, { name: 'grp', items: [{ mediaId: m.id }] })
+    const devPl = await seedPlaylist(db, { name: 'dev', items: [{ mediaId: m.id }] })
+    // Least-specific first: the winner must come from the level, not the row order.
+    await assign(db, { playlistId: addrPl.id, addressId: addr.id })
+    await assign(db, { playlistId: grpPl.id, groupId: group.id })
+    await assign(db, { playlistId: devPl.id, deviceId: 'dev-1' })
+
+    const r = await resolvePlaylistForDevice(db, 'dev-1')
+    expect(r).toEqual({ playlistId: devPl.id, level: 'device' })
+  })
+
   it('returns null for unknown device id', async () => {
     const r = await resolvePlaylistForDevice(db, 'does-not-exist')
     expect(r).toBeNull()

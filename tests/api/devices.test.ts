@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { createTestDb, type TestDb } from '../helpers/test-db'
-import { seedAddress, seedDevice, seedGroup } from '../helpers/fixtures'
+import {
+  assign,
+  seedAddress,
+  seedDevice,
+  seedGroup,
+  seedPlaylist
+} from '../helpers/fixtures'
 import { handleListDevices } from '~/server/api/devices/index.get'
 import { handleRegister } from '~/server/api/devices/register.post'
 import {
@@ -95,6 +101,77 @@ describe('devices CRUD', () => {
 
   it('get 404s on unknown', async () => {
     await expect(handleGetDevice(db, 'ghost')).rejects.toThrow(/not found/i)
+  })
+
+  it('get returns no assignment when nothing is assigned', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id)
+    await seedDevice(db, { id: 'd', groupId: g.id })
+    const row = await handleGetDevice(db, 'd')
+    expect(row.directPlaylistId).toBeNull()
+    expect(row.directPlaylistName).toBeNull()
+    expect(row.effectivePlaylistId).toBeNull()
+    expect(row.effectivePlaylistName).toBeNull()
+    expect(row.effectiveLevel).toBeNull()
+  })
+
+  it('get returns the direct device-level assignment', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id)
+    await seedDevice(db, { id: 'd', groupId: g.id })
+    const pl = await seedPlaylist(db, { name: 'Amosova' })
+    await assign(db, { playlistId: pl.id, deviceId: 'd' })
+
+    const row = await handleGetDevice(db, 'd')
+    expect(row.directPlaylistId).toBe(pl.id)
+    expect(row.directPlaylistName).toBe('Amosova')
+    expect(row.effectivePlaylistId).toBe(pl.id)
+    expect(row.effectivePlaylistName).toBe('Amosova')
+    expect(row.effectiveLevel).toBe('device')
+  })
+
+  it('get reports an inherited group assignment with no direct override', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id)
+    await seedDevice(db, { id: 'd', groupId: g.id })
+    const pl = await seedPlaylist(db, { name: 'Lobby loop' })
+    await assign(db, { playlistId: pl.id, groupId: g.id })
+
+    const row = await handleGetDevice(db, 'd')
+    expect(row.directPlaylistId).toBeNull()
+    expect(row.directPlaylistName).toBeNull()
+    expect(row.effectivePlaylistId).toBe(pl.id)
+    expect(row.effectivePlaylistName).toBe('Lobby loop')
+    expect(row.effectiveLevel).toBe('group')
+  })
+
+  it('get reports an inherited address assignment', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id)
+    await seedDevice(db, { id: 'd', groupId: g.id })
+    const pl = await seedPlaylist(db, { name: 'Clinic default' })
+    await assign(db, { playlistId: pl.id, addressId: a.id })
+
+    const row = await handleGetDevice(db, 'd')
+    expect(row.directPlaylistId).toBeNull()
+    expect(row.effectivePlaylistId).toBe(pl.id)
+    expect(row.effectivePlaylistName).toBe('Clinic default')
+    expect(row.effectiveLevel).toBe('address')
+  })
+
+  it('get prefers the direct assignment over an inherited one', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id)
+    await seedDevice(db, { id: 'd', groupId: g.id })
+    const inherited = await seedPlaylist(db, { name: 'Lobby loop' })
+    const direct = await seedPlaylist(db, { name: 'Amosova' })
+    await assign(db, { playlistId: inherited.id, groupId: g.id })
+    await assign(db, { playlistId: direct.id, deviceId: 'd' })
+
+    const row = await handleGetDevice(db, 'd')
+    expect(row.directPlaylistId).toBe(direct.id)
+    expect(row.effectivePlaylistId).toBe(direct.id)
+    expect(row.effectiveLevel).toBe('device')
   })
 
   it('update renames', async () => {

@@ -24,7 +24,7 @@ const editing = ref(false)
 const editName = ref('')
 const editAddressId = ref<number | null>(null)
 
-onMounted(async () => {
+async function load() {
   try {
     const [g] = await Promise.all([
       api.getGroup(id.value),
@@ -41,6 +41,18 @@ onMounted(async () => {
       color: 'error'
     })
   }
+}
+
+onMounted(load)
+
+const effectivePlaylistLabel = computed(() => {
+  const g = group.value
+  if (!g) return null
+  if (!g.effectivePlaylistId) return t('groups.effectivePlaylistNone')
+  const name = g.effectivePlaylistName ?? `#${g.effectivePlaylistId}`
+  return g.effectiveLevel === 'group'
+    ? t('groups.effectivePlaylistGroup', { name })
+    : t('groups.effectivePlaylistAddress', { name })
 })
 
 const addressItems = computed(() =>
@@ -50,11 +62,13 @@ const addressItems = computed(() =>
 async function save() {
   if (!group.value) return
   try {
-    const updated = await groupsStore.update(group.value.id, {
+    await groupsStore.update(group.value.id, {
       name: editName.value.trim(),
       addressId: editAddressId.value ?? undefined
     })
-    group.value = updated
+    // Reload rather than reuse the PATCH row: moving the group to another
+    // address changes which playlist it inherits.
+    await load()
     editing.value = false
     toast.add({ title: t('groups.saved'), color: 'success' })
   } catch (err: any) {
@@ -159,6 +173,30 @@ async function remove() {
             </template>
           </div>
         </div>
+      </section>
+
+      <section class="soft-card mt-8 p-6">
+        <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('groups.playlistSectionTitle') }}</h3>
+        <p class="mt-1 text-xs text-(--ui-text-muted)">
+          {{ $t('groups.playlistSectionDescription') }}
+        </p>
+        <AssignmentPicker
+          class="mt-4"
+          target="group"
+          :target-id="group.id"
+          :current-playlist-id="group.directPlaylistId"
+          @changed="load"
+        />
+        <p
+          v-if="effectivePlaylistLabel"
+          class="mt-3 flex items-center gap-1.5 text-xs text-(--ui-text-muted)"
+        >
+          <UIcon
+            :name="group.effectivePlaylistId ? 'i-lucide-list-video' : 'i-lucide-triangle-alert'"
+            class="size-4 shrink-0"
+          />
+          {{ effectivePlaylistLabel }}
+        </p>
       </section>
 
       <section class="mt-8">

@@ -1,6 +1,7 @@
 // app/composables/useApiClient.ts
 import type {
   Address,
+  AddressDetail,
   ApkRelease,
   Assignment,
   CreatedUpload,
@@ -8,10 +9,12 @@ import type {
   CreateUserBody,
   CreateUserResult,
   Device,
+  DeviceDetail,
   DeviceCommand,
   DeviceListRow,
   DeviceNowPlaying,
   Group,
+  GroupDetail,
   Manifest,
   Media,
   MediaDetail,
@@ -32,14 +35,14 @@ type FetchFn = typeof $fetch
 export interface ApiClient {
   // addresses
   listAddresses(): Promise<Address[]>
-  getAddress(id: number): Promise<Address>
+  getAddress(id: number): Promise<AddressDetail>
   createAddress(body: { name: string }): Promise<Address>
   updateAddress(id: number, body: { name: string }): Promise<Address>
   deleteAddress(id: number): Promise<void>
 
   // groups
   listGroups(query?: { addressId?: number }): Promise<Group[]>
-  getGroup(id: number): Promise<Group>
+  getGroup(id: number): Promise<GroupDetail>
   createGroup(body: { addressId: number; name: string }): Promise<Group>
   updateGroup(
     id: number,
@@ -53,7 +56,7 @@ export interface ApiClient {
     addressId?: number
     unclaimed?: boolean
   }): Promise<DeviceListRow[]>
-  getDevice(id: string): Promise<Device>
+  getDevice(id: string): Promise<DeviceDetail>
   getDeviceStatus(id: string): Promise<DeviceNowPlaying>
   updateDevice(
     id: string,
@@ -160,7 +163,7 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     listAddresses: () =>
       fetch<Address[]>('/api/addresses', { method: 'GET' }),
     getAddress: (id) =>
-      fetch<Address>(`/api/addresses/${id}`, { method: 'GET' }),
+      fetch<AddressDetail>(`/api/addresses/${id}`, { method: 'GET' }),
     createAddress: (body) =>
       fetch<Address>('/api/addresses', { method: 'POST', body }),
     updateAddress: (id, body) =>
@@ -171,7 +174,7 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     // groups
     listGroups: (query = {}) =>
       fetch<Group[]>('/api/groups', { method: 'GET', query }),
-    getGroup: (id) => fetch<Group>(`/api/groups/${id}`, { method: 'GET' }),
+    getGroup: (id) => fetch<GroupDetail>(`/api/groups/${id}`, { method: 'GET' }),
     createGroup: (body) =>
       fetch<Group>('/api/groups', { method: 'POST', body }),
     updateGroup: (id, body) =>
@@ -183,7 +186,7 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     listDevices: (query = {}) =>
       fetch<DeviceListRow[]>('/api/devices', { method: 'GET', query }),
     getDevice: (id) =>
-      fetch<Device>(`/api/devices/${id}`, { method: 'GET' }),
+      fetch<DeviceDetail>(`/api/devices/${id}`, { method: 'GET' }),
     getDeviceStatus: (id) =>
       fetch<DeviceNowPlaying>(`/api/devices/${id}/status`, { method: 'GET' }),
     updateDevice: (id, body) =>

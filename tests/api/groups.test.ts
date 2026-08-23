@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestDb, type TestDb } from '../helpers/test-db'
-import { seedAddress, seedDevice, seedGroup } from '../helpers/fixtures'
+import {
+  assign,
+  seedAddress,
+  seedDevice,
+  seedGroup,
+  seedPlaylist
+} from '../helpers/fixtures'
 import {
   handleListGroups,
   handleCreateGroup
@@ -65,6 +71,57 @@ describe('groups CRUD', () => {
 
   it('get 404s on unknown', async () => {
     await expect(handleGetGroup(db, 9999)).rejects.toThrow(/not found/i)
+  })
+
+  it('get returns no assignment when nothing is assigned', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id, 'G')
+    const row = await handleGetGroup(db, g.id)
+    expect(row.directPlaylistId).toBeNull()
+    expect(row.directPlaylistName).toBeNull()
+    expect(row.effectivePlaylistId).toBeNull()
+    expect(row.effectiveLevel).toBeNull()
+  })
+
+  it('get returns the direct group-level assignment', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id, 'G')
+    const pl = await seedPlaylist(db, { name: 'Lobby loop' })
+    await assign(db, { playlistId: pl.id, groupId: g.id })
+
+    const row = await handleGetGroup(db, g.id)
+    expect(row.directPlaylistId).toBe(pl.id)
+    expect(row.directPlaylistName).toBe('Lobby loop')
+    expect(row.effectivePlaylistId).toBe(pl.id)
+    expect(row.effectivePlaylistName).toBe('Lobby loop')
+    expect(row.effectiveLevel).toBe('group')
+  })
+
+  it('get reports the inherited address assignment', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id, 'G')
+    const pl = await seedPlaylist(db, { name: 'Clinic default' })
+    await assign(db, { playlistId: pl.id, addressId: a.id })
+
+    const row = await handleGetGroup(db, g.id)
+    expect(row.directPlaylistId).toBeNull()
+    expect(row.effectivePlaylistId).toBe(pl.id)
+    expect(row.effectivePlaylistName).toBe('Clinic default')
+    expect(row.effectiveLevel).toBe('address')
+  })
+
+  it('get prefers the group assignment over the address one', async () => {
+    const a = await seedAddress(db)
+    const g = await seedGroup(db, a.id, 'G')
+    const addrPl = await seedPlaylist(db, { name: 'Clinic default' })
+    const grpPl = await seedPlaylist(db, { name: 'Lobby loop' })
+    await assign(db, { playlistId: addrPl.id, addressId: a.id })
+    await assign(db, { playlistId: grpPl.id, groupId: g.id })
+
+    const row = await handleGetGroup(db, g.id)
+    expect(row.directPlaylistId).toBe(grpPl.id)
+    expect(row.effectivePlaylistId).toBe(grpPl.id)
+    expect(row.effectiveLevel).toBe('group')
   })
 
   it('update changes name', async () => {

@@ -12,21 +12,27 @@ export async function resolvePlaylistForDevice(
   db: BetterSQLite3Database<typeof schema>,
   deviceId: string
 ): Promise<ResolvedPlaylist | null> {
+  // `specificity` makes "most specific wins" explicit. A bare `UNION ALL … LIMIT 1`
+  // happens to return the branches in source order today, but nothing guarantees
+  // that — a planner change could silently flip Device > Group > Address.
   const rows = db.all<{ playlist_id: number; level: string }>(sql`
-    SELECT playlist_id, 'device' AS level
-      FROM assignments
-     WHERE device_id = ${deviceId}
-    UNION ALL
-    SELECT a.playlist_id, 'group' AS level
-      FROM assignments a
-      JOIN devices d ON d.group_id = a.group_id
-     WHERE d.id = ${deviceId}
-    UNION ALL
-    SELECT a.playlist_id, 'address' AS level
-      FROM assignments a
-      JOIN groups g  ON g.address_id = a.address_id
-      JOIN devices d ON d.group_id   = g.id
-     WHERE d.id = ${deviceId}
+    SELECT playlist_id, level FROM (
+      SELECT playlist_id, 'device' AS level, 0 AS specificity
+        FROM assignments
+       WHERE device_id = ${deviceId}
+      UNION ALL
+      SELECT a.playlist_id, 'group' AS level, 1 AS specificity
+        FROM assignments a
+        JOIN devices d ON d.group_id = a.group_id
+       WHERE d.id = ${deviceId}
+      UNION ALL
+      SELECT a.playlist_id, 'address' AS level, 2 AS specificity
+        FROM assignments a
+        JOIN groups g  ON g.address_id = a.address_id
+        JOIN devices d ON d.group_id   = g.id
+       WHERE d.id = ${deviceId}
+    )
+    ORDER BY specificity
     LIMIT 1
   `)
   const row = rows[0]

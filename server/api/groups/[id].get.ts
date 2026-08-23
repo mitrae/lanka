@@ -2,11 +2,18 @@ import { eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
+import {
+  type AssignmentContext,
+  findDirectAssignment,
+  withInherited
+} from '~/server/services/assignments'
+
+export type GroupDetail = typeof schema.groups.$inferSelect & AssignmentContext
 
 export async function handleGetGroup(
   db: BetterSQLite3Database<typeof schema>,
   id: number
-) {
+): Promise<GroupDetail> {
   const [row] = await db
     .select()
     .from(schema.groups)
@@ -14,7 +21,16 @@ export async function handleGetGroup(
   if (!row) {
     throw createError({ statusCode: 404, message: `Group ${id} not found` })
   }
-  return row
+
+  const direct = await findDirectAssignment(db, { level: 'group', id })
+  const inherited = direct
+    ? null
+    : await findDirectAssignment(db, { level: 'address', id: row.addressId })
+
+  return {
+    ...row,
+    ...withInherited(direct, 'group', { assignment: inherited, level: 'address' })
+  }
 }
 
 export default defineEventHandler(async (event) => {
