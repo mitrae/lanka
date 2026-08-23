@@ -152,7 +152,24 @@ adb shell appops set ai.lanka.kiosk REQUEST_INSTALL_PACKAGES allow
 adb shell appops set ai.lanka.kiosk SYSTEM_ALERT_WINDOW allow
 ```
 
-### On-device PIN escape hatch
+What you get without device owner:
+- **BACK** is swallowed; **HOME / app-switch snap back** — pressing them flashes
+  the launcher for ~1s, then `MainActivity.onUserLeaveHint`/`onStop` re-foregrounds
+  the player (the snap-back also re-shows the player when the box wakes from sleep).
+- This is **deterrence, not a hard lock**: there's a brief launcher flash, and the
+  remote's **power button still sleeps the box** (harmless — handled by the TV's
+  own on/off schedule, or a wake).
+
+What does NOT work without device owner (verified on Xiaomi TV Box S 3rd Gen):
+- **Screen pinning** (`startLockTask` on a non-whitelisted app) — Google TV ignores
+  it (`lockTaskModeState` stays `NONE`).
+- **Replacing the HOME launcher** (`set-home-activity`) — Google TV keeps its own.
+- Intercepting HOME / dedicated remote app buttons — system-reserved.
+
+For an **airtight** lock (silent lock-task, HOME/Recents/app-buttons all dead,
+status bar gone) you must provision **device owner** — see below.
+
+## On-device PIN escape hatch
 
 Bake a PIN into the build so a box can be taken out of kiosk mode from the
 remote when the dashboard is unreachable (tailnet down, WebSocket wedged,
@@ -180,23 +197,13 @@ Lanka is the HOME launcher and there would otherwise be nowhere to navigate to.
   the pad. The pad auto-dismisses after 20 s idle.
 - The unlock lasts until reboot, matching the dashboard `kiosk-unlock` command.
   Rebooting always returns the box to locked.
-
-What you get without device owner:
-- **BACK** is swallowed; **HOME / app-switch snap back** — pressing them flashes
-  the launcher for ~1s, then `MainActivity.onUserLeaveHint`/`onStop` re-foregrounds
-  the player (the snap-back also re-shows the player when the box wakes from sleep).
-- This is **deterrence, not a hard lock**: there's a brief launcher flash, and the
-  remote's **power button still sleeps the box** (harmless — handled by the TV's
-  own on/off schedule, or a wake).
-
-What does NOT work without device owner (verified on Xiaomi TV Box S 3rd Gen):
-- **Screen pinning** (`startLockTask` on a non-whitelisted app) — Google TV ignores
-  it (`lockTaskModeState` stays `NONE`).
-- **Replacing the HOME launcher** (`set-home-activity`) — Google TV keeps its own.
-- Intercepting HOME / dedicated remote app buttons — system-reserved.
-
-For an **airtight** lock (silent lock-task, HOME/Recents/app-buttons all dead,
-status bar gone) you must provision **device owner** — see below.
+- **Never put `KIOSK_PIN` in `android/gradle.properties`** (it is tracked — that
+  commits the plaintext PIN). Pass it with `-P` only; note it then appears in
+  shell history and `ps` for the duration of the build.
+- While the pad is showing, every key is swallowed (volume, media, D-pad). If
+  the box is unlocked from the dashboard while someone has the pad open, the
+  remote stays dead until **BACK** dismisses the pad or the 20 s idle timer
+  fires.
 
 ## Device-owner provisioning (silent OTA + reboot + locked kiosk)
 

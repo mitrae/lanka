@@ -194,10 +194,11 @@ The first design relied on `requestFocus()` winning against the WebView and on
 - if focus does **not** land in the pad, neither BACK nor digits ever reach it —
   BACK goes to the Activity, which swallows it, and the pad cannot even be
   dismissed except by the idle timeout;
-- `FocusFinder` searches the **whole window**. In the native flavor the two
-  media3 `PlayerView`s are controller-enabled by default, so a stray D-pad press
-  could hand them focus and CENTER would pop transport controls over the
-  signage.
+- `FocusFinder` searches the **whole window**, so a stray D-pad press could hand
+  focus to whatever else is focusable in the player layout. (An earlier draft
+  claimed the native flavor's media3 `PlayerView`s would pop transport
+  controls; they are built with `use_controller="false"`, so that specific
+  hazard does not exist — the primary reason above stands on its own.)
 
 Instead the **Activity owns routing**. `Activity.dispatchKeyEvent` is the entry
 point for every hardware key in the window, ahead of the view hierarchy, and
@@ -237,12 +238,19 @@ be **verified**, not assumed:
 Log.i(TAG, "kiosk unlocked via on-device PIN")
 KioskLock.locked = false                     // listener runs inline → stopLockTask()
 if (DevicePolicy.isLockTaskActive(this)) {   // refused (ownership / OEM) — say so
+    KioskLock.locked = true                  // never let the flag disagree with the OS
     pinPad?.showMessage("Unlock failed — lock task still active")
-    return                                   // pad stays up; flag stays false, resume retries
+    return                                   // pad stays up; re-entering the PIN retries
 }
 hidePinPad()
 startActivity(Intent(Settings.ACTION_SETTINGS))
 ```
+
+On refusal the flag is **restored to locked**. The first draft left it false "so
+the next resume retries" — but a pinned, foreground task never resumes, so that
+retry could never fire, while the false flag had already switched off
+BACK-swallow and snap-back on a box the OS still pins. Re-entering the PIN is
+the retry. (Found in review; see the plan's Task 6 fix round.)
 
 The player keeps running behind Settings. `scheduleKioskReturn()` already
 early-returns when `!KioskLock.locked`, so the snap-back watchdog correctly
@@ -382,7 +390,7 @@ options from Settings on a device-owner box — not merely that Settings opens.
 | Lockout bypassed by reopening the pad | `KioskPin` is process-wide; failure state survives pad open/close and Activity recreation |
 | WebView steals keys from the pad | Pad never takes focus; Activity routes every key to it while showing and calls nothing else |
 | ROM reserves long-BACK, or IR remote never auto-repeats | Parallel 5-tap BACK chord needs only `repeatCount == 0` DOWN events; measured on-box |
-| `stopLockTask()` refused (ownership / OEM) | Return value checked; pad shows "Unlock failed" instead of launching a blocked Settings intent |
+| `stopLockTask()` refused (ownership / OEM) | Return value checked; pad shows "Unlock failed" instead of launching a blocked Settings intent; the flag is restored to locked so it never disagrees with the OS |
 | Dashboard unlock arrives while paused | `onResume` reconciles lock-task state unconditionally |
 | Operator forgets the PIN | It is fleet-wide and documented in the README build command; a reboot restores kiosk regardless |
 

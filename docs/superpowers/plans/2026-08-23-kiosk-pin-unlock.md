@@ -657,11 +657,11 @@ printf 4931 | sha256sum
 grep "KIOSK_PIN" app/build/generated/source/buildConfig/webview/debug/ai/lanka/kiosk/BuildConfig.java
 ```
 
-Expected — these two lines, in this order (declaration order; ignore indentation):
+Expected — these two lines (AGP emits BuildConfig fields alphabetically, so LENGTH comes first; ignore indentation):
 
 ```
-public static final String KIOSK_PIN_SHA256 = "abe0ccdc1f6402ee65627d5f95700af1e5914d113f02db83567212fa036f54d2";
 public static final int KIOSK_PIN_LENGTH = 4;
+public static final String KIOSK_PIN_SHA256 = "abe0ccdc1f6402ee65627d5f95700af1e5914d113f02db83567212fa036f54d2";
 ```
 
 (The `webview/debug/` path is AGP 8.2.2's layout, as used by this project.) Confirm the literal PIN does **not** appear:
@@ -1031,14 +1031,21 @@ Add to `KioskActivity`:
      * the main thread), so lock task is released before startActivity — launching
      * another package while pinned is blocked. The release is then VERIFIED:
      * stopLockTask() can be refused (ownership, OEM), and an escape hatch must
-     * never silently no-op. On failure the pad stays up with a message; the flag
-     * stays false so the next resume retries the release.
+     * never silently no-op. On failure the flag is restored to locked so it never
+     * disagrees with the OS; the pad stays up with a message and re-entering the
+     * PIN retries the release.
      */
     private fun onPinAccepted() {
         Log.i(TAG, "kiosk unlocked via on-device PIN")
         KioskLock.locked = false
         if (DevicePolicy.isLockTaskActive(this)) {
-            Log.w(TAG, "lock task still active after unlock — Settings launch would be blocked")
+            // stopLockTask() was refused (ownership / OEM). Keep the flag and the OS
+            // in agreement: a false flag would drop BACK-swallow and snap-back on a
+            // box that is still pinned, and no resume will come to retry while the
+            // task is pinned and foreground. The pad stays up; re-entering the PIN
+            // retries the release.
+            KioskLock.locked = true
+            Log.w(TAG, "lock task still active after unlock — kept locked; Settings launch would be blocked")
             pinPad?.showMessage("Unlock failed — lock task still active")
             return
         }
@@ -1105,7 +1112,7 @@ The project treats on-box verification as the real gate for anything touching ki
 **Files:**
 - Modify: `CLAUDE.md` (repo root, "Android kiosk player (APK)" section)
 
-- [ ] **Step 1: Build and install a PIN-enabled APK**
+- [x] **Step 1: Build and install a PIN-enabled APK**
 
 ```bash
 cd android
@@ -1140,9 +1147,13 @@ Unlock and what it is for:
 - [ ] From Settings, BACK returns to the player and it does **not** snap back to kiosk (still unlocked).
 - [ ] **On a device-owner box**, from Settings: Wi-Fi settings reachable, Tailscale app reachable, Developer options / wireless debugging reachable. These are the maintenance operations the hatch exists for — "Settings opened" alone is not a pass.
 - [ ] Dashboard `kiosk-lock` while unlocked → box re-pins. Dashboard `kiosk-unlock` while the box is **asleep or in Settings**, then return to the player → it is unpinned (regression check for the paused-unlock bug).
+- [ ] Dismiss the pad with BACK and **keep holding it** — confirm the pad does not reopen ~0.5 s later (a swallowed BACK-UP can leave `KeyEvent` tracking stale; if it reopens, record it — harmless but worth knowing).
+- [ ] Five accidental BACK taps during playback → scrim appears; confirm BACK cancels it immediately (20 s of scrim is the accepted worst case).
+- [ ] Dashboard `kiosk-unlock` **while the pad is showing** → pad stays up, remote dead except BACK; BACK dismisses; box is unpinned.
+- [ ] Dashboard `kiosk-lock` **while the operator is still in Settings** → the player does NOT come back on its own (listener is deregistered while paused; re-lock applies on the next resume). This is expected — the earlier "kiosk-lock while unlocked → re-pins" line only passes with the player foregrounded.
 - [ ] Repeat the core path on `assembleNativeDebug` (launch `ai.lanka.kiosk.vs/ai.lanka.kiosk.PlayerActivity`).
 
-- [ ] **Step 3: Update `CLAUDE.md`**
+- [x] **Step 3: Update `CLAUDE.md`**
 
 In the "Android kiosk player (APK)" section, add a bullet:
 
@@ -1166,7 +1177,7 @@ In the "Android kiosk player (APK)" section, add a bullet:
   main-thread-only.
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /home/dmytro/PhpstormProjects/lanka
