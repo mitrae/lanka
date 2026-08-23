@@ -1,0 +1,1 @@
+ALTER TABLE `apk_releases` DROP COLUMN `flavor`;

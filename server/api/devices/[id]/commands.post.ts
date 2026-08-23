@@ -1,20 +1,34 @@
+import { z } from 'zod'
 import { eq, desc } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
-import { type CommandType, useCommandHub } from '~/server/services/command-hub'
+import { useCommandHub } from '~/server/services/command-hub'
 
-interface EnqueueInput {
-  cmd: CommandType
-  releaseId?: number
-}
+const COMMAND_TYPES = ['ota', 'reboot', 'screenshot', 'log-request', 'kiosk-lock', 'kiosk-unlock', 'set-surface'] as const
+
+// Validated here, not trusted from the dashboard: a typo'd surface must never
+// reach a box (the APK would refuse it, but the operator would only see "failed").
+const EnqueueSchema = z.object({
+  cmd: z.enum(COMMAND_TYPES),
+  releaseId: z.number().int().positive().optional(),
+  surface: z.enum(['webview', 'native']).optional()
+})
+
+export type EnqueueInput = z.infer<typeof EnqueueSchema>
 
 export async function handleEnqueueCommand(
   db: BetterSQLite3Database<typeof schema>,
   hub: ReturnType<typeof useCommandHub>,
   deviceId: string,
-  input: EnqueueInput
+  rawInput: unknown
 ): Promise<{ commandId: number }> {
+  const parsed = EnqueueSchema.safeParse(rawInput)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, message: `invalid command: ${parsed.error.issues[0]?.message ?? 'bad body'}` })
+  }
+  const input = parsed.data
+
   const [device] = await db
     .select()
     .from(schema.devices)
@@ -35,6 +49,10 @@ export async function handleEnqueueCommand(
       sha256: release.sha256,
       url: `/api/apk/${release.id}/download`
     }
+  }
+  if (input.cmd === 'set-surface') {
+    if (!input.surface) throw createError({ statusCode: 400, message: 'surface required for set-surface command' })
+    payload = { surface: input.surface }
   }
 
   const commandId = await hub.enqueue(db, deviceId, input.cmd, payload)

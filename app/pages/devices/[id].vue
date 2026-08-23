@@ -4,6 +4,7 @@ import type { DeviceNowPlaying, ApkRelease, DeviceCommand } from '~/app/types/ap
 import { useDevicesStore } from '~/app/stores/devices'
 import { useGroupsStore } from '~/app/stores/groups'
 import { useApiClient } from '~/app/composables/useApiClient'
+import { surfaceSwitchView, type SurfaceName } from '~/app/utils/surfaceSwitch'
 
 definePageMeta({ layout: 'default' })
 
@@ -146,7 +147,7 @@ let commandsTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { commandsTimer = setInterval(loadCommands, 10_000) })
 onBeforeUnmount(() => { if (commandsTimer) clearInterval(commandsTimer) })
 
-async function enqueue(cmd: string, extra?: { releaseId?: number }) {
+async function enqueue(cmd: string, extra?: { releaseId?: number; surface?: SurfaceName }) {
   commandPending.value = true
   try {
     await api.enqueueCommand(id.value, { cmd, ...extra })
@@ -202,7 +203,7 @@ function relativeTime(ts: string | number): string {
 async function confirmReboot() {
   const ok = await confirm({
     title: 'Restart player?',
-    description: 'The device will reload the kiosk WebView.',
+    description: 'The player will restart on the box.',
     confirmLabel: 'Restart'
   })
   if (ok) enqueue('reboot')
@@ -217,6 +218,29 @@ async function confirmOta() {
     confirmLabel: 'Push OTA'
   })
   if (ok) enqueue('ota', { releaseId: selectedReleaseId.value! })
+}
+
+// ── Player surface (set-surface) ────────────────────────────────────────────
+// Unknown/loading must not read as "WebView": status arrives a beat after the page.
+const surfaceLabel = (s: SurfaceName | null | undefined) =>
+  s === 'native' ? 'Native' : s === 'webview' ? 'WebView' : '—'
+const otherSurface = computed<SurfaceName>(() => (status.value?.surface === 'native' ? 'webview' : 'native'))
+// Re-evaluated on every 10 s command poll / 5 s status poll (both replace the refs).
+const surfaceSwitch = computed(() =>
+  surfaceSwitchView(commands.value, (status.value?.surface as SurfaceName | undefined) ?? null, Date.now())
+)
+const surfaceSwitchInFlight = computed(() =>
+  surfaceSwitch.value.phase === 'queued' || surfaceSwitch.value.phase === 'sent'
+)
+
+async function confirmSurfaceSwitch() {
+  const target = otherSurface.value
+  const ok = await confirm({
+    title: `Switch player to ${surfaceLabel(target)}?`,
+    description: 'The player restarts on the box. Rollback is switching back — no OTA.',
+    confirmLabel: 'Switch'
+  })
+  if (ok) enqueue('set-surface', { surface: target })
 }
 </script>
 
@@ -340,14 +364,36 @@ async function confirmOta() {
         <h3 class="mb-4 text-sm font-semibold text-(--ui-text-highlighted)">Remote Control</h3>
 
         <div class="space-y-4">
+          <!-- Player surface (runtime-selectable; one APK carries both) -->
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="text-sm text-(--ui-text-muted)">Player surface:</span>
+            <UBadge :color="status?.surface === 'native' ? 'primary' : 'neutral'" variant="subtle" size="sm">
+              {{ surfaceLabel(status?.surface) }}
+            </UBadge>
+            <UButton
+              size="sm"
+              variant="outline"
+              leading-icon="i-lucide-arrow-left-right"
+              :disabled="commandPending || surfaceSwitchInFlight"
+              :loading="commandPending"
+              @click="confirmSurfaceSwitch"
+            >Switch to {{ surfaceLabel(otherSurface) }}</UButton>
+            <span v-if="surfaceSwitchInFlight" class="text-xs text-(--ui-text-muted)">
+              Switching to {{ surfaceLabel(surfaceSwitch.requested) }}… ({{ surfaceSwitch.phase }})
+            </span>
+            <span v-else-if="surfaceSwitch.phase === 'applying'" class="text-xs text-(--ui-text-muted)">
+              Applying {{ surfaceLabel(surfaceSwitch.requested) }}… (waiting for the box to report back)
+            </span>
+            <span v-else-if="surfaceSwitch.phase === 'failed'" class="text-xs text-(--ui-text-error)">
+              Switch to {{ surfaceLabel(surfaceSwitch.requested) }} failed: {{ surfaceSwitch.reason ?? 'unknown' }}
+            </span>
+          </div>
+
           <!-- APK version + OTA -->
           <div class="flex flex-wrap items-center gap-3">
             <span class="text-sm text-(--ui-text-muted)">
               APK on device: <strong>{{ status?.apkVersion ?? '—' }}</strong>
             </span>
-            <UBadge :color="status?.surface === 'native' ? 'primary' : 'neutral'" variant="subtle" size="sm">
-              {{ status?.surface === 'native' ? 'Native' : 'WebView' }}
-            </UBadge>
             <div class="flex items-center gap-2">
               <USelect
                 v-model="selectedReleaseId"

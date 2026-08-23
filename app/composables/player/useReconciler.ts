@@ -36,6 +36,12 @@ export interface NativeFSBridge {
    * toggle). Present on APKs that support the lock command.
    */
   setKioskLock?(enabled: boolean): void
+  /**
+   * Switches the player surface ("webview" | "native"). Returns "" when the
+   * switch was accepted (the APK restarts the player shortly after), else the
+   * failure reason. Absent on APKs older than 0.3.0-surface.
+   */
+  setSurface?(name: string): string
 }
 
 export interface ReconcilerDeps {

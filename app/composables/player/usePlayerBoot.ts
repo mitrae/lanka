@@ -6,7 +6,7 @@
 import { onBeforeUnmount, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import { useApiClient, type ApiClient } from '~/app/composables/useApiClient'
 import type { Manifest } from '~/app/types/api'
-import { useNativeDevice, PLAYER_VERSION } from './useNativeDevice'
+import { useNativeDevice, PLAYER_VERSION, PLAYER_SURFACE } from './useNativeDevice'
 import { usePlayerEnv, type PlayerEnv } from './usePlayerEnv'
 import { useTelemetry } from './useTelemetry'
 import {
@@ -106,7 +106,8 @@ export function usePlayerBoot(
     try {
       const res = await api.register({
         deviceId: deviceId.value,
-        playerVersion: PLAYER_VERSION
+        playerVersion: PLAYER_VERSION,
+        surface: PLAYER_SURFACE
       })
       if (res?.commandSecret) saveSecret(deviceId.value, res.commandSecret)
     } catch (err) {

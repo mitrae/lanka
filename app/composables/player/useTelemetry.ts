@@ -1,5 +1,6 @@
 // app/composables/player/useTelemetry.ts
 import type { ApiClient } from '~/app/composables/useApiClient'
+import { PLAYER_SURFACE } from './useNativeDevice'
 
 export interface Telemetry {
   itemStarted(deviceId: string, currentItemId: number): void
@@ -27,7 +28,11 @@ export function useTelemetry(api: ApiClient): Telemetry {
   ): void {
     const nfs = (globalThis as any).NativeFS
     const apkVersion: string | undefined = nfs?.getAppVersion?.()
-    api.postTelemetry(deviceId, { ...body, ...(apkVersion ? { apkVersion } : {}) }).catch((err) => {
+    api.postTelemetry(deviceId, {
+      ...body,
+      surface: PLAYER_SURFACE,
+      ...(apkVersion ? { apkVersion } : {})
+    }).catch((err) => {
       console.warn('[player] telemetry post failed', err)
     })
   }

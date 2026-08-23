@@ -69,6 +69,7 @@ export interface ApiClient {
   register(body: {
     deviceId: string
     playerVersion: string
+    surface?: 'webview' | 'native'
   }): Promise<RegisterResult>
   getManifest(deviceId: string): Promise<Manifest | null>
   postTelemetry(
@@ -76,6 +77,7 @@ export interface ApiClient {
     body: {
       currentItemId: number | null
       apkVersion?: string
+      surface?: 'webview' | 'native'
       error?: { sha256?: string; message: string }
     }
   ): Promise<void>
@@ -130,7 +132,7 @@ export interface ApiClient {
   apkDownloadUrl(id: number): string
 
   // device commands
-  enqueueCommand(deviceId: string, body: { cmd: string; releaseId?: number }): Promise<{ commandId: number }>
+  enqueueCommand(deviceId: string, body: { cmd: string; releaseId?: number; surface?: 'webview' | 'native' }): Promise<{ commandId: number }>
   listDeviceCommands(deviceId: string): Promise<DeviceCommand[]>
 
   // portal

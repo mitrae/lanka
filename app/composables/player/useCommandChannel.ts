@@ -5,7 +5,7 @@ type WsFactory = (url: string) => WebSocket
 
 interface Command {
   commandId: number
-  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request' | 'kiosk-lock' | 'kiosk-unlock'
+  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request' | 'kiosk-lock' | 'kiosk-unlock' | 'set-surface'
   payload: Record<string, unknown> | null
 }
 
@@ -98,6 +98,29 @@ export function createCommandChannel(deps: CommandChannelDeps): CommandChannelHa
       try {
         const logs = nfs.getLogs()
         send({ commandId, status: 'acked', result: logs })
+      }
+      catch (e) {
+        send({ commandId, status: 'failed', result: String(e) })
+      }
+      return
+    }
+
+    if (type === 'set-surface') {
+      const surface = (payload as Record<string, unknown> | null)?.surface
+      if (typeof surface !== 'string' || !surface) {
+        send({ commandId, status: 'failed', result: 'missing surface' })
+        return
+      }
+      if (!nfs.setSurface) {
+        send({ commandId, status: 'failed', result: 'not supported' })
+        return
+      }
+      try {
+        // The APK commits the choice synchronously and recreates the Activity
+        // ~500 ms later, so this ack still leaves the socket.
+        const reason = nfs.setSurface(surface)
+        if (reason) send({ commandId, status: 'failed', result: reason })
+        else send({ commandId, status: 'acked' })
       }
       catch (e) {
         send({ commandId, status: 'failed', result: String(e) })

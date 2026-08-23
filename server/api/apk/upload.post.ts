@@ -15,30 +15,12 @@ import { useMediaStore } from '~/server/services/media-store-singleton'
 // box from an OOM on a runaway upload. Streamed to a temp file, never buffered.
 const MAX_APK_BYTES = 300 * 1024 * 1024 // 300 MB
 
-const APK_FLAVORS = ['webview', 'native'] as const
-export type ApkFlavor = (typeof APK_FLAVORS)[number]
-
-/**
- * Validate the optional `flavor` form field against the allowed set.
- * Returns undefined when absent/empty (DB default applies); throws 400 on an
- * unknown value instead of an unchecked cast.
- */
-export function parseApkFlavor(raw: string | undefined): ApkFlavor | undefined {
-  const value = raw?.trim()
-  if (!value) return undefined
-  if (!APK_FLAVORS.includes(value as ApkFlavor)) {
-    throw createError({ statusCode: 400, message: 'flavor must be "webview" or "native"' })
-  }
-  return value as ApkFlavor
-}
-
 export interface UploadApkInput {
   sha256: string
   version: string
   size: number
   stream: Readable
   uploadedBy: number | null
-  flavor?: ApkFlavor
 }
 
 export async function handleUploadApk(
@@ -53,8 +35,7 @@ export async function handleUploadApk(
       version: input.version,
       sha256: input.sha256,
       size: input.size,
-      uploadedBy: input.uploadedBy,
-      ...(input.flavor ? { flavor: input.flavor } : {})
+      uploadedBy: input.uploadedBy
     })
     .returning()
   return row
@@ -77,9 +58,6 @@ export default defineEventHandler(async (event) => {
     const version = versionRaw?.trim()
     if (!version) throw createError({ statusCode: 400, message: 'version must not be empty' })
 
-    const flavorRaw = Array.isArray(fields.flavor) ? fields.flavor[0] : fields.flavor
-    const flavor = parseApkFlavor(flavorRaw)
-
     // Hash the temp file incrementally — never load the whole APK into RAM.
     const hash = createHash('sha256')
     await pipeline(
@@ -98,8 +76,7 @@ export default defineEventHandler(async (event) => {
       version,
       size: file.size,
       stream: createReadStream(file.filepath),
-      uploadedBy: user.id,
-      flavor
+      uploadedBy: user.id
     })
   } finally {
     await rm(file.filepath, { force: true })

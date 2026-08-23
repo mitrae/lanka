@@ -252,7 +252,7 @@ export interface ApkRelease {
 export interface DeviceCommand {
   id: number
   deviceId: string
-  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request' | 'kiosk-lock' | 'kiosk-unlock'
+  cmd: 'ota' | 'reboot' | 'screenshot' | 'log-request' | 'kiosk-lock' | 'kiosk-unlock' | 'set-surface'
   payload: string | null
   status: 'pending' | 'sent' | 'acked' | 'failed'
   result: string | null

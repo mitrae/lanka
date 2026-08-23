@@ -31,7 +31,8 @@ function makeNativeFS() {
     screenshot: vi.fn(() => 'data:image/jpeg;base64,abc'),
     getLogs: vi.fn(() => 'log line 1\nlog line 2'),
     getAppVersion: vi.fn(() => '1.2.3'),
-    setKioskLock: vi.fn()
+    setKioskLock: vi.fn(),
+    setSurface: vi.fn(() => '')
   }
 }
 
@@ -176,5 +177,42 @@ describe('createCommandChannel', () => {
     ws.open()
     ch.close()
     expect(ws.readyState).toBe(1) // MockWS doesn't actually set readyState, just checking no throw
+  })
+
+  it('set-surface calls NativeFS.setSurface and acks on an empty result', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    ws.receive({ commandId: 20, cmd: 'set-surface', payload: { surface: 'native' } })
+    expect(nativeFS.setSurface).toHaveBeenCalledWith('native')
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 20, status: 'acked' })
+    ch.close()
+  })
+
+  it('set-surface fails with the reason the bridge returns', () => {
+    nativeFS.setSurface = vi.fn(() => 'ota in progress')
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    ws.receive({ commandId: 21, cmd: 'set-surface', payload: { surface: 'native' } })
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 21, status: 'failed', result: 'ota in progress' })
+    ch.close()
+  })
+
+  it('set-surface fails without a surface in the payload', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS, onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    ws.receive({ commandId: 22, cmd: 'set-surface', payload: {} })
+    expect(nativeFS.setSurface).not.toHaveBeenCalled()
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 22, status: 'failed', result: 'missing surface' })
+    ch.close()
+  })
+
+  it('set-surface is not supported on a bridge without setSurface (old APK)', () => {
+    const legacy = { ...nativeFS } as any
+    delete legacy.setSurface
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: legacy, onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    ws.receive({ commandId: 23, cmd: 'set-surface', payload: { surface: 'native' } })
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 23, status: 'failed', result: 'not supported' })
+    ch.close()
   })
 })

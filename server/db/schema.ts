@@ -222,8 +222,7 @@ export const apkReleases = sqliteTable('apk_releases', {
   uploadedAt: integer('uploaded_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),
-  uploadedBy: integer('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
-  flavor: text('flavor').notNull().default('webview')
+  uploadedBy: integer('uploaded_by').references(() => users.id, { onDelete: 'set null' })
 })
 
 export const deviceCommands = sqliteTable(
@@ -233,7 +232,7 @@ export const deviceCommands = sqliteTable(
     deviceId: text('device_id')
       .notNull()
       .references(() => devices.id, { onDelete: 'cascade' }),
-    cmd: text('cmd', { enum: ['ota', 'reboot', 'screenshot', 'log-request', 'kiosk-lock', 'kiosk-unlock'] }).notNull(),
+    cmd: text('cmd', { enum: ['ota', 'reboot', 'screenshot', 'log-request', 'kiosk-lock', 'kiosk-unlock', 'set-surface'] }).notNull(),
     payload: text('payload'),
     status: text('status', { enum: ['pending', 'sent', 'acked', 'failed'] })
       .notNull()

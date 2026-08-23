@@ -7,6 +7,13 @@ import { resolveDeviceId } from './resolveDeviceId'
 
 export const PLAYER_VERSION = '3.0.0-web'
 
+/**
+ * What this (web) player reports as its surface. Sent on register and every
+ * telemetry post so `devices.surface` flips back after a native→webview switch
+ * on the same device row (the column default alone would leave it on 'native').
+ */
+export const PLAYER_SURFACE = 'webview' as const
+
 export interface NativeDevice {
   deviceId(): string
   reload(): void
