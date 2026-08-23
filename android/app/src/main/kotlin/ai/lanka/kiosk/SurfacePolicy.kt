@@ -25,11 +25,12 @@ data class SurfaceState(
  * that lives INSIDE the surface. A surface that dies on start can never
  * receive the command that would undo it.
  *
- * Why only COLD starts count: a recreate() (the switch itself, renderer-gone
- * recovery, the native `reload` command) hands the new instance a non-null
- * savedInstanceState; a crash relaunched by the HOME pin, a reboot or
- * BOOT_COMPLETED does not. Counting every onCreate would mistake two renderer
- * recoveries for a crash loop.
+ * Why only COLD starts count: a cold start is a NEW OS PROCESS, detected by
+ * SurfaceStore comparing ProcessToken.id against the stored `surface.process`
+ * key. A recreate() (the switch itself, renderer-gone recovery, the native
+ * `reload` command) happens inside the same process and is never counted; a
+ * crash relaunched by the HOME pin, a reboot or BOOT_COMPLETED is. Counting
+ * every onCreate would mistake two renderer recoveries for a crash loop.
  *
  * Why no deadline: a server outage right after a switch must not revert a
  * healthy surface. Window expiry stops guarding instead of reverting.

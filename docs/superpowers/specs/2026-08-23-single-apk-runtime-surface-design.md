@@ -362,7 +362,7 @@ The static `Native`/`WebView` badge becomes a control:
 
   | newest `set-surface` row | shows |
   |---|---|
-  | `pending` / `sent` | "Switching to X… (queued / sent)", button disabled |
+  | `pending` / `sent` | "Switching to X… (queued / sent)", button disabled; older than 10 min → treated as lost, control returns to idle (a re-send supersedes the stuck row) |
   | `acked`, reported ≠ requested, `updatedAt` < 3 min ago | "Applying X…" (box relaunching; telemetry will flip the badge) |
   | `acked`, reported = requested | nothing extra |
   | `failed` | the `result` inline (e.g. *ota in progress*), button enabled |

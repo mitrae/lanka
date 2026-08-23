@@ -56,11 +56,17 @@ class MainActivity : KioskActivity() {
             } else {
                 // Nothing to fall back to. Never loop on a synchronous failure:
                 // show a banner and wait — same as a crash, but visible.
-                root.addView(TextView(this).apply {
-                    text = "Lanka — player failed to start"
-                    setTextColor(Color.parseColor("#F4F4F5"))
-                    gravity = Gravity.CENTER
-                })
+                root.addView(
+                    TextView(this).apply {
+                        text = "Lanka — player failed to start"
+                        setTextColor(Color.parseColor("#F4F4F5"))
+                        gravity = Gravity.CENTER
+                    },
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                )
             }
         }
     }

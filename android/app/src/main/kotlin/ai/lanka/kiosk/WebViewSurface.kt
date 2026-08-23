@@ -113,6 +113,7 @@ class WebViewSurface(
      * mid-run recovery the WebView kiosk always had.
      */
     private fun recoverFromRenderGone() {
+        if (stopped) return // already torn down by onDestroy — nothing to recover
         stop()
         if (confirmed) activity.recreate() else onStartFailed()
     }

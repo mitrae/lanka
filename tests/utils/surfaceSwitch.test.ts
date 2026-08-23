@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { surfaceSwitchView, APPLYING_WINDOW_MS } from '~/app/utils/surfaceSwitch'
+import { surfaceSwitchView, APPLYING_WINDOW_MS, STALE_WINDOW_MS } from '~/app/utils/surfaceSwitch'
 import type { DeviceCommand } from '~/app/types/api'
 
 const now = 1_700_000_000_000
@@ -53,5 +53,15 @@ describe('surfaceSwitchView', () => {
   it('tolerates a malformed payload', () => {
     const row = cmd({ id: 1, cmd: 'set-surface', status: 'acked', payload: 'not json' })
     expect(surfaceSwitchView([row], 'webview', now)).toEqual({ phase: 'idle', requested: null, reason: null })
+  })
+
+  it('expires a stuck queued/sent switch so the button comes back', () => {
+    const stuck = cmd({ id: 1, cmd: 'set-surface', status: 'sent', payload: '{"surface":"native"}', updatedAt: now - STALE_WINDOW_MS - 1 })
+    expect(surfaceSwitchView([stuck], 'webview', now)).toEqual({ phase: 'idle', requested: null, reason: null })
+  })
+
+  it('keeps a fresh sent switch in flight', () => {
+    const fresh = cmd({ id: 1, cmd: 'set-surface', status: 'sent', payload: '{"surface":"native"}', updatedAt: now - STALE_WINDOW_MS + 5_000 })
+    expect(surfaceSwitchView([fresh], 'webview', now).phase).toBe('sent')
   })
 })

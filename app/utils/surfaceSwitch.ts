@@ -14,6 +14,11 @@ export interface SurfaceSwitchView {
 /** After an ack, how long we keep saying "applying…" while the reported surface still differs. */
 export const APPLYING_WINDOW_MS = 3 * 60_000
 
+/** A queued/sent switch older than this is treated as lost: the control returns
+ *  to idle so the operator can re-send (a new row supersedes the stuck one).
+ *  The box is safe either way — it either committed the switch or never saw it. */
+export const STALE_WINDOW_MS = 10 * 60_000
+
 function parseSurface(payload: string | null): SurfaceName | null {
   if (!payload) return null
   try {
@@ -41,15 +46,16 @@ export function surfaceSwitchView(
   const requested = parseSurface(latest.payload)
   if (!requested) return idle
 
+  const age = now - new Date(latest.updatedAt).getTime()
+
   switch (latest.status) {
     case 'pending':
-      return { phase: 'queued', requested, reason: null }
+      return age >= STALE_WINDOW_MS ? idle : { phase: 'queued', requested, reason: null }
     case 'sent':
-      return { phase: 'sent', requested, reason: null }
+      return age >= STALE_WINDOW_MS ? idle : { phase: 'sent', requested, reason: null }
     case 'failed':
       return { phase: 'failed', requested, reason: latest.result }
     case 'acked': {
-      const age = now - new Date(latest.updatedAt).getTime()
       const applying = reported !== requested && age >= 0 && age < APPLYING_WINDOW_MS
       return applying ? { phase: 'applying', requested, reason: null } : idle
     }

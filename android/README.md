@@ -60,16 +60,14 @@ The Gradle wrapper handles Gradle itself — no system Gradle needed once
 
 ## Build
 
-The app is **flavored** (`surface` dimension) — there is no plain
-`assembleDebug`. Pick the player surface:
-
-- `webview` → `ai.lanka.kiosk` ("Lanka", HTML5 `<video>` kiosk)
-- `native` → `ai.lanka.kiosk.vs` ("Lanka-vs", ExoPlayer)
+One APK, one package (`ai.lanka.kiosk`). Both player surfaces — the WebView
+kiosk and the native ExoPlayer player — ship in it; which one runs is chosen
+per box from the dashboard (device page → *Switch to Native / WebView*), stored
+on the box, and survives reboot. Rollback is switching back; no OTA.
 
 ```bash
 cd android
-./gradlew :app:assembleWebviewDebug -PLANKA_SERVER_URL=http://lanka-server:3000
-./gradlew :app:assembleNativeDebug  -PLANKA_SERVER_URL=http://lanka-server:3000
+./gradlew :app:assembleDebug -PLANKA_SERVER_URL=http://lanka-server:3000
 ```
 
 The server URL is **compile-time** (`BuildConfig.LANKA_SERVER_URL`); rebuild to
@@ -77,22 +75,49 @@ retarget (no on-device override). Use a Tailscale MagicDNS name
 (`http://lanka-server:3000`) or a raw `100.x.y.z` IP your TVs can reach over the
 tailnet.
 
-APKs land at `app/build/outputs/apk/{webview,native}/debug/app-{webview,native}-debug.apk`.
+The APK lands at `app/build/outputs/apk/debug/app-debug.apk`.
 
-### Native dev + prod builds (helper)
+### Dev + prod builds (helper)
 
-`scripts/build-native-apk.sh` builds the native APK for the dev and/or prod
-server in one step (URLs overridable via `LANKA_DEV_URL` / `LANKA_PROD_URL`):
+`scripts/build-apk.sh` builds the APK for the dev and/or prod server in one
+step (URLs overridable via `LANKA_DEV_URL` / `LANKA_PROD_URL`; set
+`LANKA_KIOSK_PIN` to bake the PIN escape hatch):
 
 ```bash
-scripts/build-native-apk.sh        # both → app-native-debug-{DEV,PROD}.apk
-scripts/build-native-apk.sh prod   # prod only
+scripts/build-apk.sh        # both → app-debug-{DEV,PROD}.apk
+scripts/build-apk.sh prod   # prod only
 ```
 
 Defaults: dev = `http://100.123.113.86:5100` (local dev server on the tailnet),
 prod = `http://100.79.177.86` (Hetzner, nginx tailnet block on :80). Both share
-`applicationId ai.lanka.kiosk.vs`, so only one can be installed on a box at a
-time.
+`applicationId ai.lanka.kiosk`, so only one can be installed on a box at a time.
+
+## Migrating a box from the two-flavor era (`ai.lanka.kiosk.vs`)
+
+The former native flavor was a separate package. A box that still has it
+needs it removed, or both kiosks fight for the foreground:
+
+1. On the APK page of the dashboard, **delete every old `-vs` release** before
+   pushing anything (the APK also refuses a foreign package name, but don't rely on it).
+2. `adb shell dumpsys device_policy | grep -i owner`
+   - `.vs` is **not** the device owner → `adb uninstall ai.lanka.kiosk.vs`.
+   - `.vs` **is** the device owner → it cannot be uninstalled and
+     `dpm remove-active-admin` only works for `android:testOnly` builds:
+     factory-reset the box and re-provision with `ai.lanka.kiosk` (above).
+3. Delete the now-offline `.vs` device row on the Devices page (different
+   `deviceId`; nothing adopts it).
+4. OTA the fleet to `0.3.0-surface` or newer. Every box keeps its package,
+   `deviceId`, HOME pin and device-owner status and boots the WebView surface
+   (no preference stored). Then switch per box from the dashboard.
+
+Verify on one box: switch → badge flips within a minute → reboot → still the
+new surface → PIN pad still unlocks → switch back → pull power mid-switch →
+box comes up on the committed surface (or reverted if it crash-loops).
+Pushing an OTA and switching mid-download must fail with `ota in progress`.
+
+If a box shows **"Lanka — player failed to start"**, the command channel
+isn't running on it — use the on-device PIN pad or reboot the box to recover
+it.
 
 ## Release build (signed)
 
@@ -176,7 +201,7 @@ remote when the dashboard is unreachable (tailnet down, WebSocket wedged,
 app server offline):
 
 ```bash
-./gradlew :app:assembleNativeDebug \
+./gradlew :app:assembleDebug \
   -PLANKA_SERVER_URL=http://lanka-server:3000 \
   -PKIOSK_PIN=4931
 ```
