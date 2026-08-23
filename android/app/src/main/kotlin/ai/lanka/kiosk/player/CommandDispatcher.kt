@@ -9,6 +9,8 @@ interface CommandActions {
     fun setKioskLock(enabled: Boolean)
     fun installOta(sha256: String, url: String, commandId: Int): Boolean
     fun reload()
+    /** `set-surface`: switch the player surface ("webview" | "native"). Null = accepted, else the reason. */
+    fun setSurface(name: String): String?
 }
 
 interface AckSender { fun send(json: String) }
@@ -51,6 +53,17 @@ class CommandDispatcher(private val actions: CommandActions, private val sender:
                 }
                 if (!actions.installOta(sha, url, commandId)) ack(commandId, "failed", "install failed")
                 // success ack is sent asynchronously via OtaResultBus callback in CommandClient
+            }
+            "set-surface" -> {
+                val surface = payload?.get("surface")?.jsonPrimitive?.contentOrNull
+                if (surface.isNullOrBlank()) {
+                    ack(commandId, "failed", "missing surface")
+                    return
+                }
+                // Ack BEFORE the surface restarts: SurfaceSwitcher delays recreate()
+                // by ACK_GRACE_MS so this frame leaves the socket first.
+                val reason = runCatching { actions.setSurface(surface) }.getOrElse { it.toString() }
+                if (reason == null) ack(commandId, "acked") else ack(commandId, "failed", reason)
             }
             else -> ack(commandId, "failed", "unknown command")
         }

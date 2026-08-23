@@ -23,7 +23,24 @@ class OtaInstaller private constructor(private val baseDir: File) {
 
     fun apkFile(sha256: String): File = File(apkDir, "$sha256.apk")
 
+    /**
+     * Marks the box busy for the whole OTA (download → install → OS result). A
+     * surface switch restarts the player Activity, which would orphan a half-done
+     * OTA; SurfaceSwitcher refuses while [busy]. Cleared on every failure path
+     * here, on the immediate-failure paths of [installSilently], and by
+     * OtaInstallReceiver when the OS reports the result. A successful install
+     * kills the process anyway. Age-capped at [BUSY_MAX_MS] so a wedged OTA (the
+     * WebView died between download and install, the result broadcast never
+     * came) can never block the rollback path for good.
+     */
     fun downloadApk(sha256: String, url: String): Boolean {
+        busySince = System.currentTimeMillis()
+        val ok = runCatching { downloadInner(sha256, url) }.getOrDefault(false)
+        if (!ok) clearBusy()
+        return ok
+    }
+
+    private fun downloadInner(sha256: String, url: String): Boolean {
         // Reuse the cache only if its bytes still hash to the sha; otherwise drop a
         // stale/unverified file and re-download good bytes (self-heal).
         if (cachedFileIsValid(sha256)) return true
@@ -157,6 +174,8 @@ class OtaInstaller private constructor(private val baseDir: File) {
         commandId: Long,
         onImmediateFailure: (status: String) -> Unit,
     ) {
+        fun fail(status: String) { clearBusy(); onImmediateFailure(status) }
+
         val apk = apkFile(sha256)
         // Re-verify at the point of install (not just at download): refuse to commit
         // any cached file whose bytes don't hash to the expected sha. This closes the
@@ -165,7 +184,7 @@ class OtaInstaller private constructor(private val baseDir: File) {
         if (!cachedFileIsValid(sha256)) {
             apk.delete()
             Log.w(TAG, "OTA cache for $sha256 missing or hash-mismatched — refusing install")
-            onImmediateFailure("failed")
+            fail("failed")
             return
         }
 
@@ -180,27 +199,45 @@ class OtaInstaller private constructor(private val baseDir: File) {
             !signaturesMatch(selfSigners, archiveSigners)
         ) {
             Log.e(TAG, "OTA signer mismatch — refusing install of $sha256")
-            onImmediateFailure("failed")
+            fail("failed")
             return
         }
 
-        val installer = context.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+: an app holding REQUEST_INSTALL_PACKAGES may update
-            // *itself* (same signer) with no prompt. A device-owner install is
-            // silent regardless; this also covers the non-owner self-update path
-            // on certified boxes. If the box still refuses, the commit reports
-            // STATUS_PENDING_USER_ACTION and OtaInstallReceiver falls back to the
-            // system install prompt.
-            params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        // Refuse an archive that would install a DIFFERENT package — e.g. a stale
+        // `ai.lanka.kiosk.vs` release from before the single-APK merge. A
+        // device-owner install of a foreign package would put a second kiosk on the
+        // box. Fail CLOSED: an archive whose package name can't be read is not
+        // installed either (the SHA proves integrity, not identity).
+        val archivePkg = runCatching {
+            context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)?.packageName
+        }.getOrNull()
+        if (!packageNameMatches(context.packageName, archivePkg)) {
+            Log.e(TAG, "OTA package mismatch: archive=$archivePkg self=${context.packageName} — refusing install")
+            fail("failed")
+            return
         }
-        val sessionId = installer.createSession(params)
-        val session = installer.openSession(sessionId)
+
+        // Everything session-related inside ONE try so createSession/openSession
+        // failures also reach fail() — otherwise busy would stay set.
+        var session: PackageInstaller.Session? = null
         try {
-            session.openWrite("base.apk", 0, apk.length()).use { out ->
+            val installer = context.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Android 12+: an app holding REQUEST_INSTALL_PACKAGES may update
+                // *itself* (same signer) with no prompt. A device-owner install is
+                // silent regardless; this also covers the non-owner self-update path
+                // on certified boxes. If the box still refuses, the commit reports
+                // STATUS_PENDING_USER_ACTION and OtaInstallReceiver falls back to the
+                // system install prompt.
+                params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            }
+            val sessionId = installer.createSession(params)
+            val s = installer.openSession(sessionId)
+            session = s
+            s.openWrite("base.apk", 0, apk.length()).use { out ->
                 apk.inputStream().use { it.copyTo(out) }
-                session.fsync(out)
+                s.fsync(out)
             }
             val intent = Intent(context, OtaInstallReceiver::class.java).apply {
                 putExtra(OtaInstallReceiver.EXTRA_COMMAND_ID, commandId)
@@ -209,11 +246,13 @@ class OtaInstaller private constructor(private val baseDir: File) {
                 context, commandId.toInt(), intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
-            session.commit(pendingIntent.intentSender)
+            s.commit(pendingIntent.intentSender)
         } catch (e: Exception) {
-            session.abandon()
+            runCatching { session?.abandon() }
             Log.e(TAG, "installSilently failed: ${e.message}")
-            onImmediateFailure("failed")
+            fail("failed")
+        } finally {
+            runCatching { session?.close() } // release our handle; a committed session is the OS's now
         }
     }
 
@@ -229,5 +268,23 @@ class OtaInstaller private constructor(private val baseDir: File) {
 
         /** For unit tests only. */
         internal fun forTesting(dir: File): OtaInstaller = OtaInstaller(dir)
+
+        /**
+         * Epoch ms when the current OTA started; 0 when idle. See [downloadApk].
+         * Read through [busy] / [isBusy] so a wedged OTA expires after [BUSY_MAX_MS].
+         */
+        @Volatile private var busySince: Long = 0L
+        const val BUSY_MAX_MS = 15 * 60_000L
+
+        fun isBusy(now: Long = System.currentTimeMillis()): Boolean =
+            busySince != 0L && now - busySince < BUSY_MAX_MS
+
+        val busy: Boolean get() = isBusy()
+
+        fun clearBusy() { busySince = 0L }
+
+        /** Fail CLOSED: a foreign OR unreadable package name is refused. */
+        internal fun packageNameMatches(self: String, archive: String?): Boolean =
+            archive == self
     }
 }

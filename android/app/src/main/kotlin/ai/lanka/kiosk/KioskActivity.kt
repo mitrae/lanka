@@ -69,6 +69,13 @@ open class KioskActivity : Activity() {
         hidePinPad()
     }
 
+    override fun onDestroy() {
+        // The snap-back and PIN-pad idle posts are ours; drop them so a destroyed
+        // instance never re-foregrounds itself. Surfaces own and clear their own Handler.
+        mainHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
     /**
      * Kiosk snap-back. The user pressed HOME or launched another app — bring the
      * player back to the foreground so the remote can't park on the Google TV

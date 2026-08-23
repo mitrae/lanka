@@ -29,7 +29,9 @@ class NativeFSBridge(
     /** Origin (BuildConfig.LANKA_SERVER_URL) allowed to call privileged methods. */
     private val trustedOrigin: String? = null,
     /** Current top-level page URL, read on a binder thread → must be thread-safe. */
-    private val currentUrl: () -> String? = { null }
+    private val currentUrl: () -> String? = { null },
+    /** `set-surface` handler (SurfaceSwitcher.request bound to the host Activity). Null = accepted. */
+    private val switchSurface: (String) -> String? = { "not supported" }
 ) {
 
     /**
@@ -191,6 +193,20 @@ class NativeFSBridge(
         if (!privilegedOriginAllowed()) return
         KioskLock.locked = enabled
         Log.i(TAG, "kiosk lock set to $enabled")
+    }
+
+    /**
+     * Switches the player surface ("webview" | "native"). The choice is committed
+     * to SharedPreferences and the host Activity is recreated after a short grace,
+     * so the JS caller can still send its ack. Returns "" on success, else the
+     * failure reason (the dashboard shows it verbatim).
+     */
+    @JavascriptInterface
+    fun setSurface(name: String): String {
+        if (!privilegedOriginAllowed()) return "forbidden"
+        val reason = switchSurface(name)
+        Log.i(TAG, "set-surface $name → ${reason ?: "accepted"}")
+        return reason ?: ""
     }
 
     private companion object {

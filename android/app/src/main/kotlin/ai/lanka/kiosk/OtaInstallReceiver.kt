@@ -10,6 +10,7 @@ import android.util.Log
 class OtaInstallReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        OtaInstaller.clearBusy() // the OTA is over, whatever the outcome (incl. the user-action prompt)
         val commandId = intent.getLongExtra(EXTRA_COMMAND_ID, -1L)
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
 

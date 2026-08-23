@@ -30,7 +30,7 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "0.2.0-pin"
+        versionName = "0.3.0-surface"
 
         buildConfigField(
             "String",
@@ -81,16 +81,6 @@ android {
         }
     }
 
-    flavorDimensions += "surface"
-    productFlavors {
-        create("webview") { dimension = "surface" }
-        create("native") {
-            dimension = "surface"
-            applicationIdSuffix = ".vs"
-            versionNameSuffix = "-vs"
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -111,28 +101,21 @@ android {
         getByName("main") {
             java.srcDirs("src/main/kotlin")
         }
-        getByName("native") {
-            java.srcDirs("src/native/kotlin")
-        }
-        getByName("webview") {
-            java.srcDirs("src/webview/kotlin")
-        }
-        getByName("testNative") {
-            java.srcDirs("src/testNative/kotlin")
-        }
     }
 }
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.webkit:webkit:1.9.0")
-    testImplementation("junit:junit:4.13.2")
 
+    // Native (ExoPlayer) surface. Formerly nativeImplementation-scoped; one APK
+    // now carries both surfaces (~6 MB instead of 1.9 MB — accepted in the spec).
     val media3 = "1.3.1"
-    "nativeImplementation"("androidx.media3:media3-exoplayer:$media3")
-    "nativeImplementation"("androidx.media3:media3-ui:$media3")
-    "nativeImplementation"("com.squareup.okhttp3:okhttp:4.12.0")
-    "nativeImplementation"("com.squareup.okhttp3:okhttp-sse:4.12.0")
-    "nativeImplementation"("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
+
+    testImplementation("junit:junit:4.13.2")
 }

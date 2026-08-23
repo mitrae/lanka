@@ -22,6 +22,28 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Lanka.Kiosk">
 
+        <!-- The ONE launcher component. Boot (BootReceiver → getLaunchIntentForPackage),
+             the device-owner HOME pin (DevicePolicy.setHomeLauncher) and lock task all
+             target this name; the player surface inside it is a runtime choice
+             (see SurfaceStore / docs/superpowers/specs/2026-08-23-single-apk-runtime-surface-design.md). -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|keyboardHidden|navigation"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.HOME"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

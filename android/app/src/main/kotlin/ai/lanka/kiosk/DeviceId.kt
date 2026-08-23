@@ -7,7 +7,7 @@ import java.util.UUID
  * The persisted, per-box random device identity used by both player surfaces.
  *
  * Stored under SharedPreferences "lanka_kiosk" / key "deviceId" so the WebView
- * (`MainActivity.deviceId()`) and the native [PlayerActivity] resolve the SAME
+ * (`MainActivity.deviceId()`) and the native [NativeSurface] resolve the SAME
  * id across reinstalls-in-place and recreations. Generated once on first run.
  */
 object DeviceId {

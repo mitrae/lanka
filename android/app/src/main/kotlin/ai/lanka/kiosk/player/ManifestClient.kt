@@ -23,7 +23,7 @@ class ManifestClient(
     private val onManifest: (Manifest?) -> Unit,
     private val onError: (Throwable) -> Unit,
     // SSE "reload" handler. Null = the default behaviour, a plain reconcile()
-    // (re-fetch the manifest). PlayerActivity passes a handler that recreate()s
+    // (re-fetch the manifest). NativeSurface passes a handler that recreate()s
     // the activity for a clean restart. (A null default rather than a lambda
     // because a constructor-parameter default can't reference instance methods.)
     private val onReload: (() -> Unit)? = null,
@@ -131,7 +131,7 @@ class ManifestClient(
             ) {
                 when (type) {
                     "manifest-changed" -> reconcile()
-                    "reload" -> (onReload ?: ::reconcile)() // PlayerActivity recreates; default reconciles
+                    "reload" -> (onReload ?: ::reconcile)() // NativeSurface recreates; default reconciles
                 }
             }
             override fun onFailure(
