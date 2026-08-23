@@ -1,7 +1,7 @@
 # On-device PIN unlock — local kiosk escape hatch
 
 **Date:** 2026-08-23
-**Status:** Design approved, pending implementation plan
+**Status:** Design approved; revised 2026-08-23 after Claude + Codex plan review (modal key routing, process-wide lockout, 5-tap fallback trigger, verified unlock)
 **Related:** `2026-04-19-lanka-apk-kiosk-design.md` (WebView kiosk), `2026-06-21-device-remote-management-design.md` (dashboard command channel), `2026-06-28-lanka-native-exoplayer-flavor-design.md` (native flavor / shared source sets)
 
 ## Summary
@@ -46,7 +46,17 @@ effectively no working unlock at all on a properly-provisioned device.
    UI, and not a separate Activity.
 5. **The secret is local and compile-time.** It can never come from the server,
    because the server being unreachable is the premise of the feature.
-6. **A correct PIN launches Settings.**
+6. **A correct PIN launches Settings** — only after the lock-task release is
+   verified.
+7. **Two triggers from day one:** long-press BACK (primary) and five BACK taps
+   within 2 s (fallback for ROMs that reserve long-BACK and remotes that never
+   auto-repeat). Added in review; improvising a fallback after ROM testing was
+   judged not to be a plan.
+8. **The pad never takes focus.** `KioskActivity.dispatchKeyEvent` routes every
+   key to it while it is showing; it draws its own selection. Added in review —
+   see "Key routing" for why the focus-based design was unsafe.
+9. **One `KioskPin` per process**, so the lockout survives the pad being closed
+   and reopened. Added in review.
 
 ### Why a native overlay rather than an HTML one (decision 4)
 
@@ -90,14 +100,26 @@ class KioskPin(
 )
 ```
 
-Responsibilities: accumulate digits, compare on reaching `pinLength`, count
-consecutive failures, own the lockout window, expose current entry length for
-the dot indicator. The injected clock mirrors the pure-core testing pattern the
-native flavor already uses.
+Responsibilities: accumulate digits (non-digits are ignored), compare on
+reaching `pinLength`, count consecutive failures, own the lockout window, expose
+current entry length for the dot indicator. The injected clock mirrors the
+pure-core testing pattern the native flavor already uses.
 
-**`PinPadView.kt`** — a focusable Android `View`: 3×4 digit grid, filled/empty
-dot indicators, and a lockout message. Consumes D-pad and number keys and
-delegates every decision to `KioskPin`; it holds no policy of its own.
+**There is exactly one `KioskPin` per process**, held in `KioskActivity`'s
+companion. The pad is created and destroyed on every open/close, but the
+failure counter and lockout window must outlive it — otherwise dismissing and
+reopening the pad (or simply waiting out its 20 s idle timeout) hands an
+attacker five fresh attempts every time, and the lockout is decorative.
+`reset()` clears only the partial entry, never the failure state.
+
+**`TapChord.kt`** — a second tiny pure class: counts taps and reports when
+`N` have landed inside a sliding window. Backs the fallback trigger (below).
+
+**`PinPadView.kt`** — a **non-focusable** Android `View`: 3×4 digit grid with a
+selection highlight the pad draws itself, filled/empty dot indicators, and a
+message line for "Wrong PIN" / lockout / unlock-failure text. It exposes one
+entry point, `handleKey(event)`, and delegates every decision to `KioskPin`; it
+holds no policy of its own and never participates in Android focus.
 
 ### Changed files
 
@@ -110,12 +132,18 @@ exists.
 
 **`KioskLock.kt`** — gains a change listener (see below).
 
-**`DevicePolicy.kt`** — gains `stopKioskMode(activity)`, calling `stopLockTask()`
-in the same `runCatching` style as its neighbours, guarded by the current
-**lock-task state** (mirroring `startKioskMode`) rather than by `isDeviceOwner`.
+**`DevicePolicy.kt`** — gains `isLockTaskActive(activity)` and
+`stopKioskMode(activity): Boolean`, calling `stopLockTask()` in the same
+`runCatching` style as its neighbours, guarded by the current **lock-task
+state** (mirroring `startKioskMode`) rather than by `isDeviceOwner`.
 `startKioskMode` is deliberately not device-owner-gated — it falls back to plain
 screen pinning on an unprovisioned box — so the release path must be equally
 ungated or it would strand a pinned non-owner device.
+
+`stopKioskMode` **returns whether the task is actually unpinned afterwards.**
+`stopLockTask()` validates task/UID ownership and can be refused by an OEM; a
+`runCatching` that swallows that and proceeds to launch Settings would produce
+a silent no-op — the one outcome an escape hatch must never have.
 
 **`build.gradle.kts`** — one `buildConfigField` pair.
 
@@ -147,28 +175,72 @@ override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
 
 Short-press BACK behaves exactly as it does today.
 
-### Key routing
+**Fallback trigger: five BACK taps within 2 s.** Long-press BACK has two
+failure modes no code can fix: an OEM ROM may reserve long-BACK
+(`config_longPressOnBackBehavior`) and intercept it before the app sees a
+repeat, and some IR remotes emit discrete DOWN/UP pairs per frame rather than a
+held key, so auto-repeat never starts. A tap chord depends on neither — it only
+needs `repeatCount == 0` DOWN events, which every remote delivers. `TapChord`
+counts them in the same `onKeyDown` branch; both triggers call `showPinPad()`.
+Five taps in two seconds does not happen by accident.
 
-A focused WebView consumes D-pad keys for its own page navigation, which would
-otherwise starve the pad. Calling `requestFocus()` on `PinPadView` after
-attaching it moves focus off the WebView, so digits arrive through the normal
-view-hierarchy key dispatch. No `dispatchKeyEvent` override on the Activity is
-required. On dismissal, focus returns to the content view.
+### Key routing — the pad is modal and never takes focus
+
+The pad is a **sibling** of the player content, not an ancestor, so
+`View.dispatchKeyEvent` would only reach it while Android focus sits inside it.
+The first design relied on `requestFocus()` winning against the WebView and on
+`FocusFinder` to move between digits. Review killed that for two reasons:
+
+- if focus does **not** land in the pad, neither BACK nor digits ever reach it —
+  BACK goes to the Activity, which swallows it, and the pad cannot even be
+  dismissed except by the idle timeout;
+- `FocusFinder` searches the **whole window**. In the native flavor the two
+  media3 `PlayerView`s are controller-enabled by default, so a stray D-pad press
+  could hand them focus and CENTER would pop transport controls over the
+  signage.
+
+Instead the **Activity owns routing**. `Activity.dispatchKeyEvent` is the entry
+point for every hardware key in the window, ahead of the view hierarchy, and
+cannot be starved. While `pinPad != null`, `KioskActivity.dispatchKeyEvent`
+hands the event to `pad.handleKey(event)` and returns `true` **without calling
+`super`** — nothing leaks to the WebView or the player. The pad keeps its own
+selected-index and draws the highlight itself; no view in it is focusable, so
+the player's focus state is never touched and there is nothing to restore on
+dismissal.
+
+`handleKey` acts only on `ACTION_DOWN` with `repeatCount == 0`:
+
+| key | action |
+|---|---|
+| BACK | dismiss — but **only** a fresh press. The long-press that opened the pad is still held, and its auto-repeats arrive at the pad; without this check the pad dismisses itself before the finger lifts |
+| D-pad | move selection |
+| CENTER / ENTER | submit selected digit |
+| 0–9 | submit that digit — the `repeatCount` check also stops a held key entering `5555` and burning an attempt |
 
 ### Auto-dismiss
 
-The pad removes itself after **20 s** with no key input. This is mandatory, not
-a nicety: the pad is drawn over a customer-facing screen, and a half-entered PIN
-must never be left sitting on a shop wall.
+The pad removes itself after **20 s** with no *accepted* key input (initial
+DOWN events; repeats do not count). This is mandatory, not a nicety: the pad is
+drawn over a customer-facing screen, and a half-entered PIN must never be left
+sitting on a shop wall. If the pad is opened during an active lockout it shows
+the remaining seconds immediately; the text is refreshed on each rejected key,
+not ticked every second — deliberately simple, and the pad disappears at 20 s
+regardless.
 
 ### The unlock action
 
 Order matters here — `startActivity` to another package is blocked while lock
-task is active, so the release must precede the launch:
+task is active, so the release must precede the launch — and the release must
+be **verified**, not assumed:
 
 ```kotlin
-KioskLock.locked = false             // listener releases lock task (see below)
-Log.i(TAG, "kiosk unlocked via PIN")
+Log.i(TAG, "kiosk unlocked via on-device PIN")
+KioskLock.locked = false                     // listener runs inline → stopLockTask()
+if (DevicePolicy.isLockTaskActive(this)) {   // refused (ownership / OEM) — say so
+    pinPad?.showMessage("Unlock failed — lock task still active")
+    return                                   // pad stays up; flag stays false, resume retries
+}
+hidePinPad()
 startActivity(Intent(Settings.ACTION_SETTINGS))
 ```
 
@@ -212,16 +284,35 @@ object KioskLock {
 ```
 
 `KioskActivity` registers in `onResume` and clears in `onPause`, applying
-`startKioskMode`/`stopKioskMode` accordingly, and guards the existing `onResume`
-call with `if (KioskLock.locked)`. Both the PIN pad and the dashboard command
-then work identically on provisioned and unprovisioned boxes.
+`startKioskMode`/`stopKioskMode` accordingly. Both the PIN pad and the dashboard
+command then work identically on provisioned and unprovisioned boxes.
+
+Four rules make this robust; each closes a hole found in review:
+
+1. **`onResume` reconciles unconditionally** — `applyLockState()` runs whether
+   the flag is true or false. A dashboard unlock that arrives while the activity
+   is paused (box asleep, operator in Settings) fires with no listener
+   registered; an `if (locked) startKioskMode()` guard would skip it and leave
+   the task pinned with the flag saying unlocked. Both flavors also call
+   `mainHandler.removeCallbacksAndMessages(null)` in `onDestroy` (and
+   `MainActivity` does it mid-life during renderer recovery), which drops any
+   queued lock-state post — reconcile-on-resume is what makes that safe.
+2. **Posted work re-reads the flag** instead of applying a captured Boolean, so
+   a value queued before a later assignment cannot be applied out of order.
+3. **Posted work checks it is still the registered observer** (`KioskLock.listener
+   === lockListener && !isFinishing`) before touching lock task, so a post that
+   lands after `onPause` does not pin or unpin a backgrounded Activity.
+4. **`onPause` clears the listener only if it is ours** (identity check), so one
+   instance's teardown can never silently deregister another's.
 
 **Threading:** the listener fires on whichever thread set the flag. The PIN pad
 sets it on the main thread, but the dashboard path does not — `NativeFSBridge`
 runs on a JavaBridge thread and the native `CommandDispatcher` on the WebSocket
 thread. `startLockTask()`/`stopLockTask()` must be called on the main thread, so
-the listener body must hop through `mainHandler.post { … }`. `KioskLock.locked`
-is already `@Volatile`, so the flag read itself is safe from any thread.
+the listener runs inline when already on the main looper (this is what
+guarantees the PIN path's ordering) and hops `mainHandler.post { … }` otherwise.
+`KioskLock.locked` is already `@Volatile`, so the flag read itself is safe from
+any thread.
 
 ### PIN storage
 
@@ -264,8 +355,12 @@ Cases:
 - lockout engages on the 5th consecutive failure
 - lockout expires against the injected clock
 - input during lockout is rejected without extending it
-- entry state resets on dismissal
+- entry state resets on dismissal, failure state does not
+- non-digit characters are ignored
 - empty `expectedSha256` disables the feature (no entry ever succeeds)
+
+`TapChordTest`: N taps inside the window fire once and reset; taps outside the
+window are forgotten; N−1 taps never fire.
 
 Plus a `KioskLock` listener test: setting `locked` fires the listener with the
 new value; a cleared listener is not called.
@@ -273,7 +368,9 @@ new value; a cleared listener is not called.
 `PinPadView` and the Activity key handling are **build-verified, then verified on
 a box** — the same standard the project already applies to transport and UI
 code. Both flavors must be checked: `testWebviewDebugUnitTest` and
-`testNativeDebugUnitTest`.
+`testNativeDebugUnitTest`. The on-box checklist must verify the maintenance
+operations the hatch exists for — reaching Wi-Fi, Tailscale and developer
+options from Settings on a device-owner box — not merely that Settings opens.
 
 ## Risks & mitigations
 
@@ -282,8 +379,11 @@ code. Both flavors must be checked: `testWebviewDebugUnitTest` and
 | Pad left on screen in a venue | 20 s inactivity auto-dismiss |
 | PIN extracted from the APK | Accepted and documented; sha256 raises the bar to deliberate effort. Physical/fleet access is already implied by holding the APK |
 | Long-press BACK fires accidentally | Only opens the pad; the PIN still gates. Auto-dismiss cleans up |
-| WebView steals D-pad keys | `requestFocus()` on the pad; verified on-box |
-| Some ROM does not deliver `onKeyLongPress` | Verify on-box early. Fallback: detect via `repeatCount` threshold in `onKeyDown` |
+| Lockout bypassed by reopening the pad | `KioskPin` is process-wide; failure state survives pad open/close and Activity recreation |
+| WebView steals keys from the pad | Pad never takes focus; Activity routes every key to it while showing and calls nothing else |
+| ROM reserves long-BACK, or IR remote never auto-repeats | Parallel 5-tap BACK chord needs only `repeatCount == 0` DOWN events; measured on-box |
+| `stopLockTask()` refused (ownership / OEM) | Return value checked; pad shows "Unlock failed" instead of launching a blocked Settings intent |
+| Dashboard unlock arrives while paused | `onResume` reconciles lock-task state unconditionally |
 | Operator forgets the PIN | It is fleet-wide and documented in the README build command; a reboot restores kiosk regardless |
 
 ## Out-of-scope / future

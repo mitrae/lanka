@@ -4,11 +4,11 @@
 
 **Goal:** Let an operator take a box out of kiosk mode from the remote control with a locally-verified PIN, with no network involved.
 
-**Architecture:** All code lands in `android/app/src/main/`, the source set shared by both product flavors, so `webview` and `native` inherit one implementation. A long-press on BACK attaches a native `PinPadView` over the player via `Activity.addContentView()`; a correct PIN clears `KioskLock.locked`, which now drives lock-task state through a listener, then launches Android Settings. Pure decision logic lives in `KioskPin`, which has zero Android imports and is JVM-unit-tested.
+**Architecture:** All code lands in `android/app/src/main/`, the source set shared by both product flavors, so `webview` and `native` inherit one implementation. Long-press BACK (or five BACK taps in 2 s) attaches a native, non-focusable `PinPadView` over the player via `Activity.addContentView()`; while it is showing, `KioskActivity.dispatchKeyEvent` routes every key to it and nothing else. A correct PIN clears `KioskLock.locked` — which now drives lock-task state through a listener — verifies the task is unpinned, then launches Android Settings. Pure decision logic lives in `KioskPin` and `TapChord`, which have zero Android imports and are JVM-unit-tested.
 
 **Tech Stack:** Kotlin, Android SDK 34 (minSdk 24), Gradle Kotlin DSL, JUnit 4. No new dependencies.
 
-**Spec:** `docs/superpowers/specs/2026-08-23-kiosk-pin-unlock-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-23-kiosk-pin-unlock-design.md` (revised after Claude + Codex review — read the "Key routing" and "Latent bugs fixed" sections before Tasks 3, 5 and 6).
 
 ## Global Constraints
 
@@ -18,23 +18,31 @@
 - **No new Gradle dependencies.** `junit:junit:4.13.2` is already `testImplementation`.
 - **Both flavors must build and test green** after every task: `./gradlew test` runs `testWebviewDebugUnitTest` and `testNativeDebugUnitTest`.
 - **`KIOSK_PIN` default is the empty string**, which disables the feature. An APK built without `-PKIOSK_PIN` must have no PIN escape hatch, not a well-known one.
-- **Lockout policy:** 5 consecutive wrong entries → 60 000 ms lockout.
-- **PIN pad auto-dismiss:** 20 000 ms of no key input.
+- **Lockout policy:** 5 consecutive wrong entries → 60 000 ms lockout. **The lockout state is process-wide** and must survive the pad being closed and reopened.
+- **PIN pad auto-dismiss:** 20 000 ms with no accepted key (initial DOWN events only).
+- **Fallback trigger:** 5 BACK taps within 2 000 ms.
+- **The pad never takes Android focus.** No view inside it may be `focusable`. All key handling goes through `PinPadView.handleKey()` called from `KioskActivity.dispatchKeyEvent`.
+- **Every key action in the pad requires `ACTION_DOWN && repeatCount == 0`.** Auto-repeats must never dismiss the pad or enter a digit.
 - Working directory for all Gradle commands is `android/`.
 
 ---
 
-### Task 1: `KioskPin` — pure PIN state machine
+### Task 1: `KioskPin` and `TapChord` — pure state machines
 
 **Files:**
 - Create: `android/app/src/main/kotlin/ai/lanka/kiosk/KioskPin.kt`
+- Create: `android/app/src/main/kotlin/ai/lanka/kiosk/TapChord.kt`
 - Test: `android/app/src/test/kotlin/ai/lanka/kiosk/KioskPinTest.kt`
+- Test: `android/app/src/test/kotlin/ai/lanka/kiosk/TapChordTest.kt`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `class KioskPin(expectedSha256: String, pinLength: Int, now: () -> Long = System::currentTimeMillis)` with `enum class Result { INCOMPLETE, UNLOCKED, WRONG, LOCKED_OUT }`, `val enabled: Boolean`, `val entryLength: Int`, `fun append(digit: Char): Result`, `fun isLockedOut(): Boolean`, `fun lockedOutMsRemaining(): Long`, `fun reset()`. Task 5 (`PinPadView`) and Task 6 (`KioskActivity`) both depend on these exact names.
+- Produces:
+  - `class KioskPin(expectedSha256: String, pinLength: Int, now: () -> Long = System::currentTimeMillis)` with `enum class Result { INCOMPLETE, UNLOCKED, WRONG, LOCKED_OUT }`, `val enabled: Boolean`, `val entryLength: Int`, `fun append(digit: Char): Result`, `fun isLockedOut(): Boolean`, `fun lockedOutMsRemaining(): Long`, `fun reset()`.
+  - `class TapChord(taps: Int, windowMs: Long, now: () -> Long = System::currentTimeMillis)` with `fun tap(): Boolean`.
+  - Task 5 (`PinPadView`) and Task 6 (`KioskActivity`) depend on these exact names.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing `KioskPin` test**
 
 Create `android/app/src/test/kotlin/ai/lanka/kiosk/KioskPinTest.kt`:
 
@@ -120,10 +128,21 @@ class KioskPinTest {
     }
 
     @Test
-    fun `reset clears entry without counting a failure`() {
+    fun `reset clears entry but keeps failure state`() {
         val p = pin()
+        repeat(4) { type(p, "0000") }
         type(p, "49")
         p.reset()
+        assertEquals(0, p.entryLength)
+        // 4 failures survived reset → this 5th one locks out
+        assertEquals(KioskPin.Result.WRONG, type(p, "0000"))
+        assertTrue(p.isLockedOut())
+    }
+
+    @Test
+    fun `non-digit characters are ignored`() {
+        val p = pin()
+        assertEquals(KioskPin.Result.INCOMPLETE, p.append('x'))
         assertEquals(0, p.entryLength)
         assertEquals(KioskPin.Result.UNLOCKED, type(p, "4931"))
     }
@@ -143,12 +162,59 @@ class KioskPinTest {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Write the failing `TapChord` test**
 
-Run: `cd android && ./gradlew testWebviewDebugUnitTest --tests '*KioskPinTest*'`
-Expected: FAIL — compilation error, `Unresolved reference: KioskPin`.
+Create `android/app/src/test/kotlin/ai/lanka/kiosk/TapChordTest.kt`:
 
-- [ ] **Step 3: Write the implementation**
+```kotlin
+package ai.lanka.kiosk
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class TapChordTest {
+
+    private class FakeClock(var nowMs: Long = 0L) { fun get(): Long = nowMs }
+
+    @Test
+    fun `fires on the nth tap inside the window and resets`() {
+        val clock = FakeClock()
+        val chord = TapChord(taps = 5, windowMs = 2_000, now = clock::get)
+        repeat(4) { clock.nowMs += 200; assertFalse(chord.tap()) }
+        clock.nowMs += 200
+        assertTrue(chord.tap())
+        // counter reset: the next tap starts over
+        clock.nowMs += 200
+        assertFalse(chord.tap())
+    }
+
+    @Test
+    fun `taps outside the window are forgotten`() {
+        val clock = FakeClock()
+        val chord = TapChord(taps = 5, windowMs = 2_000, now = clock::get)
+        repeat(4) { clock.nowMs += 100; chord.tap() }
+        clock.nowMs += 2_500 // everything above is now stale
+        assertFalse(chord.tap())
+        repeat(3) { clock.nowMs += 100; assertFalse(chord.tap()) }
+        clock.nowMs += 100
+        assertTrue(chord.tap()) // 5 fresh taps within 2 s
+    }
+
+    @Test
+    fun `one short of n never fires`() {
+        val clock = FakeClock()
+        val chord = TapChord(taps = 5, windowMs = 2_000, now = clock::get)
+        repeat(4) { clock.nowMs += 100; assertFalse(chord.tap()) }
+    }
+}
+```
+
+- [ ] **Step 3: Run both tests to verify they fail**
+
+Run: `cd android && ./gradlew testWebviewDebugUnitTest --tests '*KioskPinTest*' --tests '*TapChordTest*'`
+Expected: FAIL — compilation errors, `Unresolved reference: KioskPin` and `Unresolved reference: TapChord`.
+
+- [ ] **Step 4: Write `KioskPin`**
 
 Create `android/app/src/main/kotlin/ai/lanka/kiosk/KioskPin.kt`:
 
@@ -165,6 +231,11 @@ import java.security.MessageDigest
  * (same pattern as the native player's pure cores). All Android concerns —
  * drawing, key events, unlocking the kiosk — live in PinPadView/KioskActivity.
  *
+ * There is ONE instance per process (KioskActivity.companion). The pad is
+ * created and destroyed on every open/close, but the failure counter and
+ * lockout window must outlive it — otherwise closing and reopening the pad
+ * hands an attacker five fresh attempts every time.
+ *
  * @param expectedSha256 lowercase hex sha256 of the PIN; EMPTY disables the
  *   feature entirely, so an APK built without -PKIOSK_PIN has no hatch at all.
  * @param pinLength number of digits; entry is compared once this many arrive.
@@ -176,7 +247,7 @@ class KioskPin(
     private val now: () -> Long = System::currentTimeMillis
 ) {
     enum class Result {
-        /** Digit accepted, more needed. */
+        /** Digit accepted (or ignored), more needed. */
         INCOMPLETE,
         /** Full entry matched — caller should unlock. */
         UNLOCKED,
@@ -198,7 +269,7 @@ class KioskPin(
 
     fun isLockedOut(): Boolean = lockedOutMsRemaining() > 0L
 
-    /** Clears the current entry. Does NOT count as a failed attempt. */
+    /** Clears the partial entry only. Failure count and lockout are untouched. */
     fun reset() {
         entry.setLength(0)
     }
@@ -206,6 +277,7 @@ class KioskPin(
     fun append(digit: Char): Result {
         if (isLockedOut()) return Result.LOCKED_OUT
         if (!enabled) return Result.WRONG
+        if (!digit.isDigit()) return Result.INCOMPLETE
 
         entry.append(digit)
         if (entry.length < pinLength) return Result.INCOMPLETE
@@ -237,18 +309,54 @@ class KioskPin(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Write `TapChord`**
 
-Run: `cd android && ./gradlew test --tests '*KioskPinTest*'`
-Expected: PASS, in **both** `testWebviewDebugUnitTest` and `testNativeDebugUnitTest`. If the native variant reports "no tests found", the file landed in the wrong source set — it must be `src/test/`, not `src/testNative/`.
+Create `android/app/src/main/kotlin/ai/lanka/kiosk/TapChord.kt`:
 
-- [ ] **Step 5: Commit**
+```kotlin
+package ai.lanka.kiosk
+
+/**
+ * Counts taps and fires once [taps] have landed inside a sliding [windowMs].
+ * Backs the PIN pad's fallback trigger (5× BACK in 2 s) for ROMs that reserve
+ * long-press BACK and IR remotes that never auto-repeat. Pure Kotlin; the
+ * injected clock keeps it deterministic under test.
+ */
+class TapChord(
+    private val taps: Int,
+    private val windowMs: Long,
+    private val now: () -> Long = System::currentTimeMillis
+) {
+    private val times = ArrayDeque<Long>()
+
+    /** Records a tap. Returns true (and resets) when the chord completes. */
+    fun tap(): Boolean {
+        val t = now()
+        times.addLast(t)
+        while (times.isNotEmpty() && t - times.first() > windowMs) times.removeFirst()
+        if (times.size >= taps) {
+            times.clear()
+            return true
+        }
+        return false
+    }
+}
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `cd android && ./gradlew test --tests '*KioskPinTest*' --tests '*TapChordTest*'`
+Expected: PASS, in **both** `testWebviewDebugUnitTest` and `testNativeDebugUnitTest`. If the native variant reports "no tests found", the files landed in the wrong source set — they must be in `src/test/`, not `src/testNative/`.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd /home/dmytro/PhpstormProjects/lanka
 git add android/app/src/main/kotlin/ai/lanka/kiosk/KioskPin.kt \
-        android/app/src/test/kotlin/ai/lanka/kiosk/KioskPinTest.kt
-git commit -m "feat(kiosk): KioskPin — pure PIN entry state machine with lockout"
+        android/app/src/main/kotlin/ai/lanka/kiosk/TapChord.kt \
+        android/app/src/test/kotlin/ai/lanka/kiosk/KioskPinTest.kt \
+        android/app/src/test/kotlin/ai/lanka/kiosk/TapChordTest.kt
+git commit -m "feat(kiosk): KioskPin + TapChord — pure PIN entry / tap-chord state machines"
 ```
 
 ---
@@ -316,7 +424,7 @@ Expected: FAIL — compilation error, `Unresolved reference: listener`.
 
 - [ ] **Step 3: Write the implementation**
 
-Replace the body of `android/app/src/main/kotlin/ai/lanka/kiosk/KioskLock.kt`, keeping the existing file header comment and extending it:
+Replace the whole of `android/app/src/main/kotlin/ai/lanka/kiosk/KioskLock.kt` with:
 
 ```kotlin
 package ai.lanka.kiosk
@@ -335,6 +443,11 @@ package ai.lanka.kiosk
  * lock-task state, so an unlock from ANY source (dashboard or PIN pad) actually
  * releases the pin. Without it the flag and the OS disagree on a device-owner
  * box: BACK starts working but the task stays pinned.
+ *
+ * The listener receives the value that was just assigned, but observers should
+ * RE-READ [locked] when they act (KioskActivity does): a callback posted to the
+ * main thread may run after a later assignment, and applying the captured
+ * value would then roll state backwards.
  *
  * A plain object (not tied to the Activity lifecycle) so the bridge and any
  * recreated MainActivity instance share one value.
@@ -376,45 +489,62 @@ This task is independently valuable and ships a fix even if the PIN pad never la
 1. `KioskActivity.onResume` calls `DevicePolicy.startKioskMode(this)` unconditionally, so any unlock is undone on the next resume.
 2. Nothing ever calls `stopLockTask()`, so the dashboard `kiosk-unlock` command is a no-op on a pinned box.
 
+Four rules from the spec's "Latent bugs fixed" section are encoded here: reconcile unconditionally on resume; posted work re-reads the flag; posted work checks it is still the registered observer; `onPause` clears only its own listener. Both flavors wipe `mainHandler` in `onDestroy` (`MainActivity.kt:102`, `PlayerActivity.kt:273`) and `MainActivity.kt:93` does so mid-life during renderer recovery — reconcile-on-resume is what makes losing a queued post harmless.
+
 **Files:**
-- Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/DevicePolicy.kt` (append `stopKioskMode` after `startKioskMode`, which ends at line 117)
+- Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/DevicePolicy.kt` (replace `startKioskMode` at lines 112-117; add two functions after it)
 - Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt:22-27` (`onResume`) and add `onPause`
 
 **Interfaces:**
 - Consumes: `KioskLock.listener` from Task 2.
-- Produces: `DevicePolicy.stopKioskMode(activity: Activity)`. Task 6 relies on `KioskLock.locked = false` synchronously releasing lock task when assigned on the main thread.
+- Produces: `DevicePolicy.isLockTaskActive(activity: Activity): Boolean`, `DevicePolicy.stopKioskMode(activity: Activity): Boolean`, and in `KioskActivity` a `private fun applyLockState()`. Task 6 relies on `KioskLock.locked = false` synchronously releasing lock task when assigned on the main thread, then on `isLockTaskActive` to verify.
 
-- [ ] **Step 1: Add `stopKioskMode` to `DevicePolicy`**
+- [ ] **Step 1: Add the lock-task helpers to `DevicePolicy`**
 
-Append to `android/app/src/main/kotlin/ai/lanka/kiosk/DevicePolicy.kt`, immediately after `startKioskMode` and before `reboot`:
+In `android/app/src/main/kotlin/ai/lanka/kiosk/DevicePolicy.kt`, replace the existing `startKioskMode` function (lines 112-117) and add the two new ones, so the block reads:
 
 ```kotlin
+    /** True while this app's task is pinned (screen pinning) or locked (device-owner lock task). */
+    fun isLockTaskActive(activity: Activity): Boolean {
+        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+    }
+
+    fun startKioskMode(activity: Activity) {
+        if (isLockTaskActive(activity)) return
+        runCatching { activity.startLockTask() }
+            .onFailure { Log.w(TAG, "startLockTask: ${it.message}") }
+    }
+
     /**
-     * Releases the lock-task pin so an operator can leave the player.
+     * Releases the lock-task pin so an operator can leave the player. Returns
+     * true if the task is actually unpinned afterwards — stopLockTask() validates
+     * task/UID ownership and an OEM can refuse it, and an escape hatch must never
+     * report success it cannot verify.
      *
      * Guarded by the current lock-task state (mirroring [startKioskMode]) rather
      * than by device-owner status: [startKioskMode] also pins UNprovisioned boxes
      * via plain screen pinning, so gating the release on isDeviceOwner would
      * strand exactly those devices.
      */
-    fun stopKioskMode(activity: Activity) {
-        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        if (am.lockTaskModeState == ActivityManager.LOCK_TASK_MODE_NONE) return
+    fun stopKioskMode(activity: Activity): Boolean {
+        if (!isLockTaskActive(activity)) return true
         runCatching { activity.stopLockTask() }
             .onFailure { Log.w(TAG, "stopLockTask: ${it.message}") }
+        return !isLockTaskActive(activity)
     }
 ```
 
-No new imports are needed — `Activity`, `ActivityManager`, `Context` and `Log` are already imported.
+Keep the existing KDoc comment above `startKioskMode` as it is. No new imports are needed — `Activity`, `ActivityManager`, `Context` and `Log` are already imported.
 
 - [ ] **Step 2: Wire the listener in `KioskActivity`**
 
-In `android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt`, add this property alongside `kioskReturnRunnable`:
+In `android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt`, add these members alongside `kioskReturnRunnable`:
 
 ```kotlin
     /**
-     * Mirrors KioskLock into real lock-task state, so an unlock from ANY source
-     * takes effect immediately.
+     * Mirrors KioskLock into real lock-task state so an unlock from ANY source
+     * (dashboard command or PIN pad) takes effect.
      *
      * Runs inline when already on the main thread and hops the handler otherwise:
      * startLockTask/stopLockTask are main-thread-only, but the dashboard path sets
@@ -423,13 +553,21 @@ In `android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt`, add this prope
      * thread also guarantees ordering for the PIN unlock, which must release the
      * pin BEFORE it can startActivity() to another package.
      */
-    private val lockListener: (Boolean) -> Unit = { locked ->
-        if (Looper.myLooper() == Looper.getMainLooper()) applyLockState(locked)
-        else mainHandler.post { applyLockState(locked) }
+    private val lockListener: (Boolean) -> Unit = {
+        if (Looper.myLooper() == Looper.getMainLooper()) applyLockState()
+        else mainHandler.post { applyLockState() }
     }
 
-    private fun applyLockState(locked: Boolean) {
-        if (locked) DevicePolicy.startKioskMode(this) else DevicePolicy.stopKioskMode(this)
+    /**
+     * Applies the CURRENT flag — re-read here, never captured — so a post queued
+     * before a later assignment cannot roll state backwards. Bails unless this
+     * Activity is still the registered observer, so a post that lands after
+     * onPause never pins/unpins a backgrounded instance.
+     */
+    private fun applyLockState() {
+        if (KioskLock.listener !== lockListener || isFinishing) return
+        if (KioskLock.locked) DevicePolicy.startKioskMode(this)
+        else DevicePolicy.stopKioskMode(this)
     }
 ```
 
@@ -439,17 +577,20 @@ Then replace `onResume` (currently lines 22-27) with:
     override fun onResume() {
         super.onResume()
         KioskLock.listener = lockListener
-        // Enter lock task once the activity is foregrounded — but only while
-        // locked, or an unlock would be silently undone on every resume.
-        if (KioskLock.locked) DevicePolicy.startKioskMode(this)
+        // Reconcile UNCONDITIONALLY. A dashboard unlock that arrived while we
+        // were paused fired with no listener registered; an `if (locked)` guard
+        // here would skip it and leave the task pinned with the flag saying
+        // unlocked. This also recovers from onDestroy/renderer-recovery wiping
+        // mainHandler, which drops any queued lock-state post.
+        applyLockState()
         // Cancel a pending snap-back — we're already in front.
         mainHandler.removeCallbacks(kioskReturnRunnable)
     }
 
     override fun onPause() {
         super.onPause()
-        // Don't leave a stale listener pointing at a backgrounded Activity.
-        KioskLock.listener = null
+        // Clear only OUR listener — never silently deregister another instance's.
+        if (KioskLock.listener === lockListener) KioskLock.listener = null
     }
 ```
 
@@ -470,7 +611,8 @@ git commit -m "fix(kiosk): make lock-task state follow KioskLock
 
 onResume re-pinned unconditionally, undoing any unlock, and nothing ever
 called stopLockTask() — so the dashboard kiosk-unlock command was a no-op
-on a pinned box. Both paths now mirror the flag."
+on a pinned box. Both paths now mirror the flag; resume reconciles
+unconditionally and posted work re-reads the flag under an identity guard."
 ```
 
 ---
@@ -505,13 +647,24 @@ In `android/app/build.gradle.kts`, inside `defaultConfig`, directly after the ex
 
 - [ ] **Step 2: Verify the fields are generated, with and without the property**
 
+Compute the expected hash independently first, then compare the generated source against it exactly:
+
 ```bash
 cd android
+printf 4931 | sha256sum
+# → abe0ccdc1f6402ee65627d5f95700af1e5914d113f02db83567212fa036f54d2
 ./gradlew assembleWebviewDebug -PKIOSK_PIN=4931
-grep -r "KIOSK_PIN" app/build/generated/source/buildConfig/webview/debug/ai/lanka/kiosk/BuildConfig.java
+grep "KIOSK_PIN" app/build/generated/source/buildConfig/webview/debug/ai/lanka/kiosk/BuildConfig.java
 ```
 
-Expected: `KIOSK_PIN_SHA256 = "9e0f5a19b0d7a2e0a1f0e6b1c2d3..."` (the real sha256 of `4931`) and `KIOSK_PIN_LENGTH = 4`. Confirm the literal string `4931` does **not** appear:
+Expected — these two lines, in this order (declaration order; ignore indentation):
+
+```
+public static final String KIOSK_PIN_SHA256 = "abe0ccdc1f6402ee65627d5f95700af1e5914d113f02db83567212fa036f54d2";
+public static final int KIOSK_PIN_LENGTH = 4;
+```
+
+(The `webview/debug/` path is AGP 8.2.2's layout, as used by this project.) Confirm the literal PIN does **not** appear:
 
 ```bash
 grep -c '"4931"' app/build/generated/source/buildConfig/webview/debug/ai/lanka/kiosk/BuildConfig.java
@@ -545,18 +698,20 @@ app server offline):
   -PKIOSK_PIN=4931
 ```
 
-**Long-press BACK** on the remote opens a PIN pad over the player. A correct
-PIN clears the kiosk lock, releases lock task, and opens Android Settings —
-the last part matters on a device-owner box, where Lanka is the HOME launcher
-and there would otherwise be nowhere to navigate to.
+**Long-press BACK** on the remote — or, if the ROM reserves long-BACK or the
+remote never auto-repeats, **tap BACK five times within 2 s** — opens a PIN pad
+over the player. A correct PIN clears the kiosk lock, releases lock task, and
+opens Android Settings — the last part matters on a device-owner box, where
+Lanka is the HOME launcher and there would otherwise be nowhere to navigate to.
 
 - The PIN is stored as a **sha256** in `BuildConfig`, so `strings` on the APK
   does not reveal it. This is friction, not security: four digits brute-force
   offline instantly for anyone holding the APK. The real control is that
   having the APK already implies fleet access.
-- **Omitting `-PKIOSK_PIN` disables the feature** — long-press BACK does
-  nothing. There is no default PIN.
-- 5 wrong entries trigger a 60 s lockout. The pad auto-dismisses after 20 s idle.
+- **Omitting `-PKIOSK_PIN` disables the feature** — neither trigger does
+  anything. There is no default PIN.
+- 5 wrong entries trigger a 60 s lockout that survives closing and reopening
+  the pad. The pad auto-dismisses after 20 s idle.
 - The unlock lasts until reboot, matching the dashboard `kiosk-unlock` command.
   Rebooting always returns the box to locked.
 ```
@@ -571,16 +726,16 @@ git commit -m "feat(kiosk): -PKIOSK_PIN build property, hashed into BuildConfig"
 
 ---
 
-### Task 5: `PinPadView`
+### Task 5: `PinPadView` — non-focusable, self-drawn selection
 
 **Files:**
 - Create: `android/app/src/main/kotlin/ai/lanka/kiosk/PinPadView.kt`
 
 **Interfaces:**
 - Consumes: `KioskPin` and `KioskPin.Result` from Task 1.
-- Produces: `class PinPadView(context: Context, pin: KioskPin, onUnlock: () -> Unit, onDismiss: () -> Unit) : LinearLayout`. Task 6 constructs it with exactly these four arguments.
+- Produces: `class PinPadView(context: Context, pin: KioskPin, onUnlock: () -> Unit, onDismiss: () -> Unit) : LinearLayout` with `fun handleKey(event: KeyEvent): Boolean` and `fun showMessage(text: String)`. Task 6 constructs it with exactly these four arguments and calls exactly these two methods.
 
-Built programmatically rather than from an XML layout: it keeps the whole component in one shared file and avoids adding resources that both flavors' manifests and resource merging would have to agree on.
+The pad **never participates in Android focus**: no view in it is focusable, and it does not override `dispatchKeyEvent`. Keys arrive only via `handleKey`, called by `KioskActivity.dispatchKeyEvent` (Task 6). Selection is a plain index the pad draws itself — no `FocusFinder`, so a D-pad press can never wander into the WebView or the native flavor's controller-enabled `PlayerView`s.
 
 - [ ] **Step 1: Write the implementation**
 
@@ -603,11 +758,12 @@ import android.widget.TextView
  * the web player: the escape hatch is most needed exactly when the WebView
  * renderer has died or JS is wedged, and a native view still draws then.
  *
- * Holds no policy — every decision is delegated to [pin].
+ * NEVER takes focus. KioskActivity.dispatchKeyEvent routes every key here via
+ * [handleKey] while the pad is showing; selection is a plain index drawn by
+ * the pad itself. Holds no policy — every decision is delegated to [pin].
  *
- * Two input styles, because TV remotes vary: D-pad to a digit + CENTER (which
- * Android turns into a click on the focused child), or a direct number key on
- * remotes that have a keypad.
+ * Grid (selection indices):  1 2 3 / 4 5 6 / 7 8 9 / _ 0 _
+ *                            0 1 2   3 4 5   6 7 8     9
  */
 class PinPadView(
     context: Context,
@@ -617,49 +773,75 @@ class PinPadView(
 ) : LinearLayout(context) {
 
     private val dots = textView(32f, Color.WHITE)
-    private val hint = textView(14f, Color.LTGRAY)
-    private var firstDigit: TextView? = null
+    private val message = textView(14f, Color.LTGRAY)
+    private val keys = ArrayList<TextView>(10)
+    private var selected = 4 // start on "5", the middle of the grid
 
     init {
         orientation = VERTICAL
         gravity = Gravity.CENTER
         setBackgroundColor(SCRIM)
-        isFocusable = true
-        isFocusableInTouchMode = true
+        isFocusable = false
+        isFocusableInTouchMode = false
 
         addView(textView(20f, Color.WHITE).apply {
             text = "Enter PIN"
             setPadding(0, 0, 0, dp(12))
         })
         addView(dots)
-        for (row in ROWS) addView(digitRow(row))
-        addView(hint.apply { setPadding(0, dp(12), 0, 0) })
+        addView(row('1', '2', '3'))
+        addView(row('4', '5', '6'))
+        addView(row('7', '8', '9'))
+        addView(row('0'))
+        addView(message.apply { setPadding(0, dp(12), 0, 0) })
 
         render()
     }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        // Take focus off the WebView, which would otherwise eat D-pad keys for
-        // its own page navigation and starve the pad.
-        firstDigit?.requestFocus() ?: requestFocus()
+    /** Replaces the message line (used for "Unlock failed — …"). */
+    fun showMessage(text: String) {
+        message.text = text
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            val kc = event.keyCode
-            if (kc == KeyEvent.KEYCODE_BACK) {
-                onDismiss()
-                return true
-            }
-            if (kc in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-                submit('0' + (kc - KeyEvent.KEYCODE_0))
-                return true
-            }
+    /**
+     * Handles one hardware key. Acts only on an INITIAL press (ACTION_DOWN with
+     * repeatCount == 0): the long-press BACK that opened the pad is still held
+     * and its auto-repeats arrive here — without this check the pad would
+     * dismiss itself before the finger lifts — and a held digit key would
+     * otherwise enter "5555" and burn an attempt. Always returns true: the pad
+     * is modal and nothing may leak to the player beneath.
+     */
+    fun handleKey(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount != 0) return true
+        when (val kc = event.keyCode) {
+            KeyEvent.KEYCODE_BACK -> onDismiss()
+            KeyEvent.KEYCODE_DPAD_LEFT -> move(dx = -1, dy = 0)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> move(dx = 1, dy = 0)
+            KeyEvent.KEYCODE_DPAD_UP -> move(dx = 0, dy = -1)
+            KeyEvent.KEYCODE_DPAD_DOWN -> move(dx = 0, dy = 1)
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
+                submit(keys[selected].text[0])
+            in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> submit('0' + (kc - KeyEvent.KEYCODE_0))
+            in KeyEvent.KEYCODE_NUMPAD_0..KeyEvent.KEYCODE_NUMPAD_9 ->
+                submit('0' + (kc - KeyEvent.KEYCODE_NUMPAD_0))
+            else -> Unit
         }
-        // Everything else (D-pad movement, CENTER/ENTER clicks) falls through to
-        // the normal view-hierarchy dispatch so focus navigation still works.
-        return super.dispatchKeyEvent(event)
+        return true
+    }
+
+    // ── selection ──────────────────────────────────────────────────────────
+
+    private fun move(dx: Int, dy: Int) {
+        val row = if (selected == 9) 3 else selected / 3
+        val col = if (selected == 9) 1 else selected % 3
+        val next = when {
+            dy == 1 -> if (row == 2) 9 else if (row < 2) selected + 3 else selected
+            dy == -1 -> if (row == 3) 7 else if (row > 0) selected - 3 else selected
+            dx != 0 && row == 3 -> selected // "0" has no horizontal neighbours
+            else -> (col + dx).coerceIn(0, 2) + row * 3
+        }
+        selected = next
+        render()
     }
 
     private fun submit(digit: Char) {
@@ -668,9 +850,9 @@ class PinPadView(
             KioskPin.Result.UNLOCKED -> onUnlock()
             KioskPin.Result.WRONG -> {
                 render()
-                hint.text = if (pin.isLockedOut()) lockoutText() else "Wrong PIN"
+                message.text = if (pin.isLockedOut()) lockoutText() else "Wrong PIN"
             }
-            KioskPin.Result.LOCKED_OUT -> hint.text = lockoutText()
+            KioskPin.Result.LOCKED_OUT -> message.text = lockoutText()
         }
     }
 
@@ -678,31 +860,28 @@ class PinPadView(
         "Too many attempts — wait ${(pin.lockedOutMsRemaining() + 999) / 1000}s"
 
     private fun render() {
-        dots.text = buildString {
-            repeat(pin.entryLength) { append("● ") }
-        }.trim().ifEmpty { "·" }
-        if (pin.entryLength > 0) hint.text = ""
+        dots.text = buildString { repeat(pin.entryLength) { append("● ") } }.trim().ifEmpty { "·" }
+        keys.forEachIndexed { i, v -> v.setBackgroundColor(if (i == selected) HIGHLIGHT else Color.TRANSPARENT) }
+        // Opened during an active lockout → say so immediately rather than on the next key.
+        if (pin.isLockedOut()) message.text = lockoutText()
+        else if (pin.entryLength > 0) message.text = ""
     }
 
-    private fun digitRow(digits: String): LinearLayout =
+    // ── construction ───────────────────────────────────────────────────────
+
+    private fun row(vararg digits: Char): LinearLayout =
         LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER
-            for (c in digits) addView(digitButton(c).also { if (firstDigit == null) firstDigit = it })
+            for (c in digits) addView(key(c).also { keys.add(it) })
         }
 
-    private fun digitButton(c: Char): TextView =
+    private fun key(c: Char): TextView =
         textView(28f, Color.WHITE).apply {
             text = c.toString()
-            isFocusable = true
-            isFocusableInTouchMode = true
+            isFocusable = false
             minWidth = dp(64)
             setPadding(dp(16), dp(10), dp(16), dp(10))
-            // Visible focus ring — on a TV the remote user must see where they are.
-            setOnFocusChangeListener { v, hasFocus ->
-                v.setBackgroundColor(if (hasFocus) FOCUS else Color.TRANSPARENT)
-            }
-            setOnClickListener { submit(c) }
         }
 
     private fun textView(sizeSp: Float, color: Int): TextView =
@@ -710,19 +889,21 @@ class PinPadView(
             setTextColor(color)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
             gravity = Gravity.CENTER
+            isFocusable = false
         }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private companion object {
-        val ROWS = listOf("123", "456", "789", "0")
         // NOT `const val` — 0xE6000000 is a Long literal, so .toInt() is not a
         // compile-time constant expression and `const` would fail to compile.
         val SCRIM = 0xE6000000.toInt()
-        const val FOCUS = 0x40FFFFFF
+        const val HIGHLIGHT = 0x40FFFFFF
     }
 }
 ```
+
+`keys` is filled in construction order — `row('1','2','3')`, `row('4','5','6')`, `row('7','8','9')`, `row('0')` — so `keys[0..8]` are `1..9` and `keys[9]` is `0`, matching the grid comment and `move()`.
 
 - [ ] **Step 2: Verify both flavors compile**
 
@@ -734,44 +915,48 @@ Expected: BUILD SUCCESSFUL. The view is exercised on-box in Task 7; there is no 
 ```bash
 cd /home/dmytro/PhpstormProjects/lanka
 git add android/app/src/main/kotlin/ai/lanka/kiosk/PinPadView.kt
-git commit -m "feat(kiosk): PinPadView — native D-pad PIN entry overlay"
+git commit -m "feat(kiosk): PinPadView — non-focusable D-pad PIN entry overlay"
 ```
 
 ---
 
-### Task 6: Wire the trigger and unlock into `KioskActivity`
+### Task 6: Wire the triggers, modal routing and verified unlock into `KioskActivity`
 
 **Files:**
 - Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt`
 
 **Interfaces:**
-- Consumes: `KioskPin` (Task 1), `KioskLock.listener` (Task 2), `DevicePolicy.stopKioskMode` (Task 3), `BuildConfig.KIOSK_PIN_SHA256` / `BuildConfig.KIOSK_PIN_LENGTH` (Task 4), `PinPadView` (Task 5).
+- Consumes: `KioskPin`, `TapChord` (Task 1), `KioskLock.listener` (Task 2), `DevicePolicy.isLockTaskActive` / `applyLockState` (Task 3), `BuildConfig.KIOSK_PIN_SHA256` / `BuildConfig.KIOSK_PIN_LENGTH` (Task 4), `PinPadView.handleKey` / `showMessage` (Task 5).
 - Produces: the complete feature. Nothing depends on this task.
 
-- [ ] **Step 1: Add the imports**
+- [ ] **Step 1: Add the new imports**
 
-At the top of `KioskActivity.kt`, alongside the existing imports:
+At the top of `KioskActivity.kt`, add **only** these three — `Intent`, `Handler`, `Looper` and `KeyEvent` are already imported, and a duplicate `Intent` import must not be added:
 
 ```kotlin
-import android.content.Intent
 import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
 ```
 
-`android.content.Intent`, `android.os.Handler`, `android.os.Looper` and `android.view.KeyEvent` are already imported.
+- [ ] **Step 2: Replace the BACK key handling with both triggers**
 
-- [ ] **Step 2: Replace the BACK key handling**
-
-The current `onKeyDown` returns `true` for BACK, which suppresses Android's long-press detection outright — `onKeyLongPress` can never fire without `startTracking()`. Replace it with the tracked-key pattern:
+The current `onKeyDown` returns `true` for BACK, which suppresses Android's long-press detection outright — `onKeyLongPress` can never fire without `startTracking()`. Replace it with the tracked-key pattern plus the tap chord:
 
 ```kotlin
-    /** Kiosk: a single BACK press from the remote must not tear the player down
-     *  (unless unlocked for maintenance). A LONG press opens the PIN pad — see
-     *  showPinPad(). startTracking() is what makes onKeyLongPress fire at all. */
+    /**
+     * Kiosk: a single BACK press from the remote must not tear the player down
+     * (unless unlocked for maintenance). Two gestures open the PIN pad:
+     *  - a LONG press — startTracking() is what makes onKeyLongPress fire at all;
+     *  - five quick taps — for ROMs that reserve long-BACK (the app never sees a
+     *    repeat) and IR remotes that emit discrete presses instead of holding.
+     */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_BACK && KioskLock.locked) {
-            if (event != null && event.repeatCount == 0) event.startTracking()
+            if (event != null && event.repeatCount == 0) {
+                event.startTracking()
+                if (backTaps.tap()) showPinPad()
+            }
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -791,31 +976,39 @@ The current `onKeyDown` returns `true` for BACK, which suppresses Android's long
     }
 ```
 
-- [ ] **Step 3: Add the pad lifecycle and unlock**
+- [ ] **Step 3: Add the pad lifecycle, modal routing and verified unlock**
 
 Add to `KioskActivity`:
 
 ```kotlin
     private var pinPad: PinPadView? = null
-
+    private val backTaps = TapChord(taps = 5, windowMs = 2_000L)
     private val pinPadTimeout = Runnable { hidePinPad() }
 
-    /** Any key press while the pad is up restarts its idle timer. */
+    /**
+     * MODAL routing: while the pad is showing, every key goes to it and nothing
+     * else — super is deliberately not called, so nothing leaks to the WebView
+     * or the player. Activity.dispatchKeyEvent is the entry point for every
+     * hardware key in the window, ahead of the view hierarchy, so this cannot
+     * be starved by focus sitting elsewhere. The idle timer restarts only on an
+     * accepted initial press (not repeats, not UP).
+     */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (pinPad != null) {
+        val pad = pinPad ?: return super.dispatchKeyEvent(event)
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
             mainHandler.removeCallbacks(pinPadTimeout)
             mainHandler.postDelayed(pinPadTimeout, PIN_PAD_IDLE_MS)
         }
-        return super.dispatchKeyEvent(event)
+        return pad.handleKey(event)
     }
 
     private fun showPinPad() {
         if (pinPad != null) return
-        val pin = KioskPin(BuildConfig.KIOSK_PIN_SHA256, BuildConfig.KIOSK_PIN_LENGTH)
         // No -PKIOSK_PIN at build time → no escape hatch. Fail safe, silently.
-        if (!pin.enabled) return
+        if (!kioskPin.enabled) return
 
-        val pad = PinPadView(this, pin, onUnlock = ::onPinAccepted, onDismiss = ::hidePinPad)
+        kioskPin.reset() // clear any stale partial entry; failure state is kept
+        val pad = PinPadView(this, kioskPin, onUnlock = ::onPinAccepted, onDismiss = ::hidePinPad)
         addContentView(
             pad,
             ViewGroup.LayoutParams(
@@ -833,29 +1026,49 @@ Add to `KioskActivity`:
         pinPad = null
     }
 
+    /**
+     * Order matters: the flag assignment runs the lock listener INLINE (we are on
+     * the main thread), so lock task is released before startActivity — launching
+     * another package while pinned is blocked. The release is then VERIFIED:
+     * stopLockTask() can be refused (ownership, OEM), and an escape hatch must
+     * never silently no-op. On failure the pad stays up with a message; the flag
+     * stays false so the next resume retries the release.
+     */
     private fun onPinAccepted() {
-        hidePinPad()
         Log.i(TAG, "kiosk unlocked via on-device PIN")
-        // The listener registered in onResume runs INLINE here (we're on the main
-        // thread), so lock task is released before the startActivity below —
-        // launching another package while pinned would otherwise be blocked.
         KioskLock.locked = false
+        if (DevicePolicy.isLockTaskActive(this)) {
+            Log.w(TAG, "lock task still active after unlock — Settings launch would be blocked")
+            pinPad?.showMessage("Unlock failed — lock task still active")
+            return
+        }
+        hidePinPad()
         runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) }
             .onFailure { Log.w(TAG, "settings launch failed: ${it.message}") }
     }
 ```
 
-Extend the existing `companion object`:
+Replace the existing `companion object` with:
 
 ```kotlin
     companion object {
         private const val KIOSK_RETURN_MS = 400L
         private const val PIN_PAD_IDLE_MS = 20_000L
         private const val TAG = "LankaKiosk"
+
+        /**
+         * ONE per process. The pad is recreated on every open, but the failure
+         * counter and lockout must survive that — and survive Activity recreation
+         * (renderer-gone recovery) — or closing and reopening the pad hands out
+         * five fresh attempts every time.
+         */
+        private val kioskPin: KioskPin by lazy {
+            KioskPin(BuildConfig.KIOSK_PIN_SHA256, BuildConfig.KIOSK_PIN_LENGTH)
+        }
     }
 ```
 
-`LankaKiosk` matches a tag already captured by `NativeFSBridge.getLogs()`, so an unlock is retrievable later via the dashboard's **Pull logs** button.
+`LankaKiosk` matches a tag already captured by `NativeFSBridge.getLogs()`, so an unlock is retrievable later via the dashboard's **Pull logs** button. `BuildConfig` is generated into `ai.lanka.kiosk` for both flavors (the `namespace`), so no import is needed.
 
 - [ ] **Step 4: Drop the pad when the Activity backgrounds**
 
@@ -864,7 +1077,8 @@ Extend the `onPause` added in Task 3:
 ```kotlin
     override fun onPause() {
         super.onPause()
-        KioskLock.listener = null
+        // Clear only OUR listener — never silently deregister another instance's.
+        if (KioskLock.listener === lockListener) KioskLock.listener = null
         hidePinPad()
     }
 ```
@@ -879,7 +1093,7 @@ Expected: BUILD SUCCESSFUL, all tests green.
 ```bash
 cd /home/dmytro/PhpstormProjects/lanka
 git add android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt
-git commit -m "feat(kiosk): long-press BACK opens the PIN pad; correct PIN unlocks to Settings"
+git commit -m "feat(kiosk): long-press or 5-tap BACK opens a modal PIN pad; verified unlock to Settings"
 ```
 
 ---
@@ -904,44 +1118,59 @@ Verify against a **production build** of the server (`pnpm build` && `node .outp
 
 - [ ] **Step 2: Walk the checklist on the box**
 
+Triggers:
 - [ ] Short-press BACK — player unaffected (unchanged behaviour).
-- [ ] Long-press BACK — PIN pad appears over the player, first digit focused.
-- [ ] D-pad moves focus between digits with a visible focus ring; CENTER enters a digit.
-- [ ] **In the `webview` flavor specifically**, confirm D-pad keys reach the pad rather than scrolling the page. This is the single most likely failure. If focus is being stolen, the fallback is to override `dispatchKeyEvent` in `KioskActivity` and route keys to the pad directly while it is showing.
+- [ ] Long-press BACK — PIN pad appears over the player, "5" highlighted, **and stays up while BACK is still held** (regression check for the self-dismiss bug).
+- [ ] Release, then five quick BACK taps — pad appears. Four taps, pause 3 s, one tap — it does not.
+- [ ] Record which trigger(s) work on **each** remote in the fleet (Bluetooth Google TV remote, Tanix IR remote). If long-press never fires on a ROM, the 5-tap chord is the supported gesture there — note it in `android/README.md`.
+
+Pad:
+- [ ] D-pad moves the highlight; from "8" DOWN lands on "0", from "0" UP returns to "8"; LEFT/RIGHT on "0" do nothing.
+- [ ] CENTER enters the highlighted digit; a number key on a keypad remote enters directly.
+- [ ] **Hold a digit key for 2 s** — exactly one dot appears (regression check for auto-repeat entry).
+- [ ] **In the `webview` flavor specifically**, D-pad keys move the pad highlight and do **not** scroll the page. **In the `native` flavor**, no ExoPlayer transport controls ever appear.
 - [ ] Wrong PIN → "Wrong PIN", dots clear.
-- [ ] 5 wrong entries → lockout message; input rejected for 60 s.
+- [ ] 5 wrong entries → lockout message. Dismiss with BACK, reopen — **still locked out** (regression check for per-open lockout reset). After 60 s, input accepted again.
+- [ ] Leave the pad untouched for 20 s → it disappears on its own.
+- [ ] Reboot the box → kiosk is locked again, triggers still open the pad.
+- [ ] Build without `-PKIOSK_PIN`, install — neither trigger does anything.
+
+Unlock and what it is for:
 - [ ] Correct PIN → Settings opens, player still running behind it.
 - [ ] From Settings, BACK returns to the player and it does **not** snap back to kiosk (still unlocked).
-- [ ] Leave the pad untouched for 20 s → it disappears on its own.
-- [ ] Reboot the box → kiosk is locked again, long-press BACK still opens the pad.
-- [ ] Build without `-PKIOSK_PIN`, install, long-press BACK → nothing happens.
+- [ ] **On a device-owner box**, from Settings: Wi-Fi settings reachable, Tailscale app reachable, Developer options / wireless debugging reachable. These are the maintenance operations the hatch exists for — "Settings opened" alone is not a pass.
+- [ ] Dashboard `kiosk-lock` while unlocked → box re-pins. Dashboard `kiosk-unlock` while the box is **asleep or in Settings**, then return to the player → it is unpinned (regression check for the paused-unlock bug).
 - [ ] Repeat the core path on `assembleNativeDebug` (launch `ai.lanka.kiosk.vs/ai.lanka.kiosk.PlayerActivity`).
-
-If `onKeyLongPress` never fires on this ROM, fall back to detecting `event.repeatCount >= 1` inside `onKeyDown` and record the deviation in the README.
 
 - [ ] **Step 3: Update `CLAUDE.md`**
 
 In the "Android kiosk player (APK)" section, add a bullet:
 
 ```markdown
-- **On-device PIN escape hatch:** long-press BACK opens a native `PinPadView`
-  over the player; a correct PIN (sha256-baked via `-PKIOSK_PIN`, empty default
-  = disabled) clears `KioskLock`, releases lock task and opens Settings. All of
-  it lives in `src/main` so both flavors share one implementation, and the pad is
-  a **native view, not HTML** — it must still work when the WebView renderer is
-  dead. `KioskLock.locked` is now **listener-driven**: assigning it mirrors into
-  real lock-task state via `KioskActivity`, which is what makes the dashboard's
-  `kiosk-unlock` command actually work on a pinned box (it previously flipped the
-  flag but never called `stopLockTask()`). The listener runs inline on the main
-  thread and hops `mainHandler` otherwise, because the dashboard sets the flag
-  off-thread and `start/stopLockTask` are main-thread-only.
+- **On-device PIN escape hatch:** long-press BACK, or five BACK taps in 2 s,
+  opens a native `PinPadView` over the player; a correct PIN (sha256-baked via
+  `-PKIOSK_PIN`, empty default = disabled) clears `KioskLock`, releases lock
+  task, **verifies** it is released, and opens Settings. All of it lives in
+  `src/main` so both flavors share one implementation. The pad is a **native
+  view, not HTML** (must work when the WebView renderer is dead) and it **never
+  takes focus** — `KioskActivity.dispatchKeyEvent` routes every key to
+  `PinPadView.handleKey()` while it is showing and calls nothing else. Every
+  pad action requires `repeatCount == 0` (the opening long-press is still held
+  when the pad appears). One `KioskPin` per process, so the lockout survives
+  closing the pad. `KioskLock.locked` is now **listener-driven**: assigning it
+  mirrors into real lock-task state via `KioskActivity`, which is what makes the
+  dashboard's `kiosk-unlock` command actually work on a pinned box (it previously
+  flipped the flag but never called `stopLockTask()`). `onResume` reconciles
+  unconditionally, posted listener work re-reads the flag under an identity
+  guard, and the dashboard sets the flag off-thread — `start/stopLockTask` are
+  main-thread-only.
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
 cd /home/dmytro/PhpstormProjects/lanka
-git add CLAUDE.md
+git add CLAUDE.md android/README.md
 git commit -m "docs(kiosk): record the on-device PIN unlock in the project guide"
 ```
 
@@ -949,10 +1178,10 @@ git commit -m "docs(kiosk): record the on-device PIN unlock in the project guide
 
 ## Self-Review Notes
 
-**Spec coverage:** every spec section maps to a task — `KioskPin` → 1; `KioskLock` listener → 2; `stopKioskMode` + `onResume` guard + threading → 3; PIN storage/hashing/disabled-default → 4; `PinPadView` + auto-dismiss + key routing → 5; trigger + unlock + Settings jump + logging → 6; testing → 1, 2 and Task 7's on-box gate; documentation → 4 and 7.
+**Spec coverage:** every spec section maps to a task — `KioskPin` + `TapChord` → 1; `KioskLock` listener → 2; `isLockTaskActive` / `stopKioskMode: Boolean` / four listener rules / unconditional reconcile → 3; PIN storage / hashing / disabled default → 4; non-focusable pad, `handleKey`, `repeatCount == 0` rule, self-drawn selection, lockout shown on open → 5; both triggers, modal `dispatchKeyEvent` routing, idle timer on accepted presses only, verified unlock with failure message, Settings jump, process-wide `KioskPin`, logging → 6; testing → 1, 2 and Task 7's on-box gate (now including the maintenance-operations and regression checks); documentation → 4 and 7.
 
-**Deliberately not implemented** (spec non-goals): per-device PINs, server-delivered PINs, PIN rotation without a rebuild, unlock reporting to the server, automatic re-lock on a timer.
+**Review findings folded in (Claude + Codex, 2026-08-23):** self-dismiss on the opening long-press and digit auto-repeat (Task 5 `repeatCount` rule); lost paused-unlock (Task 3 unconditional reconcile); focus-dependent routing (Tasks 5/6 modal design); fabricated SHA (Task 4 real value, computed independently); per-open lockout reset (Task 6 companion-held `KioskPin`); listener registration race and posts surviving `onPause` (Task 3 re-read + identity guard); unverified `stopLockTask` (Task 3 return value, Task 6 check); ROM-reserved long-BACK (Task 1/6 tap chord); duplicate `Intent` import (Task 6); non-digit input (Task 1). Deliberately **not** adopted: an `addListener/removeListener` API (one Activity at a time — the identity check suffices) and IME handling (the player page has no inputs).
 
-**Type consistency:** `KioskPin.Result` members (`INCOMPLETE`/`UNLOCKED`/`WRONG`/`LOCKED_OUT`) are identical in Tasks 1 and 5. `PinPadView`'s four-argument constructor matches its call site in Task 6. `DevicePolicy.stopKioskMode(Activity)` is defined in Task 3 and called in Task 3 only. `BuildConfig.KIOSK_PIN_SHA256`/`KIOSK_PIN_LENGTH` are produced in Task 4 and consumed in Task 6.
+**Deliberately not implemented** (spec non-goals): per-device PINs, server-delivered PINs, PIN rotation without a rebuild, unlock reporting to the server, automatic re-lock on a timer, a ticking lockout countdown.
 
-**Known risk carried into execution:** the WebView flavor stealing D-pad keys. Mitigated by `requestFocus()` in Task 5, with an explicit fallback recorded in Task 7 Step 2.
+**Type consistency:** `KioskPin.Result` members are identical in Tasks 1 and 5. `TapChord(taps, windowMs, now)` in Task 1 matches its Task 6 construction. `PinPadView`'s four-argument constructor and its `handleKey(KeyEvent): Boolean` / `showMessage(String)` match their Task 6 call sites. `DevicePolicy.isLockTaskActive(Activity)` and `stopKioskMode(Activity): Boolean` are defined in Task 3 and called in Tasks 3 and 6. `BuildConfig.KIOSK_PIN_SHA256` / `KIOSK_PIN_LENGTH` are produced in Task 4 and consumed in Task 6's companion.
