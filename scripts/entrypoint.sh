@@ -52,5 +52,6 @@ map_runtime_env R2_ENDPOINT           NUXT_R2_ENDPOINT
 map_runtime_env R2_BUCKET             NUXT_R2_BUCKET
 map_runtime_env R2_ACCESS_KEY_ID      NUXT_R2_ACCESS_KEY_ID
 map_runtime_env R2_SECRET_ACCESS_KEY  NUXT_R2_SECRET_ACCESS_KEY
+map_runtime_env MAX_UPLOAD_BYTES      NUXT_MAX_UPLOAD_BYTES
 
 exec node .output/server/index.mjs

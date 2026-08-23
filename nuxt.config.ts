@@ -57,6 +57,10 @@ export default defineNuxtConfig({
     // would re-base every route. `mailBaseUrl` ⇒ override is NUXT_MAIL_BASE_URL (see entrypoint.sh).
     // Required when RESEND_API_KEY is set — empty string yields relative (broken) reset links.
     mailBaseUrl: process.env.APP_BASE_URL ?? '',
+    // Cap for dashboard uploads (POST /api/media/uploads). Bytes land in the
+    // media store directly (presigned PUT on R2), so this is the only size
+    // gate. MAX_UPLOAD_BYTES → NUXT_MAX_UPLOAD_BYTES at runtime (entrypoint.sh).
+    maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? 2 * 1024 ** 3),
     // Cloudflare R2 (S3-compatible). When all four are set, media is stored in
     // R2 instead of mediaDir; the server still proxies bytes over the tailnet.
     // Server-only (not under `public`), so credentials never reach the client.

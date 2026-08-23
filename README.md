@@ -45,12 +45,18 @@ pnpm db:migrate   # apply migrations to data/signage.db
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/media` | Upload a media file (multipart: `file`, `kind=video\|image`) |
+| POST | `/api/media` | Upload a media file (multipart: `file`, `kind=video\|image`) — legacy/sync, superseded by the async upload flow below |
 | GET  | `/api/media` | List media with usage counts |
 | GET  | `/api/media/:id` | Get a single media row |
 | DELETE | `/api/media/:id` | Delete media (409 if in use; `?force=true` to cascade) |
 | GET  | `/media/:sha256` | Serve a media file (supports Range) |
 | GET  | `/media/:sha256/thumb` | Serve JPEG thumbnail |
+| POST | `/api/media/uploads` | Create an upload job; returns a presigned PUT ticket (R2) or a local-disk upload URL. `mimeType` must be `video/*`/`image/*` matching `kind`, or `application/octet-stream` (browsers report an empty type for extensions like `.mkv`/`.ts`) |
+| PUT | `/api/media/uploads/:id/file` | Upload the file bytes (local-disk `MediaStore` only) |
+| POST | `/api/media/uploads/:id/complete` | Verify the staged object and enqueue background ingest |
+| GET | `/api/media/uploads/:id` | Poll upload job status |
+| GET | `/api/media/uploads?active=1` | List in-flight (non-terminal) upload jobs |
+| DELETE | `/api/media/uploads/:id` | Cancel an upload job |
 
 > **Media storage backend.** By default media lives on local disk (`MEDIA_DIR`).
 > Set all four `R2_*` env vars (see `.env.example`) to store it in Cloudflare R2
@@ -169,6 +175,7 @@ Android WebView kiosk (Plan 5) or a desktop browser for QA.
 | `PORT` | 3000 | HTTP listen port |
 | `SESSION_COOKIE_SECURE` | unset | Set to `true` in production (HTTPS only) |
 | `MEDIA_PUBLIC_BASE` | unset | Public CDN base URL for media (e.g. `https://media.lanka.live`). Baked into SPA at build time. |
+| `MAX_UPLOAD_BYTES` | `2147483648` (2 GiB) | Cap for dashboard uploads |
 | `GOOGLE_CLIENT_ID` | unset | Public Google OAuth Client ID for "Sign in with Google". Baked into the SPA at build time (like `MEDIA_PUBLIC_BASE`). Empty → Google button hidden. No client secret is used. |
 | `R2_ENDPOINT` | unset | R2-compatible endpoint URL |
 | `R2_BUCKET` | unset | R2 bucket name |
@@ -244,10 +251,26 @@ Drop an executable at `/opt/lanka/backups/offsite.sh`. `backup.sh` invokes it at
 
 ### Known limitations
 
-- **Cloudflare free plan caps uploads at 100 MB.** Media files larger than 100 MB
-  cannot be uploaded through `app.lanka.live` (Cloudflare returns 413). Upload large
-  media while connected to the tailnet (`http://<tailnet-ip>/media`), which bypasses
-  Cloudflare, or implement presigned direct-to-R2 uploads later.
+- **Dashboard uploads bypass Cloudflare.** `app.lanka.live` sits behind Cloudflare's
+  proxy, which rejects request bodies over 100 MB (Free/Pro plan). Uploads therefore
+  go `POST /api/media/uploads` → presigned **PUT straight to the R2 S3 endpoint**
+  (up to 5 GiB per object; app cap `MAX_UPLOAD_BYTES`, default 2 GiB) → `…/complete`,
+  and the transcode runs in a background worker (no request is held open). This
+  needs a **one-time bucket setup** — run `scripts/r2-bucket-setup.mjs` (see
+  "Common tasks"; it installs the CORS rule below *and* a lifecycle rule that
+  expires `uploads/*` after 1 day as a backstop) or paste the CORS rule in the
+  Cloudflare dashboard (R2 → bucket → Settings → CORS policy):
+  ```json
+  [{ "AllowedOrigins": ["https://app.lanka.live"], "AllowedMethods": ["PUT"],
+     "AllowedHeaders": ["content-type"], "MaxAgeSeconds": 3600 }]
+  ```
+  Without it the browser's PUT fails with a CORS error and the job stays `pending`
+  (expired automatically after 24 h). Staged objects live under `uploads/<uuid>` and
+  are deleted once ingested. Uploaded source material is treated as **non-confidential**
+  (signage content is public by nature): a staged object is anonymously readable by
+  anyone who obtains its unguessable URL until it is deleted. Transient ingest failures
+  (R2/disk/DB) are retried up to 3 times with backoff; ffmpeg rejecting the file fails
+  the job immediately.
 - **The dashboard depends on the tunnel.** If `cloudflared` is down, the dashboard is
   unreachable — but the fleet keeps playing (control is tailnet, media is CDN).
 
@@ -289,6 +312,7 @@ The nginx public block should rate-limit `POST /api/auth/forgot-password` the sa
 - Shell into the container: `docker exec -it lanka bash`
 - Inspect the DB from the host: `sqlite3 /opt/lanka/data/signage.db`
 - Rotate to a new tailnet IP: re-render the nginx tailnet block and reload nginx — `sudo sed "s/TAILSCALE_IP/$(tailscale ip -4 | head -n1)/" /opt/lanka/ops/nginx/lanka.conf | sudo tee /etc/nginx/sites-available/lanka.conf` then `sudo systemctl reload nginx`.
+- Install/refresh the R2 bucket rules (CORS + 1-day lifecycle on uploads/): `docker cp scripts/r2-bucket-setup.mjs lanka:/app/r2-bucket-setup.mjs && docker exec lanka node /app/r2-bucket-setup.mjs --origin https://app.lanka.live` (must land under `/app` — ESM bare-specifier resolution for `@aws-sdk/client-s3` walks up from the script's own directory, and `/tmp` has no `node_modules`)
 
 ## Next plans
 

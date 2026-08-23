@@ -4,10 +4,11 @@ import { Readable } from 'node:stream'
 // Mock the AWS SDK so the store can be exercised without network/credentials.
 // Hoisted so the (hoisted) vi.mock factories below can reference them, and
 // declared as classes so `new S3Client()` / `new Upload()` are constructable.
-const { sendMock, uploadCtor, uploadDone } = vi.hoisted(() => ({
+const { sendMock, uploadCtor, uploadDone, getSignedUrlMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   uploadCtor: vi.fn(),
-  uploadDone: vi.fn().mockResolvedValue(undefined)
+  uploadDone: vi.fn().mockResolvedValue(undefined),
+  getSignedUrlMock: vi.fn().mockResolvedValue('https://acct.r2.cloudflarestorage.com/signed')
 }))
 
 vi.mock('@aws-sdk/client-s3', () => {
@@ -20,7 +21,8 @@ vi.mock('@aws-sdk/client-s3', () => {
     },
     GetObjectCommand: class extends Cmd {},
     HeadObjectCommand: class extends Cmd {},
-    DeleteObjectCommand: class extends Cmd {}
+    DeleteObjectCommand: class extends Cmd {},
+    PutObjectCommand: class extends Cmd {}
   }
 })
 
@@ -32,6 +34,8 @@ vi.mock('@aws-sdk/lib-storage', () => ({
     }
   }
 }))
+
+vi.mock('@aws-sdk/s3-request-presigner', () => ({ getSignedUrl: getSignedUrlMock }))
 
 import { R2Store } from '~/server/services/r2-store'
 
@@ -51,6 +55,7 @@ describe('R2Store', () => {
     sendMock.mockReset()
     uploadCtor.mockReset()
     uploadDone.mockClear()
+    getSignedUrlMock.mockClear()
   })
 
   it('open() requests media/<sha> with an inclusive Range and returns the body', async () => {
@@ -135,5 +140,43 @@ describe('R2Store', () => {
     sendMock.mockResolvedValue({})
     await store.delete('3'.repeat(64))
     expect(lastInput().Key).toBe(`media/${'3'.repeat(64)}`)
+  })
+
+  it('createStagedUpload presigns a 1h PUT for uploads/<id> bound to the content type', async () => {
+    const store = new R2Store(cfg)
+    const id = '44444444-4444-4444-8444-444444444444'
+    const t = await store.createStagedUpload(id, { contentType: 'video/mp4', bytes: 5 })
+    expect(t.method).toBe('PUT')
+    expect(t.url).toBe('https://acct.r2.cloudflarestorage.com/signed')
+    expect(t.headers).toEqual({ 'content-type': 'video/mp4' })
+    const [, cmd, opts] = getSignedUrlMock.mock.calls[0]
+    expect(cmd.input).toEqual({ Bucket: 'lanka-media', Key: `uploads/${id}`, ContentType: 'video/mp4' })
+    expect(opts).toEqual({ expiresIn: 3600 })
+  })
+
+  it('statStaged returns the size or null on 404; openStaged/deleteStaged use uploads/<id>', async () => {
+    const store = new R2Store(cfg)
+    const id = '55555555-5555-4555-8555-555555555555'
+    sendMock.mockResolvedValueOnce({ ContentLength: 42 })
+    expect(await store.statStaged(id)).toEqual({ bytes: 42 })
+    expect(lastInput().Key).toBe(`uploads/${id}`)
+    sendMock.mockRejectedValueOnce({ name: 'NotFound', $metadata: { httpStatusCode: 404 } })
+    expect(await store.statStaged(id)).toBeNull()
+    const body = Readable.from([Buffer.from('z')])
+    sendMock.mockResolvedValueOnce({ Body: body })
+    expect(await store.openStaged(id)).toBe(body)
+    sendMock.mockResolvedValueOnce({})
+    await store.deleteStaged(id)
+    expect(lastInput().Key).toBe(`uploads/${id}`)
+  })
+
+  it('putStaged streams to uploads/<id> with the content type', async () => {
+    const store = new R2Store(cfg)
+    await store.putStaged('66666666-6666-4666-8666-666666666666', Readable.from([Buffer.from('q')]), 'image/png')
+    expect(uploadCtor.mock.calls[0][0].params).toMatchObject({
+      Bucket: 'lanka-media',
+      Key: 'uploads/66666666-6666-4666-8666-666666666666',
+      ContentType: 'image/png'
+    })
   })
 })

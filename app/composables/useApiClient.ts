@@ -3,6 +3,8 @@ import type {
   Address,
   ApkRelease,
   Assignment,
+  CreatedUpload,
+  CreateUploadBody,
   CreateUserBody,
   CreateUserResult,
   Device,
@@ -21,6 +23,7 @@ import type {
   PlaylistSummary,
   RegisterResult,
   SessionUser,
+  UploadJob,
   User
 } from '~/app/types/api'
 
@@ -79,7 +82,11 @@ export interface ApiClient {
   getMedia(id: number): Promise<Media>
   getMediaDetail(id: number): Promise<MediaDetail>
   deleteMedia(id: number, opts?: { force?: boolean }): Promise<void>
-  uploadMedia(body: FormData): Promise<Media>
+  createUpload(body: CreateUploadBody): Promise<CreatedUpload>
+  completeUpload(id: string): Promise<UploadJob>
+  getUpload(id: string): Promise<UploadJob>
+  listActiveUploads(): Promise<UploadJob[]>
+  cancelUpload(id: string): Promise<void>
 
   // playlists
   listPlaylists(): Promise<PlaylistSummary[]>
@@ -215,8 +222,14 @@ export function createApiClient(fetch: FetchFn): ApiClient {
         method: 'DELETE',
         query: opts.force ? { force: 'true' } : undefined
       }),
-    uploadMedia: (body) =>
-      fetch<Media>('/api/media', { method: 'POST', body }),
+    createUpload: (body) =>
+      fetch<CreatedUpload>('/api/media/uploads', { method: 'POST', body }),
+    completeUpload: (id) =>
+      fetch<UploadJob>(`/api/media/uploads/${id}/complete`, { method: 'POST' }),
+    getUpload: (id) => fetch<UploadJob>(`/api/media/uploads/${id}`, { method: 'GET' }),
+    listActiveUploads: () =>
+      fetch<UploadJob[]>('/api/media/uploads', { method: 'GET', query: { active: '1' } }),
+    cancelUpload: (id) => fetch<void>(`/api/media/uploads/${id}`, { method: 'DELETE' }),
 
     // playlists
     listPlaylists: () =>

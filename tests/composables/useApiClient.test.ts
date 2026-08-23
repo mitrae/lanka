@@ -62,16 +62,6 @@ describe('useApiClient', () => {
     })
   })
 
-  it('uploadMedia sends FormData as multipart', async () => {
-    const form = new FormData()
-    form.append('kind', 'image')
-    await client.uploadMedia(form)
-    expect(fetchFn).toHaveBeenCalledWith('/api/media', {
-      method: 'POST',
-      body: form
-    })
-  })
-
   it('replacePlaylistItems PUTs items array', async () => {
     await client.replacePlaylistItems(4, {
       items: [{ mediaId: 1, durationMsOverride: 5000 }]
@@ -174,5 +164,19 @@ describe('useApiClient', () => {
       currentItemId: 42,
       error: { sha256: 'abc', message: 'decode failed' }
     })
+  })
+
+  it('upload jobs: create/complete/get/listActive/cancel hit /api/media/uploads', async () => {
+    const body = { filename: 'a.mp4', kind: 'video' as const, quality: 'standard' as const, mimeType: 'video/mp4', bytes: 10 }
+    await client.createUpload(body)
+    expect(fetchFn).toHaveBeenCalledWith('/api/media/uploads', { method: 'POST', body })
+    await client.completeUpload('id-1')
+    expect(fetchFn).toHaveBeenCalledWith('/api/media/uploads/id-1/complete', { method: 'POST' })
+    await client.getUpload('id-1')
+    expect(fetchFn).toHaveBeenCalledWith('/api/media/uploads/id-1', { method: 'GET' })
+    await client.listActiveUploads()
+    expect(fetchFn).toHaveBeenCalledWith('/api/media/uploads', { method: 'GET', query: { active: '1' } })
+    await client.cancelUpload('id-1')
+    expect(fetchFn).toHaveBeenCalledWith('/api/media/uploads/id-1', { method: 'DELETE' })
   })
 })
