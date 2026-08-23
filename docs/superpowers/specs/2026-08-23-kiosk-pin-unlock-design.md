@@ -111,7 +111,11 @@ exists.
 **`KioskLock.kt`** — gains a change listener (see below).
 
 **`DevicePolicy.kt`** — gains `stopKioskMode(activity)`, calling `stopLockTask()`
-guarded by `isDeviceOwner`, in the same `runCatching` style as its neighbours.
+in the same `runCatching` style as its neighbours, guarded by the current
+**lock-task state** (mirroring `startKioskMode`) rather than by `isDeviceOwner`.
+`startKioskMode` is deliberately not device-owner-gated — it falls back to plain
+screen pinning on an unprovisioned box — so the release path must be equally
+ungated or it would strand a pinned non-owner device.
 
 **`build.gradle.kts`** — one `buildConfigField` pair.
 
