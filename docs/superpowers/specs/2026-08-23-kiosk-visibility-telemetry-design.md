@@ -1,8 +1,8 @@
 # Kiosk visibility telemetry — is the player actually on screen?
 
 **Date:** 2026-08-23
-**Status:** Design approved; revised 2026-08-23 after Codex review (lifecycle inputs, fail-safe initial state, episode-scoped debounce and probe window, edge-triggered posting, coupled package semantics)
-**Related:** `2026-06-21-device-remote-management-design.md` (telemetry + command channel), `2026-06-28-lanka-native-exoplayer-flavor-design.md` (shared source sets / both flavors), `2026-08-23-kiosk-pin-unlock-design.md` (`KioskLock`, `KioskPin` — the pure-core pattern this follows)
+**Status:** Design approved; revised 2026-08-23 after Codex review (lifecycle inputs, fail-safe initial state, episode-scoped debounce and probe window, edge-triggered posting, coupled package semantics); retargeted 2026-08-24 onto the single-APK runtime surface
+**Related:** `2026-06-21-device-remote-management-design.md` (telemetry + command channel), `2026-08-23-single-apk-runtime-surface-design.md` (one APK, `PlayerSurface` start/stop ownership), `2026-08-23-kiosk-pin-unlock-design.md` (`KioskLock`, `KioskPin` — the pure-core pattern this follows)
 
 ## Summary
 
@@ -11,9 +11,11 @@ in the dashboard. Three states (`foreground` / `obscured` / `background`), three
 counters (snap-backs, focus losses, hidden time), and — where the appop allows —
 the package name of whatever took the screen.
 
-The Android state machine lives in `android/app/src/main/`, so **both** flavors
-inherit one implementation. The transport is the existing telemetry endpoint,
-extended with optional fields and given a 30 s heartbeat.
+The Android state machine lives in `android/app/src/main/`, so both player
+surfaces in the single APK share one process-wide instance — the counters
+therefore survive a `set-surface` switch instead of resetting with it. The
+transport is the existing telemetry endpoint, extended with optional fields and
+given a sampling tick that posts on state change with a 30 s heartbeat floor.
 
 ## Motivation
 
@@ -22,15 +24,15 @@ behind someone else's app. Worse, two existing signals actively lie:
 
 1. **Liveness comes from the manifest poll, not from being on screen.**
    `GET /api/devices/:id/manifest` stamps `lastSeenAt` (`manifest.get.ts:37`), and
-   neither `MainActivity` nor `PlayerActivity` overrides `onPause`/`onStop` to
-   call `webView.onPause()`. So the WebView's JS timers keep running while the
+   `WebViewSurface` never calls `webView.onPause()` on the host Activity's
+   `onPause`/`onStop`. So the WebView's JS timers keep running while the
    Activity is stopped, the 30 s poll keeps firing, and a fully-covered box shows
    a solid green **online** (`index.get.ts:12`, `status.get.ts:9`).
 2. **The screenshot command shows the player regardless.**
    `NativeFSBridge.screenshot()` does `webView.draw(canvas)` on a software canvas
    (`NativeFSBridge.kt:124`) — it renders the WebView's own view tree, not the
-   display. The native flavor's `captureScreenshot()` draws the player root the
-   same way. An operator checking "is TV #12 fine?" gets a perfect picture of the
+   display. The native surface's screenshot path draws the player root the same
+   way. An operator checking "is TV #12 fine?" gets a perfect picture of the
    playlist while the screen shows something else entirely.
 
 There is also a failure mode that the kiosk cannot self-heal and nobody can
@@ -70,8 +72,8 @@ case above.
 4. **Occlusion is a badge, never a status tier.** A covered box *is* online;
    collapsing the two facts into one pill would destroy information.
 5. **The Android state machine is a pure core in `src/main`**, mirroring
-   `KioskPin`: no Android imports, injected clock, JVM-unit-tested, inherited by
-   both flavors from one implementation.
+   `KioskPin`: no Android imports, injected clock, JVM-unit-tested, and shared by
+   both player surfaces from one process-wide instance.
 6. **State is debounced; counters are not.** The badge must not flicker on the
    ~400 ms snap-back blip, but a snap-back war is exactly what the counters exist
    to reveal.
@@ -259,15 +261,17 @@ and never on the 2 s sampling tick.
   performs the probe and is called only when a post is going out. Both are gated
   by `privilegedOriginAllowed()` like the other data-returning methods, since the
   package name is mild exfil.
-- **`PlayerActivity`** (native) — reads `KioskVisibility` directly, no bridge, on
-  a daemon 2 s `scheduleWithFixedDelay` mirroring `ManifestClient.kt:149`.
+- **`NativeSurface`** — reads `KioskVisibility` directly, no bridge, on a daemon
+  2 s `scheduleWithFixedDelay` mirroring `ManifestClient`'s pattern. The scheduler
+  is created in `start()` and shut down in `stop()`, per the `PlayerSurface`
+  ownership rule — otherwise a `set-surface` switch leaks a scheduler that keeps
+  posting telemetry from a torn-down surface.
 - **`TelemetryClient`** (native) — takes a visibility supplier so **every** post
   is enriched, and gains `heartbeat(deviceId)`.
-- **`android/README.md`** — a third line in the per-box recipe at line 142,
-  **for both application IDs**, since the flavors install side by side:
-  `adb shell appops set ai.lanka.kiosk GET_USAGE_STATS allow` and the same for
-  `ai.lanka.kiosk.vs`. Granting only the base ID leaves the native APK reporting
-  `null` forever.
+- **`android/README.md`** — a third line in the per-box recipe at line 142:
+  `adb shell appops set ai.lanka.kiosk GET_USAGE_STATS allow`. One grant covers
+  both surfaces: since the merge there is a single `applicationId` and the surface
+  is a runtime choice inside it.
 
 ## Server design
 
@@ -341,8 +345,7 @@ occlusion state — that is the client's job; the server only stores and serves.
   handle is injected.
 - `visibility: 'foreground'` clears a previously stored `foreground_package`.
 
-**JVM (`android/app/src/test/`, the shared source set — a shared class's test must
-NOT live in `src/testNative/`, which compiles only into the native flavor):**
+**JVM (`android/app/src/test/` — the only Android test source set since the merge):**
 
 - `KioskVisibilityTest`: starts `BACKGROUND`; `onStart`+`onResume`+focus →
   `FOREGROUND` with no debounce; focus loss → `OBSCURED`; `onPause` alone →
@@ -352,7 +355,7 @@ NOT live in `src/testNative/`, which compiles only into the native flavor):**
   across both non-foreground states and never decreases when the clock goes
   backwards; `changeSeq` moves only on a reportable change; `shouldPost`.
 
-Both flavors must build and test green: `./gradlew test` in `android/`.
+The APK must build and test green: `cd android && ./gradlew test assembleDebug`.
 
 ## Out of scope
 
@@ -380,6 +383,11 @@ Deliberately excluded, and each would be its own piece of work:
 - **The heartbeat adds one POST per device per 30 s** — ~1.7 req/s at 50 TVs,
   negligible against the existing manifest poll at the same cadence. Change-driven
   posts add to that only when boxes are actually being disturbed.
+- **A `set-surface` switch is an Activity `recreate()`**, so the lifecycle model
+  sees `onStop` then `onStart` with nothing having left the screen. The 2 s
+  debounce should absorb it and `scheduleKioskReturn`'s `!isChangingConfigurations`
+  guard should keep it out of `snapBacks` — both are on-box verification items
+  rather than assumptions.
 - **A sub-2 s excursion is still invisible as a state, by design.** It shows up
   only in `snapBacks`/`focusLosses`. That is the intended trade: the badge exists
   to report sustained occlusion, and the counters exist to report churn.

@@ -4,18 +4,17 @@
 
 **Goal:** Report whether the Lanka player is actually on screen — `foreground` / `obscured` / `background`, plus snap-back, focus-loss and hidden-time counters and the intruding package name — and surface it as a badge in the dashboard.
 
-**Architecture:** A pure Kotlin state machine (`KioskVisibility`) in `android/app/src/main/` is fed by lifecycle hooks `KioskActivity` already has, so both flavors inherit one implementation. It reaches the server as five new optional fields on the existing telemetry endpoint, posted both on the existing playback events and on a new 30 s heartbeat. The server stores the values on `devices` and computes `visibility_since` itself; the dashboard renders an amber chip orthogonal to the existing online/idle/offline pill.
+**Architecture:** A pure Kotlin state machine (`KioskVisibility`) is fed by lifecycle hooks `KioskActivity` already has, so it is shared by both player surfaces in the single APK. It reaches the server as five new optional fields on the existing telemetry endpoint, posted on the existing playback events and on a sampling tick that fires on state change with a 30 s heartbeat floor. The server stores the values on `devices` and computes `visibility_since` itself; the dashboard renders an amber chip orthogonal to the existing online/idle/offline pill.
 
-**Tech Stack:** Kotlin (Android SDK 34, minSdk 24, JUnit 4), TypeScript (Nuxt 4 / Nitro / Zod / Drizzle / better-sqlite3), Vue 3 + Nuxt UI v3, Vitest. No new dependencies in either project.
+**Tech Stack:** Kotlin (Android SDK 34, minSdk 24, JUnit 4, one APK with a runtime-selectable player surface), TypeScript (Nuxt 4 / Nitro / Zod / Drizzle / better-sqlite3), Vue 3 + Nuxt UI v3, Vitest. No new dependencies in either project.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-kiosk-visibility-telemetry-design.md`
 
 ## Global Constraints
 
-- **All new Android production code goes in `android/app/src/main/kotlin/ai/lanka/kiosk/`.** Never `src/webview/` or `src/native/`, except the two flavor-specific wiring tasks (7 and 8) which explicitly say otherwise.
-- **All new Android tests go in `android/app/src/test/kotlin/ai/lanka/kiosk/`.** Never `src/testNative/` — that source set compiles only into the native flavor, and `KioskVisibility` is a shared class. Putting its test there hides it from `testWebviewDebugUnitTest`.
+- **All Android production code goes in `android/app/src/main/kotlin/ai/lanka/kiosk/`, and all Android tests in `android/app/src/test/kotlin/ai/lanka/kiosk/`.** The `webview`/`native` product flavors and the `src/webview`, `src/native`, `src/testNative` source sets **no longer exist** — the two players were merged into one APK with a runtime-selectable surface (`c22632c`). There is one `applicationId`, `ai.lanka.kiosk`.
 - **No new Gradle dependencies and no new npm dependencies.**
-- **Both Android flavors must build and test green** after every Android task: `./gradlew test` (working directory `android/`) runs `testWebviewDebugUnitTest` and `testNativeDebugUnitTest`.
+- **The APK must build and test green** after every Android task: `cd android && ./gradlew test assembleDebug`. There is no `assembleWebviewDebug`/`assembleNativeDebug` any more, and no per-flavor unit-test tasks.
 - **Kotlin test style:** JUnit 4, `import org.junit.Assert.*`, backtick-quoted test method names. Match `android/app/src/test/kotlin/ai/lanka/kiosk/KioskPinTest.kt`.
 - **Vitest style:** call the exported `handleXxx` function directly, never the default export. Match `tests/api/devices-telemetry.test.ts`.
 - **Debounce is 2 000 ms**, applies only to *leaving* `foreground`, and is scoped to the whole non-foreground **episode** — it does not restart when the state moves between `obscured` and `background`. Returning to `foreground` is reported immediately.
@@ -27,9 +26,19 @@
 - **Every new telemetry field is optional** — an un-upgraded APK must keep working unchanged.
 - **Vitest is the gate, not `pnpm typecheck`** (~381 pre-existing vue-tsc errors). Run `pnpm test` and, for UI tasks, `pnpm build`.
 
-### `KioskActivity` has just changed
+### Two stories landed after this plan was first written
 
-The PIN-unlock plan (`docs/superpowers/plans/2026-08-23-kiosk-pin-unlock.md`) landed while this plan was being written, and it reworked `KioskActivity`: the file now also holds a `pinPad` field, a `dispatchKeyEvent` override that routes every key to the pad while it is showing, a `KioskLock.listener` that mirrors the flag into lock-task state, and an `onPause` override. None of that conflicts with Task 2 below, which adds lifecycle hooks and a snap-back counter — but **re-read `KioskActivity.kt` immediately before editing it** and locate methods by name, never by the line numbers quoted here.
+Re-read every Android file before editing it, and locate methods by name — never by the line numbers quoted here.
+
+**1. On-device PIN unlock (`60020ab`, `050cb7b`).** `KioskActivity` now also holds a `pinPad` field, `dispatchKeyEvent`/`onKeyLongPress`/`onKeyUp` overrides that route keys to the pad, a `KioskLock.listener` that mirrors the flag into real lock-task state, and an `onPause` override. None of it conflicts with Task 2, which only adds lifecycle hooks and a snap-back counter. `KioskActivity` still has **no `onStart` override** — Task 2 adds the first one.
+
+**2. One APK with a runtime-selectable surface (`c22632c`, `10e37e8`).** This is the structural change:
+
+- The `webview` / `native` product flavors are gone. Everything lives in `src/main`, tests in `src/test`. `PlayerActivity` no longer exists.
+- A single `MainActivity : KioskActivity()` hosts exactly one `PlayerSurface` — `WebViewSurface` or `NativeSurface` — chosen at `onCreate` from `SurfaceStore` and switched by the dashboard's `set-surface` command via `SurfaceSwitcher.request(...)` + `recreate()`.
+- **`PlayerSurface` carries an ownership rule that this plan must honour:** everything `start()` creates, `stop()` releases, and `stop()` is called from `MainActivity.onDestroy` on every `recreate()`. The sampling tick added in Task 8 is created in `NativeSurface.start()` and therefore **must** be shut down in `NativeSurface.stop()`, or a surface switch leaks a scheduler that keeps posting telemetry.
+- `KioskVisibility.shared` is process-wide, so one instance serves both surfaces and survives the `recreate()` of a surface switch — which is what makes the counters meaningful across a switch rather than resetting.
+- Both `NativeFSBridge` and `player/TelemetryClient` now live under `src/main`.
 
 ---
 
@@ -225,7 +234,7 @@ class KioskVisibilityTest {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd android && ./gradlew testWebviewDebugUnitTest --tests '*KioskVisibilityTest*'`
+Run: `cd android && ./gradlew test --tests '*KioskVisibilityTest*'`
 Expected: FAIL — `Unresolved reference: KioskVisibility`.
 
 - [ ] **Step 3: Write the implementation**
@@ -266,8 +275,8 @@ package ai.lanka.kiosk
  * debounced — a snap-back war is exactly what they exist to reveal.
  *
  * Every public method is synchronized: mutators run on the main thread, but
- * snapshot() is called from the WebView's JavaBridge thread (webview flavor) and
- * from the sampling scheduler thread (native flavor).
+ * snapshot() is called from the WebView's JavaBridge thread (WebView surface)
+ * and from the sampling scheduler thread (native surface).
  *
  * Pure Kotlin with an injected clock and no Android imports, so it is
  * JVM-unit-testable — same shape as [KioskPin].
@@ -400,7 +409,7 @@ class KioskVisibility(private val now: () -> Long = System::currentTimeMillis) {
         const val DEBOUNCE_MS = 2_000L
         const val HEARTBEAT_MS = 30_000L
 
-        /** Transport rule, shared by both flavors and mirrored in TypeScript. */
+        /** Transport rule, shared by both surfaces and mirrored in TypeScript. */
         fun shouldPost(seq: Int, lastSeq: Int, sinceLastPostMs: Long): Boolean =
             seq != lastSeq || sinceLastPostMs >= HEARTBEAT_MS
 
@@ -414,7 +423,7 @@ class KioskVisibility(private val now: () -> Long = System::currentTimeMillis) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd android && ./gradlew test`
-Expected: PASS — both `testWebviewDebugUnitTest` and `testNativeDebugUnitTest` green.
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -433,9 +442,9 @@ git commit -m "feat(kiosk): KioskVisibility — pure on-screen state machine + c
 
 **Interfaces:**
 - Consumes: `KioskVisibility.shared.onStarted()`, `.onResumed()`, `.onPaused()`, `.onStopped()`, `.onFocusChanged(Boolean)`, `.onSnapBackScheduled()` from Task 1.
-- Produces: nothing new — after this task `KioskVisibility.shared` holds live truth for both flavors.
+- Produces: nothing new — after this task `KioskVisibility.shared` holds live truth for whichever surface is active.
 
-There is no unit test here: these are `Activity` lifecycle callbacks and the project has no Robolectric (and the plan forbids new Gradle dependencies). The gate is that both flavors compile and the whole JVM suite stays green; behavior is verified on-box in Task 10.
+There is no unit test here: these are `Activity` lifecycle callbacks and the project has no Robolectric (and the plan forbids new Gradle dependencies). The gate is that the APK compiles and the whole JVM suite stays green; behavior is verified on-box in Task 10.
 
 - [ ] **Step 1: Re-read the file before editing**
 
@@ -538,12 +547,19 @@ Replace the body of `onWindowFocusChanged` so focus *loss* is recorded too — t
     }
 ```
 
-- [ ] **Step 9: Verify both flavors build and the suite is green**
+- [ ] **Step 9: Note what a surface switch does to these hooks**
 
-Run: `cd android && ./gradlew test assembleWebviewDebug assembleNativeDebug`
+A `set-surface` command calls `recreate()`, so `MainActivity` is destroyed and rebuilt: `onStop` then `onStart` fire even though nothing left the screen. Two consequences to keep in mind, both verified on-box in Task 10:
+
+- The 2 000 ms debounce means a fast `recreate()` never surfaces a state change — the box does not blink to `background` in the dashboard.
+- `scheduleKioskReturn()` is already guarded by `!isFinishing && !isChangingConfigurations`, which is what should keep a deliberate switch from counting as a snap-back. **Verify this rather than assuming it** (Task 10, check 7): if `snapBacks` moves on a surface switch, gate the counter on a `SurfaceSwitcher`-set flag instead of loosening the debounce.
+
+- [ ] **Step 10: Verify the APK builds and the suite is green**
+
+Run: `cd android && ./gradlew test assembleDebug`
 Expected: BUILD SUCCESSFUL, all unit tests pass.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add android/app/src/main/kotlin/ai/lanka/kiosk/KioskActivity.kt
@@ -582,11 +598,9 @@ import android.content.Context
  * UsageStats is the only source for this on modern Android: getRunningTasks is
  * restricted and getRunningAppProcesses returns only our own process. It needs
  * the PACKAGE_USAGE_STATS appop, granted per box over ADB alongside the appops
- * already in android/README.md — for BOTH application ids, since the flavors
- * install side by side:
+ * already in android/README.md:
  *
- *   adb shell appops set ai.lanka.kiosk    GET_USAGE_STATS allow
- *   adb shell appops set ai.lanka.kiosk.vs GET_USAGE_STATS allow
+ *   adb shell appops set ai.lanka.kiosk GET_USAGE_STATS allow
  *
  * Without the grant queryEvents yields nothing and this returns null — the
  * dashboard then says "covered by unknown app" rather than breaking. Every call
@@ -660,15 +674,14 @@ In `android/README.md`, in the fenced block under "Kiosk hardening WITHOUT devic
 ```bash
 # Name the app that covered the player (visibility telemetry); optional —
 # without it the dashboard still reports "covered", just not by what.
-# BOTH ids: the native flavor installs as a separate package (.vs), and
-# granting only the base id leaves it reporting null forever.
-adb shell appops set ai.lanka.kiosk    GET_USAGE_STATS allow
-adb shell appops set ai.lanka.kiosk.vs GET_USAGE_STATS allow
+adb shell appops set ai.lanka.kiosk GET_USAGE_STATS allow
 ```
 
-- [ ] **Step 4: Verify both flavors build**
+One grant covers both player surfaces: since the flavors were merged there is a single `applicationId`, and the surface is a runtime choice inside the same package.
 
-Run: `cd android && ./gradlew test assembleWebviewDebug assembleNativeDebug`
+- [ ] **Step 4: Verify the APK builds**
+
+Run: `cd android && ./gradlew test assembleDebug`
 Expected: BUILD SUCCESSFUL, all unit tests pass.
 
 - [ ] **Step 5: Commit**
@@ -1082,7 +1095,7 @@ git commit -m "feat(devices): expose visibility + counters on status and list AP
 - Create: `app/composables/player/useVisibility.ts`
 - Test: `tests/player/useVisibility.test.ts`
 - Modify: `app/composables/player/useTelemetry.ts`
-- Test: `tests/player/useTelemetry.test.ts` (exists — check with `ls tests/player`; if absent, create it with the same import style as `tests/player/useVisibility.test.ts`)
+- Test: `tests/player/useTelemetry.test.ts` (exists — append to its existing `describe` block)
 - Modify: `app/composables/useApiClient.ts` (the `postTelemetry` body type)
 - Modify: `app/composables/player/usePlayerBoot.ts`
 
@@ -1605,7 +1618,7 @@ git commit -m "feat(player): report on-screen visibility on every telemetry post
 ### Task 7: Expose visibility over the WebView bridge
 
 **Files:**
-- Modify: `android/app/src/webview/kotlin/ai/lanka/kiosk/NativeFSBridge.kt`
+- Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/NativeFSBridge.kt` (moved out of the deleted `src/webview` source set when the APKs merged)
 
 **Interfaces:**
 - Consumes: `KioskVisibility.shared.snapshot()` (Task 1), `ForegroundAppProbe.current(context, episodeMs)` (Task 3).
@@ -1613,9 +1626,11 @@ git commit -m "feat(player): report on-screen visibility on every telemetry post
 
 Two methods, not one, because their costs differ by orders of magnitude: `visibility()` reads an in-process object and is called every 2 s, while `foregroundPackage()` runs a UsageStats query and is called at most once per post.
 
+The bridge is only reachable while `WebViewSurface` is the active surface — that is fine and needs no guard: when `NativeSurface` is active there is no WebView and no web player, and Task 8 supplies the same data directly from Kotlin.
+
 - [ ] **Step 1: Add the bridge methods**
 
-In `android/app/src/webview/kotlin/ai/lanka/kiosk/NativeFSBridge.kt`, after `getAppVersion()`:
+In `android/app/src/main/kotlin/ai/lanka/kiosk/NativeFSBridge.kt`, after `getAppVersion()`:
 
 ```kotlin
     /**
@@ -1653,36 +1668,36 @@ In `android/app/src/webview/kotlin/ai/lanka/kiosk/NativeFSBridge.kt`, after `get
 
 Re-read Step 3 of Task 6: the bridge branch of `createVisibility` wraps `JSON.parse` in `try/catch` and returns the `foreground` default on failure, so `""` from `visibility()` degrades rather than throwing; and `readPackage(...) || null` turns `""` into `null`. Confirm both are present before continuing.
 
-- [ ] **Step 3: Verify both flavors build and the suite is green**
+- [ ] **Step 3: Verify the APK builds and the suite is green**
 
-Run: `cd android && ./gradlew test assembleWebviewDebug assembleNativeDebug`
+Run: `cd android && ./gradlew test assembleDebug`
 Expected: BUILD SUCCESSFUL, all unit tests pass.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add android/app/src/webview/kotlin/ai/lanka/kiosk/NativeFSBridge.kt
+git add android/app/src/main/kotlin/ai/lanka/kiosk/NativeFSBridge.kt
 git commit -m "feat(kiosk): expose visibility + intruder package to the web player"
 ```
 
 ---
 
-### Task 8: Native-flavor enrichment and sampling tick
+### Task 8: `NativeSurface` enrichment and sampling tick
 
 **Files:**
-- Modify: `android/app/src/native/kotlin/ai/lanka/kiosk/player/TelemetryClient.kt`
-- Modify: `android/app/src/native/kotlin/ai/lanka/kiosk/PlayerActivity.kt`
-- Test: `android/app/src/testNative/kotlin/ai/lanka/kiosk/player/TelemetryClientTest.kt` — **this file already exists** with a `CapturingPoster` helper and a `TelemetryClientTest` class. Add the new tests as methods **inside the existing class** and reuse `CapturingPoster`; do not paste a second class or a second package declaration, which would not compile.
+- Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/player/TelemetryClient.kt`
+- Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/NativeSurface.kt`
+- Test: `android/app/src/test/kotlin/ai/lanka/kiosk/player/TelemetryClientTest.kt` — **this file already exists** with a `CapturingPoster` helper and a `TelemetryClientTest` class. Add the new tests as methods **inside the existing class** and reuse `CapturingPoster`; do not paste a second class or a second package declaration, which would not compile.
 
 **Interfaces:**
 - Consumes: `KioskVisibility.shared.snapshot()` (Task 1), `ForegroundAppProbe.current(context, episodeMs)` (Task 3), the server contract (Task 4).
 - Produces: `TelemetryClient(poster, apkVersion, surface = "native", visibility: (() -> Pair<KioskVisibility.Snapshot, String?>)? = null)` and `TelemetryClient.heartbeat(deviceId: String)`.
 
-Native tests live in `src/testNative/`, never `src/test/` — `TelemetryClient` is in `src/native` and only the native flavor compiles it.
+`PlayerActivity` no longer exists: since the APKs merged, the native player is `NativeSurface : PlayerSurface`, hosted by `MainActivity`. **Honour the `PlayerSurface` ownership rule** — everything `start()` creates, `stop()` releases — or the scheduler added here survives a `set-surface` switch and keeps posting telemetry from a dead surface.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add these methods inside the **existing** `class TelemetryClientTest` in `android/app/src/testNative/kotlin/ai/lanka/kiosk/player/TelemetryClientTest.kt`, and add the import `import ai.lanka.kiosk.KioskVisibility` at the top:
+Add these methods inside the **existing** `class TelemetryClientTest` in `android/app/src/test/kotlin/ai/lanka/kiosk/player/TelemetryClientTest.kt`, and add the import `import ai.lanka.kiosk.KioskVisibility` at the top:
 
 ```kotlin
     private fun vis(
@@ -1734,12 +1749,12 @@ Add these methods inside the **existing** `class TelemetryClientTest` in `androi
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd android && ./gradlew testNativeDebugUnitTest --tests '*TelemetryClientTest*'`
+Run: `cd android && ./gradlew test --tests '*TelemetryClientTest*'`
 Expected: FAIL — `TelemetryClient` has no `visibility` parameter and no `heartbeat`.
 
 - [ ] **Step 3: Enrich every post in `TelemetryClient`**
 
-In `android/app/src/native/kotlin/ai/lanka/kiosk/player/TelemetryClient.kt`, add the import `import ai.lanka.kiosk.KioskVisibility`, add the constructor parameter, and attach visibility inside the shared `body()` builder so no call site can forget it:
+In `android/app/src/main/kotlin/ai/lanka/kiosk/player/TelemetryClient.kt`, add the import `import ai.lanka.kiosk.KioskVisibility`, add the constructor parameter, and attach visibility inside the shared `body()` builder so no call site can forget it:
 
 ```kotlin
 class TelemetryClient(
@@ -1795,20 +1810,20 @@ class TelemetryClient(
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd android && ./gradlew testNativeDebugUnitTest --tests '*TelemetryClientTest*'`
+Run: `cd android && ./gradlew test --tests '*TelemetryClientTest*'`
 Expected: PASS, including the three pre-existing tests in the class.
 
-- [ ] **Step 5: Supply visibility and run the sampling tick in `PlayerActivity`**
+- [ ] **Step 5: Supply visibility when `NativeSurface` builds its client**
 
-In `android/app/src/native/kotlin/ai/lanka/kiosk/PlayerActivity.kt`, add the imports:
+In `android/app/src/main/kotlin/ai/lanka/kiosk/NativeSurface.kt`, add the imports:
 
 ```kotlin
-import ai.lanka.kiosk.ForegroundAppProbe
-import ai.lanka.kiosk.KioskVisibility
 import java.util.concurrent.TimeUnit
 ```
 
-Pass the supplier when constructing the client — replace the existing `TelemetryClient(...)` construction with:
+(`ForegroundAppProbe` and `KioskVisibility` are in the same package — no import needed.)
+
+Replace the existing `telemetry = TelemetryClient(...)` construction inside `start()` with:
 
 ```kotlin
         telemetry = TelemetryClient(
@@ -1817,21 +1832,27 @@ Pass the supplier when constructing the client — replace the existing `Telemet
             visibility = {
                 val snap = KioskVisibility.shared.snapshot()
                 val pkg = if (snap.state == KioskVisibility.State.FOREGROUND) null
-                else ForegroundAppProbe.current(this, snap.episodeMs)
+                else ForegroundAppProbe.current(activity, snap.episodeMs)
                 snap to pkg
             }
         )
 ```
 
-Declare the scheduler beside the existing `bootIo` executor, mirroring `ManifestClient`'s daemon-thread pattern:
+`activity` is the `PlayerSurface`'s host, already a constructor property of `NativeSurface`.
+
+- [ ] **Step 6: Add the sampling tick, owned by the surface**
+
+Declare the scheduler beside the existing `bootIo` executor, mirroring its daemon-thread pattern:
 
 ```kotlin
+    // Owned by this surface: created in start(), shut down in stop(). A leaked
+    // scheduler would keep posting telemetry after a set-surface switch.
     private val visibilityExec = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "visibility-sample").apply { isDaemon = true }
     }
 ```
 
-Start it in `onCreate`, right after `commandClient` is opened:
+Start it at the end of `start()`, after `commandClient` is opened:
 
 ```kotlin
         // Sample cheaply and post on a real change, with the heartbeat as a
@@ -1842,6 +1863,7 @@ Start it in `onCreate`, right after `commandClient` is opened:
         var lastPostAt = 0L
         visibilityExec.scheduleWithFixedDelay({
             runCatching {
+                if (stopped) return@runCatching
                 val seq = KioskVisibility.shared.snapshot().changeSeq
                 val elapsed = System.currentTimeMillis() - lastPostAt
                 if (KioskVisibility.shouldPost(seq, lastSeq, elapsed)) {
@@ -1853,22 +1875,30 @@ Start it in `onCreate`, right after `commandClient` is opened:
         }, 2, 2, TimeUnit.SECONDS)
 ```
 
-Shut it down in `onDestroy`, next to the existing teardown:
+The `stopped` check is the same guard the rest of `NativeSurface` uses for callbacks that can land after teardown.
+
+- [ ] **Step 7: Release it in `stop()`**
+
+In `NativeSurface.stop()`, next to `bootIo.shutdownNow()`:
 
 ```kotlin
         visibilityExec.shutdownNow()
 ```
 
-- [ ] **Step 6: Verify both flavors build and the suite is green**
+Shut it down **before** the OkHttp dispatcher shutdown that follows, so a tick in flight cannot enqueue a call onto a closing client.
 
-Run: `cd android && ./gradlew test assembleWebviewDebug assembleNativeDebug`
+- [ ] **Step 8: Verify the APK builds and the suite is green**
+
+Run: `cd android && ./gradlew test assembleDebug`
 Expected: BUILD SUCCESSFUL, all unit tests pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add android/app/src/native android/app/src/testNative
-git commit -m "feat(kiosk): native-flavor visibility enrichment and sampling tick"
+git add android/app/src/main/kotlin/ai/lanka/kiosk/player/TelemetryClient.kt \
+        android/app/src/main/kotlin/ai/lanka/kiosk/NativeSurface.kt \
+        android/app/src/test/kotlin/ai/lanka/kiosk/player/TelemetryClientTest.kt
+git commit -m "feat(kiosk): visibility enrichment and sampling tick on the native surface"
 ```
 
 ---
@@ -2063,13 +2093,16 @@ Add a bullet to the "Android kiosk player (APK)" section:
   plus `snapBacks`/`focusLosses`/`hiddenMs`. The player samples every 2 s and
   posts on a state change, with a 30 s heartbeat as the floor — a beat alone
   would miss an occlusion that starts and ends between two beats. State lives in
-  `KioskVisibility` (`src/main`, both flavors), fed by `KioskActivity`'s
+  `KioskVisibility` (`src/main`, shared by both surfaces), fed by `KioskActivity`'s
   `onStart`/`onResume`/`onPause`/`onStop`/`onWindowFocusChanged` (`onPause`
   matters: a translucent overlay never calls `onStop`). The intruder package
   comes from `ForegroundAppProbe`, whose lookback window is derived from the
   episode length, and is `null` unless the box got
-  `appops set <appId> GET_USAGE_STATS allow` — **for both `ai.lanka.kiosk` and
-  `ai.lanka.kiosk.vs`**. **`telemetry.currentItemId`
+  `appops set ai.lanka.kiosk GET_USAGE_STATS allow`. One `KioskVisibility.shared`
+  serves both player surfaces and survives the `recreate()` of a `set-surface`
+  switch, so the counters are process totals, not per-surface ones — and
+  `NativeSurface` owns its sampling scheduler, shutting it down in `stop()` per
+  the `PlayerSurface` contract. **`telemetry.currentItemId`
   is now OPTIONAL** — absent means "heartbeat: don't touch the current item,
   don't count a play"; `null` still clears. Sending the current item on every
   heartbeat would inflate `media.play_count` by 120x/hour. Note the two signals
@@ -2091,17 +2124,16 @@ git commit -m "docs(kiosk): visibility telemetry contract and the two signals th
 
 - [ ] **Step 4: On-box verification (manual gate — do not tick without running it)**
 
-Build against a reachable dev server and install both flavors:
+Build against a reachable dev server and install the APK:
 
 ```bash
 cd android
-./gradlew :app:assembleWebviewDebug :app:assembleNativeDebug -PLANKA_SERVER_URL=http://<host>:5100
-adb install -r app/build/outputs/apk/webview/debug/app-webview-debug.apk
-adb install -r app/build/outputs/apk/native/debug/app-native-debug.apk
-# BOTH ids — the native flavor is a separate package and needs its own grant
-adb shell appops set ai.lanka.kiosk    GET_USAGE_STATS allow
-adb shell appops set ai.lanka.kiosk.vs GET_USAGE_STATS allow
+./gradlew :app:assembleDebug -PLANKA_SERVER_URL=http://<host>:5100
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell appops set ai.lanka.kiosk GET_USAGE_STATS allow
 ```
+
+One APK, one grant, one launch (`adb shell am start -n ai.lanka.kiosk/.MainActivity`) — the surface is chosen at runtime, so both players are exercised from this single install.
 
 Verify against a **production** server build (`pnpm build` + `node .output/server/index.mjs`), never `pnpm dev` — the unbundled dev module graph is too heavy for these boxes.
 
@@ -2112,8 +2144,13 @@ Checks:
    3a. Leave Settings up for **> 60 s**, then check the chip still names it — this is the regression test for the episode-derived probe window; a fixed short lookback would have degraded to "Not on screen".
    3b. Trigger a dialog over the player (e.g. a system prompt) without leaving the app → chip reads "Dialog on top", proving `obscured` is reachable and that the snap-back never fired.
 4. Send `kiosk-unlock` from the dashboard, leave the player → state goes `background`, `snapBacks` stays put (an unlocked box arms no return).
-5. Repeat 1–3 for the native flavor (`ai.lanka.kiosk.vs/ai.lanka.kiosk.PlayerActivity`).
+5. Send `set-surface { surface: "native" }` from the dashboard and repeat checks 1–3 on the native surface. Both surfaces are in this one APK, so no second install and no second appop grant.
 6. Confirm `media.play_count` did not move during any of it.
+7. **Surface-switch hygiene** (new in the single-APK world). Note `snapBacks` and the badge, send `set-surface` to switch, and confirm after the `recreate()`:
+   - the badge did **not** blink to "Not on screen" — the 2 s debounce should absorb the switch;
+   - `snapBacks` did **not** increment — `scheduleKioskReturn` is guarded by `!isChangingConfigurations`, but this is the check that proves it. If it did move, gate `onSnapBackScheduled()` on a flag set by `SurfaceSwitcher.request` rather than widening the debounce;
+   - counters did **not** reset — `KioskVisibility.shared` is process-wide and a surface switch is only an Activity `recreate()`, so the totals must carry across;
+   - telemetry posts did not double — proof that `NativeSurface.stop()` shut the sampling scheduler down instead of leaking it.
 
 ---
 
@@ -2124,6 +2161,10 @@ Spec coverage checked section by section: state model and lifecycle inputs → T
 Names verified consistent across tasks: `KioskVisibility.shared`, `State.wire`, `Snapshot(state, snapBacks, focusLosses, hiddenMs, episodeMs, changeSeq)`, `Snapshot.toJson()` (no package argument), `KioskVisibility.shouldPost`, `ForegroundAppProbe.current(context, episodeMs)`, `NativeFS.visibility()` / `NativeFS.foregroundPackage(episodeMs)`, `createVisibility` / `VisibilitySnapshot` / `shouldPost`, `useTelemetry(api, visibility?)`, `Telemetry.heartbeat(deviceId)`, `TelemetryClient(poster, apkVersion, surface, visibility)`, and the six DB columns.
 
 Traced by hand against the Task 1 implementation, since these are the cases Codex flagged: initial `BACKGROUND`; `live()` reaching `FOREGROUND` with no debounce; `onPause` alone producing `OBSCURED`; an `OBSCURED`→`BACKGROUND` move at 1.9 s still surfacing at exactly 2.0 s; a 400 ms excursion charging 400 ms of `hiddenMs` and one snap-back while never surfacing a state; a backwards clock leaving `hiddenMs` unchanged; `changeSeq` moving only when the reportable state moves.
+
+### Revision for the single-APK merge (2026-08-24)
+
+Rewritten after `c22632c`/`10e37e8` merged the two flavors into one APK. Changes: all source-set paths collapsed to `src/main` and `src/test`; `assembleWebviewDebug`/`assembleNativeDebug` and the per-flavor unit-test tasks replaced by `./gradlew test assembleDebug`; Task 7's bridge path moved out of the deleted `src/webview`; Task 8 retargeted from the deleted `PlayerActivity` to `NativeSurface`, with the sampling scheduler bound to the `PlayerSurface` start/stop ownership rule; the dual `ai.lanka.kiosk.vs` appop grant dropped, which retires Codex finding 10 entirely; and Task 10 gained a surface-switch hygiene check covering badge flicker, snap-back inflation, counter reset, and scheduler leaks across `recreate()`.
 
 ### Codex review outcome
 
