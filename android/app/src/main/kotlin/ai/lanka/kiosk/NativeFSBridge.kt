@@ -172,6 +172,34 @@ class NativeFSBridge(
     fun getAppVersion(): String = BuildConfig.VERSION_NAME
 
     /**
+     * Current on-screen state plus kiosk counters, as the JSON the player's
+     * useVisibility composable expects. Cheap by design — no UsageStats query —
+     * because the player calls this on a 2 s sampling tick.
+     *
+     * Privileged-origin gated like the other data-returning methods.
+     */
+    @JavascriptInterface
+    fun visibility(): String {
+        if (!privilegedOriginAllowed()) return ""
+        return KioskVisibility.shared.snapshot().toJson()
+    }
+
+    /**
+     * The package covering the player, or "" when unknown (appop not granted,
+     * ROM refused, or the most recent resume was our own). Separate from
+     * [visibility] because this one runs a UsageStats query: the player calls it
+     * only when a post is going out and the state is not foreground.
+     *
+     * @param episodeMs how long we have been hidden, so the probe can size its
+     *   lookback window — a fixed short window misses the covering app entirely.
+     */
+    @JavascriptInterface
+    fun foregroundPackage(episodeMs: Int): String {
+        if (!privilegedOriginAllowed()) return ""
+        return ForegroundAppProbe.current(context, episodeMs.toLong().coerceAtLeast(0L)) ?: ""
+    }
+
+    /**
      * Reboots the device. Requires Lanka to be provisioned as device owner;
      * returns false otherwise, in which case the player falls back to a soft
      * page reload (see useCommandChannel.ts). On success the box reboots, so no
