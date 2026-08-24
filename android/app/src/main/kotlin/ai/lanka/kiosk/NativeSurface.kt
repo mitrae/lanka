@@ -85,6 +85,12 @@ class NativeSurface(
         Thread(r, "player-boot").apply { isDaemon = true }
     }
 
+    // Owned by this surface: created here, shut down in stop(). A leaked
+    // scheduler would keep posting telemetry after a set-surface switch.
+    private val visibilityExec = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "visibility-sample").apply { isDaemon = true }
+    }
+
     override fun start() {
         deviceId = DeviceId.get(activity)
 
@@ -103,7 +109,13 @@ class NativeSurface(
 
         telemetry = TelemetryClient(
             OkHttpTelemetryPoster(http, BuildConfig.LANKA_SERVER_URL),
-            BuildConfig.VERSION_NAME
+            BuildConfig.VERSION_NAME,
+            visibility = {
+                val snap = KioskVisibility.shared.snapshot()
+                val pkg = if (snap.state == KioskVisibility.State.FOREGROUND) null
+                else ForegroundAppProbe.current(activity, snap.episodeMs)
+                snap to pkg
+            }
         )
 
         // Native streams media via the server `/media/:sha` proxy (mediaPublicBase
@@ -156,6 +168,25 @@ class NativeSurface(
             // the WS connects in grace until register persists it for next time.
             secret = DeviceSecretStore.get(activity, deviceId)
         ).also { it.open() }
+
+        // Sample cheaply and post on a real change, with the heartbeat as a
+        // floor. A 30 s beat alone would miss an occlusion that starts and ends
+        // between two beats. runCatching matters: an uncaught throw inside
+        // scheduleWithFixedDelay silently cancels all future runs.
+        var lastSeq = -1
+        var lastPostAt = 0L
+        visibilityExec.scheduleWithFixedDelay({
+            runCatching {
+                if (stopped) return@runCatching
+                val seq = KioskVisibility.shared.snapshot().changeSeq
+                val elapsed = System.currentTimeMillis() - lastPostAt
+                if (KioskVisibility.shouldPost(seq, lastSeq, elapsed)) {
+                    lastSeq = seq
+                    lastPostAt = System.currentTimeMillis()
+                    telemetry.heartbeat(deviceId)
+                }
+            }
+        }, 2, 2, TimeUnit.SECONDS)
     }
 
     /** Hop to the UI thread; dropped once stopped (a callback can land after teardown). */
@@ -303,6 +334,9 @@ class NativeSurface(
         manifestClient = null
         commandClient?.close()            // also clears the OtaResultBus listener
         commandClient = null
+        // Before the OkHttp shutdown below, so a tick in flight cannot enqueue
+        // a call onto a closing client.
+        visibilityExec.shutdownNow()
         // Release the shared OkHttp client (dispatcher threads + connection pool).
         // Graceful shutdown: manifest/command clients above are already closed.
         if (::http.isInitialized) {

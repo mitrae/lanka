@@ -1,5 +1,6 @@
 package ai.lanka.kiosk.player
 
+import ai.lanka.kiosk.KioskVisibility
 import kotlinx.serialization.json.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -9,17 +10,45 @@ interface TelemetryPoster { fun post(deviceId: String, jsonBody: String) }
 class TelemetryClient(
     private val poster: TelemetryPoster,
     private val apkVersion: String,
-    private val surface: String = "native"
+    private val surface: String = "native",
+    /** Supplies the current on-screen state and the covering package, if any.
+     *  Null in tests and on any build that does not report visibility. */
+    private val visibility: (() -> Pair<KioskVisibility.Snapshot, String?>)? = null
 ) {
+    /** Attached inside the shared builders so no call site can forget it. */
+    private fun JsonObjectBuilder.putVisibility() {
+        val (snap, pkg) = visibility?.invoke() ?: return
+        put("visibility", snap.state.wire)
+        put("foregroundPackage", pkg?.let { JsonPrimitive(it) } ?: JsonNull)
+        put("snapBacks", snap.snapBacks)
+        put("focusLosses", snap.focusLosses)
+        put("hiddenMs", snap.hiddenMs)
+    }
+
     private fun body(currentItemId: Int?, error: Pair<String?, String>? = null): String = buildJsonObject {
         put("currentItemId", currentItemId?.let { JsonPrimitive(it) } ?: JsonNull)
         put("apkVersion", apkVersion)
         put("surface", surface)
+        putVisibility()
         if (error != null) putJsonObject("error") {
             error.first?.let { put("sha256", it) }
             put("message", error.second)
         }
     }.toString()
+
+    /**
+     * Periodic proof-of-life carrying on-screen state. Deliberately omits
+     * currentItemId — the server reads an absent field as "don't touch, don't
+     * count", so sampling can never inflate media.play_count.
+     */
+    fun heartbeat(deviceId: String) = poster.post(
+        deviceId,
+        buildJsonObject {
+            put("apkVersion", apkVersion)
+            put("surface", surface)
+            putVisibility()
+        }.toString()
+    )
 
     fun itemStarted(deviceId: String, currentItemId: Int) = poster.post(deviceId, body(currentItemId))
     fun itemFailed(deviceId: String, currentItemId: Int?, sha256: String?, message: String) =
