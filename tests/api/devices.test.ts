@@ -9,6 +9,7 @@ import {
 } from '../helpers/fixtures'
 import { handleListDevices } from '~/server/api/devices/index.get'
 import { handleRegister } from '~/server/api/devices/register.post'
+import { handleTelemetry } from '~/server/api/devices/[id]/telemetry.post'
 import {
   handleGetDevice,
   handleUpdateDevice,
@@ -218,5 +219,32 @@ describe('devices CRUD', () => {
     const row = rows.find(r => r.id === 'dev-list-surface')
     expect(row).toBeDefined()
     expect(row!.surface).toBe('webview')
+  })
+
+  it('the device list carries visibility per row', async () => {
+    await seedDevice(db, { id: 'dev-vis' })
+    await handleTelemetry(db, 'dev-vis', { visibility: 'background', foregroundPackage: 'com.x' })
+    const rows = await handleListDevices(db, {})
+    const row = rows.find((r) => r.id === 'dev-vis')!
+    expect(row.visibility).toBe('background')
+    expect(row.foregroundPackage).toBe('com.x')
+  })
+
+  it('the address-filtered list carries visibility too', async () => {
+    // This branch uses an EXPLICIT column projection rather than select(), so a
+    // new column is silently dropped here unless it is added by hand.
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-addr', groupId: grp.id })
+    await handleTelemetry(db, 'dev-addr', {
+      visibility: 'obscured',
+      foregroundPackage: 'com.android.settings',
+      snapBacks: 3
+    })
+    const rows = await handleListDevices(db, { addressId: addr.id })
+    const row = rows.find((r) => r.id === 'dev-addr')!
+    expect(row.visibility).toBe('obscured')
+    expect(row.foregroundPackage).toBe('com.android.settings')
+    expect(row.snapBacks).toBe(3)
   })
 })

@@ -57,4 +57,29 @@ describe('GET /api/devices/:id/status handler', () => {
     const status = await handleDeviceStatus(db, 'dev-s')
     expect(status.surface).toBe('native')
   })
+
+  it('status exposes visibility fields', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', {
+      visibility: 'obscured',
+      foregroundPackage: 'com.android.settings',
+      snapBacks: 4,
+      focusLosses: 1,
+      hiddenMs: 9_000
+    })
+    const s = await handleDeviceStatus(db, 'dev-1')
+    expect(s.visibility).toBe('obscured')
+    expect(s.foregroundPackage).toBe('com.android.settings')
+    expect(s.snapBacks).toBe(4)
+    expect(s.focusLosses).toBe(1)
+    expect(s.hiddenMs).toBe(9_000)
+    expect(typeof s.visibilitySince).toBe('number')
+  })
+
+  it('status reports unknown visibility for a device that never reported', async () => {
+    await seedDevice(db, { id: 'dev-2' })
+    const s = await handleDeviceStatus(db, 'dev-2')
+    expect(s.visibility).toBe('unknown')
+    expect(s.visibilitySince).toBeNull()
+  })
 })

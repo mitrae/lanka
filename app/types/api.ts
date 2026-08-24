@@ -52,6 +52,13 @@ export interface Device {
   playerVersion: string | null
   currentItemId: number | null
   surface: 'webview' | 'native'
+  /** Is the player actually on screen? 'unknown' = never reported. */
+  visibility: 'foreground' | 'obscured' | 'background' | 'unknown'
+  visibilitySince: string | number | null
+  foregroundPackage: string | null
+  snapBacks: number
+  focusLosses: number
+  hiddenMs: number
   createdAt: string
   updatedAt: string
 }
@@ -237,6 +244,12 @@ export interface DeviceNowPlaying {
   lastSeenAt: number | null
   apkVersion?: string | null
   surface: 'webview' | 'native'
+  visibility: 'foreground' | 'obscured' | 'background' | 'unknown'
+  visibilitySince: number | null
+  foregroundPackage: string | null
+  snapBacks: number
+  focusLosses: number
+  hiddenMs: number
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }

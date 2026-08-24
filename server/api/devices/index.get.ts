@@ -41,6 +41,12 @@ export async function handleListDevices(
         playerVersion: schema.devices.playerVersion,
         currentItemId: schema.devices.currentItemId,
         surface: schema.devices.surface,
+        visibility: schema.devices.visibility,
+        visibilitySince: schema.devices.visibilitySince,
+        foregroundPackage: schema.devices.foregroundPackage,
+        snapBacks: schema.devices.snapBacks,
+        focusLosses: schema.devices.focusLosses,
+        hiddenMs: schema.devices.hiddenMs,
         createdAt: schema.devices.createdAt,
         updatedAt: schema.devices.updatedAt
       })

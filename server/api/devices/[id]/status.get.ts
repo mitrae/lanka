@@ -13,6 +13,12 @@ export type DeviceStatus = {
   lastSeenAt: number | null
   apkVersion: string | null
   surface: 'webview' | 'native'
+  visibility: 'foreground' | 'obscured' | 'background' | 'unknown'
+  visibilitySince: number | null
+  foregroundPackage: string | null
+  snapBacks: number
+  focusLosses: number
+  hiddenMs: number
   currentItem: { mediaId: number; filename: string; kind: 'video' | 'image'; sha256: string } | null
   playlistName: string | null
 }
@@ -47,7 +53,20 @@ export async function handleDeviceStatus(
       playlistName = row.playlistName
     }
   }
-  return { online, lastSeenAt, apkVersion: device.apkVersion ?? null, surface: (device.surface as 'webview' | 'native'), currentItem, playlistName }
+  return {
+    online,
+    lastSeenAt,
+    apkVersion: device.apkVersion ?? null,
+    surface: device.surface as 'webview' | 'native',
+    visibility: device.visibility as DeviceStatus['visibility'],
+    visibilitySince: device.visibilitySince?.getTime() ?? null,
+    foregroundPackage: device.foregroundPackage ?? null,
+    snapBacks: device.snapBacks,
+    focusLosses: device.focusLosses,
+    hiddenMs: device.hiddenMs,
+    currentItem,
+    playlistName
+  }
 }
 
 export default defineEventHandler(async (event) => {
