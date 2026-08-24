@@ -23,7 +23,18 @@ set -euo pipefail
 DEV_URL="${LANKA_DEV_URL:-http://100.123.113.86:5100}"
 PROD_URL="${LANKA_PROD_URL:-http://100.79.177.86}"
 PIN_ARG=()
-if [[ -n "${LANKA_KIOSK_PIN:-}" ]]; then PIN_ARG=(-PKIOSK_PIN="$LANKA_KIOSK_PIN"); fi
+# Fall back to .env (gitignored) so the PIN never has to be typed or exported —
+# a build without it silently ships NO escape hatch. Parsed with grep rather
+# than `source`, because .env holds unquoted values (e.g. MAIL_FROM=Lanka
+# <no-reply@...>) that make the shell choke on redirection syntax.
+if [[ -z "${LANKA_KIOSK_PIN:-}" && -f "$(dirname "$0")/../.env" ]]; then
+  LANKA_KIOSK_PIN="$(grep -E '^LANKA_KIOSK_PIN=' "$(dirname "$0")/../.env" | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r')"
+fi
+if [[ -n "${LANKA_KIOSK_PIN:-}" ]]; then
+  PIN_ARG=(-PKIOSK_PIN="$LANKA_KIOSK_PIN")
+else
+  echo "!! LANKA_KIOSK_PIN unset and not in .env — this APK will have NO PIN escape hatch." >&2
+fi
 
 cd "$(dirname "$0")/../android"
 OUT_DIR="app/build/outputs/apk/debug"

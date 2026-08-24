@@ -83,12 +83,14 @@ The TVs run a thin Android WebView kiosk (`android/`, package `ai.lanka.kiosk`) 
   guard, and the dashboard sets the flag off-thread — `start/stopLockTask` are
   main-thread-only.
 
-  **The fleet PIN is `2408`.** Always build with it, or boxes ship with no local
-  unlock: `LANKA_KIOSK_PIN=2408 scripts/build-apk.sh prod`. Only the sha256 is
-  baked into `BuildConfig`, never the digits — but that hash ships in every APK
-  and a 4-digit space falls to it instantly, so treat the PIN as a deterrent
-  against someone holding the remote at a venue, not as a secret. Verify a build
-  actually has it: `BuildConfig.KIOSK_PIN_LENGTH` must be `4`, not `0`.
+  **The fleet PIN lives in `.env` as `LANKA_KIOSK_PIN`** — gitignored, next to
+  `SEED_*_PASSWORD`, and deliberately never in git: it is a production
+  credential, and git history cannot be rotated. `scripts/build-apk.sh` reads it
+  automatically, so build with the script rather than bare gradle. A build
+  without it ships **no escape hatch at all**, silently — verify every release
+  with `BuildConfig.KIOSK_PIN_LENGTH` == `4`, not `0`. Expect to rotate it: the
+  PIN is typed on a television in a public venue, so shoulder-surfing is the
+  expected leak path, not a hypothetical one.
 
   **Never set `android:enableOnBackInvokedCallback="true"`**
   in the manifest — it reroutes BACK through `OnBackInvokedDispatcher` and
