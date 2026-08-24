@@ -42,6 +42,28 @@ The TVs run a thin Android WebView kiosk (`android/`, package `ai.lanka.kiosk`) 
 - **Device command channel (Plan 7: OTA / reboot / screenshot / logs / kiosk-lock)** runs over a WebSocket at `/api/devices/:id/ws`. It needs **`nitro.experimental.websocket: true`** in `nuxt.config.ts` (else the node server answers WS upgrades with HTTP 426) **and**, in prod, **nginx WS upgrade headers** on the tailnet block. On a **certified box** (Google TV), silent OTA + real reboot + lock-task kiosk require **device-owner** provisioning (`dpm set-device-owner`, see `android/README.md`); without it the same APK degrades to a **snap-back kiosk** (re-foreground on HOME/leave via `SYSTEM_ALERT_WINDOW`) and the Android-12 self-update path. `KioskLock` (in-memory, defaults locked) gates the snap-back; toggle remotely via the `kiosk-lock`/`kiosk-unlock` dashboard command.
 - **Play counts** (`media.play_count`): incremented in `server/api/devices/[id]/telemetry.post.ts` on each real item start (`currentItemId` set, no `error`). A single looping video uses native `<video loop>` so it counts once per session; images and multi-item playlists count per slide/cycle. Surfaced via `GET /api/devices/:id/status`, media detail (`GET /api/media/:id`), and portal reach stats.
 - **Offline media cache (Plan 6)** — `NativeFSBridge` (`android/app/…/NativeFSBridge.kt`) injects `window.NativeFS` into the WebView, exposing `exists(sha)`, `download(sha, url)`, `fileUrl(sha)`, `evictExcept(jsonArray)`, and `free()`. `createReconciler` (`useReconciler.ts`) accepts optional `nativeFS`+`cdnUrl` deps: when present, it calls `NativeFS.download()` for every uncached item in the incoming manifest (blocking the JS thread), then `NativeFS.evictExcept()` for stale items, before emitting the manifest. `usePlayerBoot` reads `globalThis.NativeFS` and wires it in; `usePlayerEnv.fileUrl` always returns the http(s) `/media/:sha` URL (never `file://` — see the media-store note above). `MediaCache.downloadSync()` has a storage guard: if `StatFs.availableBytes > 0` and `< Content-Length`, the download is skipped (falls back to streaming). The transparent `shouldInterceptRequest` cache-aside interceptor (`MediaCache.intercept`) is the **primary** local-serving path, not just a safety net — it serves cached media with a Content-Type from `mimeFor`, which re-sniffs magic bytes when the stored `.type` is missing/`application/octet-stream` so `<video>` always gets a playable type. **Test with `./gradlew test`** in `android/`; `MediaCache.forTesting(dir: File)` enables JVM unit tests without Android context.
+- **Player visibility telemetry.** The APK reports whether it is actually on
+  screen — `foreground` / `obscured` (a dialog is on top: focus lost with no
+  `onStop`, the one kiosk failure snap-back can never fix) / `background` —
+  plus `snapBacks`/`focusLosses`/`hiddenMs`. The player samples every 2 s and
+  posts on a state change, with a 30 s heartbeat as the floor; a beat alone
+  would miss an occlusion that starts and ends between two beats. State lives in
+  `KioskVisibility` (`src/main`), fed by `KioskActivity`'s
+  `onStart`/`onResume`/`onPause`/`onStop`/`onWindowFocusChanged` — `onPause`
+  matters, because a translucent overlay never calls `onStop`. One
+  `KioskVisibility.shared` serves both player surfaces and survives the
+  `recreate()` of a `set-surface` switch, so the counters are process totals;
+  `NativeSurface` owns its sampling scheduler and shuts it down in `stop()` per
+  the `PlayerSurface` contract. The intruder package comes from
+  `ForegroundAppProbe`, whose lookback window is derived from the episode length
+  (a fixed short window misses the covering app), and is `null` unless the box
+  got `appops set ai.lanka.kiosk GET_USAGE_STATS allow`. **`telemetry.currentItemId`
+  is now OPTIONAL** — absent means "heartbeat: don't touch the current item,
+  don't count a play"; `null` still clears. Sending the current item on every
+  heartbeat would inflate `media.play_count` by ~120x/hour. Note the two signals
+  that still lie about occlusion: the screenshot command draws the WebView's own
+  view tree (`webView.draw`), not the display, and `lastSeenAt` keeps refreshing
+  while hidden because the WebView is never `onPause()`d.
 - **On-device PIN escape hatch:** long-press BACK, or five BACK taps in 2 s,
   opens a native `PinPadView` over the player; a correct PIN (sha256-baked via
   `-PKIOSK_PIN`, empty default = disabled) clears `KioskLock`, releases lock

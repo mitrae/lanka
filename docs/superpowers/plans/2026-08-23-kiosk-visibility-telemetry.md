@@ -954,17 +954,26 @@ Replace the `db.update(schema.devices)` call with:
     .where(eq(schema.devices.id, deviceId))
 ```
 
-- [ ] **Step 8: Run the tests to verify they pass**
+- [ ] **Step 8: Apply the migration to the dev database**
+
+Run: `pnpm db:migrate`
+
+**Do not skip this.** Vitest builds a fresh schema per run, so the whole suite
+goes green against a `data/signage.db` that still lacks the columns — and the
+first real request then 500s with `no such column: "visibility"`. Verify:
+`sqlite3 data/signage.db "PRAGMA table_info(devices);" | tail -6`
+
+- [ ] **Step 9: Run the tests to verify they pass**
 
 Run: `pnpm vitest run tests/api/devices-telemetry.test.ts`
 Expected: PASS — including every pre-existing test in the file.
 
-- [ ] **Step 9: Run the whole suite**
+- [ ] **Step 10: Run the whole suite**
 
 Run: `pnpm test`
 Expected: PASS. Any failure here means another caller relied on `currentItemId` being required.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add server/db/schema.ts server/db/migrations server/api/devices/\[id\]/telemetry.post.ts \

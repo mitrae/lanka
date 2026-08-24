@@ -1,7 +1,7 @@
 # Kiosk visibility telemetry — is the player actually on screen?
 
 **Date:** 2026-08-23
-**Status:** Design approved; revised 2026-08-23 after Codex review (lifecycle inputs, fail-safe initial state, episode-scoped debounce and probe window, edge-triggered posting, coupled package semantics); retargeted 2026-08-24 onto the single-APK runtime surface
+**Status:** Implemented 2026-08-24 (on-box verification pending); design approved; revised 2026-08-23 after Codex review (lifecycle inputs, fail-safe initial state, episode-scoped debounce and probe window, edge-triggered posting, coupled package semantics); retargeted 2026-08-24 onto the single-APK runtime surface
 **Related:** `2026-06-21-device-remote-management-design.md` (telemetry + command channel), `2026-08-23-single-apk-runtime-surface-design.md` (one APK, `PlayerSurface` start/stop ownership), `2026-08-23-kiosk-pin-unlock-design.md` (`KioskLock`, `KioskPin` — the pure-core pattern this follows)
 
 ## Summary
