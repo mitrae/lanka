@@ -375,3 +375,36 @@ describe('createReconciler — NativeFS pre-download', () => {
     expect(got).toEqual([m(1, 1, items)])
   })
 })
+
+describe('createReconciler — hung fetch', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+
+  it('gives up on a manifest fetch that never settles, and retries', async () => {
+    // A half-open TCP connection leaves the request hanging with no error and
+    // no response. Without a timeout reconcile() awaits forever and the player
+    // silently stops noticing playlist changes until the app is restarted.
+    let settle: ((m: Manifest | null) => void) | null = null
+    const getManifest = vi.fn(() => new Promise<Manifest | null>((res) => { settle = res }))
+    const errors: unknown[] = []
+    const r = createReconciler({
+      api: fakeApi({ getManifest }),
+      deviceId: 'tv-1',
+      manifestStore: null,
+      eventSourceFactory: (u) => new FakeEventSource(u) as any
+    })
+    r.onError(e => errors.push(e))
+
+    const pending = r.reconcile()
+    await vi.advanceTimersByTimeAsync(16_000)
+    await pending
+
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0])).toMatch(/timed out/i)
+
+    // And it schedules another attempt rather than giving up for good.
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(getManifest.mock.calls.length).toBeGreaterThan(1)
+    expect(settle).not.toBeNull() // the original promise really never resolved
+    r.close()
+  })
+})

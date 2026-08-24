@@ -70,12 +70,17 @@ export default defineWebSocketHandler({
   async message(peer, raw) {
     const id = deviceIdFromUrl(peer.request?.url ?? '')
     if (!id) return
-    let msg: { commandId: number; status: 'acked' | 'failed'; result?: string }
+    let msg: { commandId: number; status: 'acked' | 'failed'; result?: string; type?: string }
     try {
       msg = JSON.parse(typeof raw === 'string' ? raw : raw.text())
     } catch {
       return
     }
+    // Liveness probe from the player. A socket that dies half-open never fires
+    // onclose on the client, so the player pings and treats silence as death —
+    // this reply is what makes that silence meaningful. Must stay above the
+    // commandId guard: a ping carries no commandId.
+    if (msg.type === 'ping') return peer.send(JSON.stringify({ type: 'pong' }))
     if (!msg.commandId || !msg.status) return
     // Pass the socket's device id so the hub can scope the ack to this device.
     await useCommandHub().handleAck(
