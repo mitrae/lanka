@@ -202,8 +202,21 @@ export interface SessionUser {
 export interface Organization {
   id: number
   name: string
+  phone: string | null
+  email: string | null
+  notes: string | null
+  /** Media files owned by this org. */
+  mediaCount: number
+  /** Client accounts belonging to it — force-deleting the org deletes them. */
+  userCount: number
   createdAt: string
   updatedAt: string
+}
+export interface OrganizationInput {
+  name?: string
+  phone?: string | null
+  email?: string | null
+  notes?: string | null
 }
 export interface User {
   id: number
@@ -217,6 +230,12 @@ export interface CreateUserBody {
   email: string
   role: 'admin' | 'client'
   organizationId?: number
+}
+export interface UpdateUserBody {
+  email?: string
+  role?: 'admin' | 'client'
+  /** null is rejected for a client — the server requires an organization. */
+  organizationId?: number | null
 }
 export interface CreateUserResult {
   user: { id: number; email: string; role: 'admin' | 'client'; organizationId: number | null }

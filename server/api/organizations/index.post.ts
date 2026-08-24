@@ -3,16 +3,39 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { requireRole } from '~/server/services/auth-guard'
+import {
+  findOrganization,
+  OrgEmailSchema,
+  OrgNameSchema,
+  OrgNotesSchema,
+  OrgPhoneSchema,
+  type OrganizationRow
+} from '~/server/services/organizations'
 
-const BodySchema = z.object({ name: z.string().min(1).max(120) })
+const BodySchema = z.object({
+  name: OrgNameSchema,
+  phone: OrgPhoneSchema.optional(),
+  email: OrgEmailSchema.optional(),
+  notes: OrgNotesSchema.optional()
+})
 
 export async function handleCreateOrganization(
   db: BetterSQLite3Database<typeof schema>,
   rawBody: unknown
-) {
+): Promise<OrganizationRow> {
   const body = BodySchema.parse(rawBody)
-  const [row] = await db.insert(schema.organizations).values({ name: body.name }).returning()
-  return row
+  const [row] = await db
+    .insert(schema.organizations)
+    .values({
+      name: body.name,
+      phone: body.phone ?? null,
+      email: body.email ?? null,
+      notes: body.notes ?? null
+    })
+    .returning({ id: schema.organizations.id })
+  // Re-read so a created org carries the same count fields as a listed one —
+  // the dashboard splices this row straight into its list.
+  return (await findOrganization(db, row!.id))!
 }
 
 export default defineEventHandler(async (event) => {

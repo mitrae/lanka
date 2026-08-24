@@ -11,12 +11,49 @@ const toast = useToast()
 
 const detail = ref<MediaDetail | null>(null)
 const orgs = ref<Organization[]>([])
+const editingName = ref(false)
+const nameDraft = ref('')
+const renaming = ref(false)
 const open = computed({ get: () => props.mediaId !== null, set: (v) => { if (!v) emit('update:open', false) } })
 let timer: ReturnType<typeof setInterval> | null = null
 
 async function load() {
   if (props.mediaId === null) return
+  // The 5 s poll must not yank the field out from under a rename in progress.
+  if (editingName.value) return
   detail.value = await api.getMediaDetail(props.mediaId)
+}
+
+function startRename() {
+  if (!detail.value) return
+  nameDraft.value = detail.value.filename
+  editingName.value = true
+}
+
+async function saveRename() {
+  const current = detail.value
+  const next = nameDraft.value.trim()
+  if (!current || !next) return
+  if (next === current.filename) {
+    editingName.value = false
+    return
+  }
+  renaming.value = true
+  try {
+    const updated = await api.updateMedia(current.id, { filename: next })
+    current.filename = updated.filename
+    editingName.value = false
+    emit('changed')
+    toast.add({ title: t('media.renamed'), color: 'success' })
+  } catch (e: any) {
+    toast.add({
+      title: t('media.renameFailed'),
+      description: e?.data?.message ?? e?.message,
+      color: 'error'
+    })
+  } finally {
+    renaming.value = false
+  }
 }
 
 async function assignOrg(organizationId: number | null) {
@@ -34,6 +71,7 @@ async function assignOrg(organizationId: number | null) {
 watch(() => props.mediaId, async (id) => {
   if (timer) { clearInterval(timer); timer = null }
   detail.value = null
+  editingName.value = false
   if (id !== null) {
     await load()
     if (orgs.value.length === 0) orgs.value = await api.listOrganizations()
@@ -52,6 +90,30 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   >
     <template #body>
       <div v-if="detail" class="space-y-6">
+        <div>
+          <p class="mb-1 text-sm text-(--ui-text-muted)">{{ $t('media.nameLabel') }}</p>
+          <div v-if="editingName" class="flex flex-col gap-2">
+            <div class="flex gap-2">
+              <UInput v-model="nameDraft" class="flex-1" autofocus @keyup.enter="saveRename" @keyup.esc="editingName = false" />
+              <UButton color="primary" :loading="renaming" :disabled="!nameDraft.trim()" @click="saveRename">
+                {{ $t('common.save') }}
+              </UButton>
+              <UButton color="neutral" variant="ghost" @click="editingName = false">
+                {{ $t('common.cancel') }}
+              </UButton>
+            </div>
+            <p class="text-xs text-(--ui-text-muted)">{{ $t('media.renameHint') }}</p>
+          </div>
+          <div v-else class="flex items-center gap-2">
+            <p class="min-w-0 flex-1 truncate font-medium" :title="detail.filename">{{ detail.filename }}</p>
+            <UButton
+              variant="ghost" color="neutral" size="xs" icon="i-lucide-pencil"
+              :aria-label="$t('media.rename')"
+              @click="startRename"
+            />
+          </div>
+        </div>
+
         <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           <dt class="text-(--ui-text-muted)">{{ $t('media.plays') }}</dt>
           <dd class="tabular-nums font-medium">{{ detail.playCount }}</dd>

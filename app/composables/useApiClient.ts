@@ -20,12 +20,14 @@ import type {
   MediaDetail,
   MediaListRow,
   Organization,
+  OrganizationInput,
   OrgReach,
   Playlist,
   PlaylistDetail,
   PlaylistSummary,
   RegisterResult,
   SessionUser,
+  UpdateUserBody,
   UploadJob,
   User
 } from '~/app/types/api'
@@ -86,6 +88,7 @@ export interface ApiClient {
   listMedia(): Promise<MediaListRow[]>
   getMedia(id: number): Promise<Media>
   getMediaDetail(id: number): Promise<MediaDetail>
+  updateMedia(id: number, body: { filename: string }): Promise<Media>
   deleteMedia(id: number, opts?: { force?: boolean }): Promise<void>
   createUpload(body: CreateUploadBody): Promise<CreatedUpload>
   completeUpload(id: string): Promise<UploadJob>
@@ -114,12 +117,18 @@ export interface ApiClient {
 
   // organizations
   listOrganizations(): Promise<Organization[]>
-  createOrganization(body: { name: string }): Promise<Organization>
+  getOrganization(id: number): Promise<Organization>
+  createOrganization(body: OrganizationInput & { name: string }): Promise<Organization>
+  updateOrganization(id: number, body: OrganizationInput): Promise<Organization>
+  deleteOrganization(id: number, opts?: { force?: boolean }): Promise<void>
   assignMediaOrganization(mediaId: number, body: { organizationId: number | null }): Promise<Media>
 
   // users
   listUsers(): Promise<User[]>
+  getUser(id: number): Promise<User>
   createUser(body: CreateUserBody): Promise<CreateUserResult>
+  updateUser(id: number, body: UpdateUserBody): Promise<User>
+  resetUserPassword(id: number): Promise<{ generatedPassword: string }>
   deleteUser(id: number): Promise<void>
   // password reset
   forgotPassword(body: { email: string }): Promise<{ ok: true }>
@@ -222,6 +231,7 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     listMedia: () => fetch<MediaListRow[]>('/api/media', { method: 'GET' }),
     getMedia: (id) => fetch<Media>(`/api/media/${id}`, { method: 'GET' }),
     getMediaDetail: (id) => fetch<MediaDetail>(`/api/media/${id}`, { method: 'GET' }),
+    updateMedia: (id, body) => fetch<Media>(`/api/media/${id}`, { method: 'PATCH', body }),
     deleteMedia: (id, opts = {}) =>
       fetch<void>(`/api/media/${id}`, {
         method: 'DELETE',
@@ -257,12 +267,24 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     me: () => fetch<{ user: SessionUser }>('/api/auth/me', { method: 'GET' }),
     // organizations
     listOrganizations: () => fetch<Organization[]>('/api/organizations', { method: 'GET' }),
+    getOrganization: (id) => fetch<Organization>(`/api/organizations/${id}`, { method: 'GET' }),
     createOrganization: (body) => fetch<Organization>('/api/organizations', { method: 'POST', body }),
+    updateOrganization: (id, body) =>
+      fetch<Organization>(`/api/organizations/${id}`, { method: 'PATCH', body }),
+    deleteOrganization: (id, opts = {}) =>
+      fetch<void>(`/api/organizations/${id}`, {
+        method: 'DELETE',
+        query: opts.force ? { force: 'true' } : undefined
+      }),
     assignMediaOrganization: (mediaId, body) =>
       fetch<Media>(`/api/media/${mediaId}/organization`, { method: 'PUT', body }),
     // users
     listUsers: () => fetch<User[]>('/api/users', { method: 'GET' }),
+    getUser: (id) => fetch<User>(`/api/users/${id}`, { method: 'GET' }),
     createUser: (body) => fetch<CreateUserResult>('/api/users', { method: 'POST', body }),
+    updateUser: (id, body) => fetch<User>(`/api/users/${id}`, { method: 'PATCH', body }),
+    resetUserPassword: (id) =>
+      fetch<{ generatedPassword: string }>(`/api/users/${id}/password`, { method: 'POST' }),
     deleteUser: (id) => fetch<void>(`/api/users/${id}`, { method: 'DELETE' }),
     // password reset
     forgotPassword: (body) => fetch<{ ok: true }>('/api/auth/forgot-password', { method: 'POST', body }),

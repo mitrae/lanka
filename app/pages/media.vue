@@ -2,6 +2,13 @@
 <script setup lang="ts">
 import { useMediaStore } from '~/app/stores/media'
 import type { MediaListRow } from '~/app/types/api'
+import {
+  filterByOrganization,
+  isOrgFilterActive,
+  ORG_FILTER_ALL,
+  ORG_FILTER_NONE,
+  type OrgFilter
+} from '~/app/utils/mediaFilter'
 
 definePageMeta({ layout: 'default' })
 
@@ -11,12 +18,28 @@ const store = useMediaStore()
 const confirm = useConfirm()
 const toast = useToast()
 
+const orgsStore = useOrganizationsStore()
+
 const showUpload = ref(false)
 const selectedId = ref<number | null>(null)
+
+const orgFilter = ref<OrgFilter>(ORG_FILTER_ALL)
+
+const orgFilterOptions = computed(() => [
+  { label: t('media.allOrganizations'), value: ORG_FILTER_ALL },
+  { label: t('media.unassignedOrganization'), value: ORG_FILTER_NONE },
+  ...orgsStore.list.map((o) => ({ label: o.name, value: String(o.id) }))
+])
+
+const filtered = computed(() => isOrgFilterActive(orgFilter.value))
+const visibleMedia = computed(() => filterByOrganization(store.list, orgFilter.value))
+// In-flight uploads have no organization yet, so any narrowing filter hides them.
+const visibleUploads = computed(() => (filtered.value ? [] : store.uploads))
 
 onMounted(() => {
   store.refresh()
   store.pollUploads()
+  orgsStore.refresh()
 })
 onUnmounted(() => store.stopPolling())
 
@@ -73,6 +96,27 @@ async function remove(m: MediaListRow) {
       </template>
     </PageHeader>
 
+    <div v-if="store.list.length > 0" class="mb-4 flex items-center gap-2">
+      <USelect
+        v-model="orgFilter"
+        :items="orgFilterOptions"
+        value-key="value"
+        icon="i-lucide-briefcase"
+        class="w-56"
+        :aria-label="$t('media.filterByOrganization')"
+      />
+      <UButton
+        v-if="filtered"
+        variant="ghost"
+        color="neutral"
+        size="sm"
+        icon="i-lucide-x"
+        @click="orgFilter = ORG_FILTER_ALL"
+      >
+        {{ $t('media.clearFilter') }}
+      </UButton>
+    </div>
+
     <USkeleton v-if="store.loading && store.list.length === 0 && store.uploads.length === 0" class="h-32 w-full" />
     <EmptyState
       v-else-if="store.list.length === 0 && store.uploads.length === 0"
@@ -84,10 +128,19 @@ async function remove(m: MediaListRow) {
         {{ $t('media.uploadFirstFile') }}
       </UButton>
     </EmptyState>
+    <EmptyState
+      v-else-if="visibleMedia.length === 0 && visibleUploads.length === 0"
+      icon="i-lucide-filter-x"
+      :title="$t('media.noMatchTitle')"
+    >
+      <UButton variant="soft" color="neutral" icon="i-lucide-x" @click="orgFilter = ORG_FILTER_ALL">
+        {{ $t('media.clearFilter') }}
+      </UButton>
+    </EmptyState>
     <div v-else class="grid grid-cols-4 gap-4">
-      <MediaProcessingCard v-for="j in store.uploads" :key="j.id" :job="j" />
+      <MediaProcessingCard v-for="j in visibleUploads" :key="j.id" :job="j" />
       <MediaCard
-        v-for="m in store.list"
+        v-for="m in visibleMedia"
         :key="m.id"
         :media="m"
         @select="selectedId = m.id"

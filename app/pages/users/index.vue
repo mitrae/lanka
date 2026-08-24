@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { User } from '~/app/types/api'
+
 definePageMeta({ layout: 'default' })
 const usersStore = useUsersStore()
 const orgsStore = useOrganizationsStore()
@@ -11,7 +13,10 @@ const email = ref('')
 const role = ref<'admin' | 'client'>('client')
 const organizationId = ref<number | null>(null)
 const creating = ref(false)
-const generated = ref<{ email: string; password: string } | null>(null)
+/** One modal serves both flows — `mode` only picks the wording. */
+const generated = ref<{ email: string; password: string; mode: 'created' | 'reset' } | null>(null)
+const editOpen = ref(false)
+const editing = ref<User | null>(null)
 
 const roleOptions = computed(() =>
   auth.role === 'super'
@@ -27,8 +32,43 @@ onMounted(() => {
   orgsStore.refresh()
 })
 
+/**
+ * Mirrors `requireManageableUser` on the server: super accounts are off-limits
+ * to everyone (which also keeps a super from demoting themselves), and an
+ * admin may only touch clients. Self-editing falls out of this for free —
+ * your own row never satisfies it.
+ */
+function canManage(u: { role: string }) {
+  return u.role !== 'super' && (auth.role === 'super' || u.role === 'client')
+}
+
 function canDelete(u: { id: number; role: string }) {
-  return u.id !== auth.user?.id && u.role !== 'super'
+  return canManage(u) && u.id !== auth.user?.id
+}
+
+function edit(u: User) {
+  editing.value = u
+  editOpen.value = true
+}
+
+async function resetPassword(u: User) {
+  const ok = await confirm({
+    title: t('users.resetConfirmTitle', { email: u.email }),
+    description: t('users.resetConfirmDescription'),
+    confirmLabel: t('users.resetPassword'),
+    destructive: true
+  })
+  if (!ok) return
+  try {
+    const password = await usersStore.resetPassword(u.id)
+    generated.value = { email: u.email, password, mode: 'reset' }
+  } catch (e: any) {
+    toast.add({
+      title: t('users.resetFailed'),
+      description: e?.data?.message ?? e?.message,
+      color: 'error'
+    })
+  }
 }
 
 function roleLabel(role: string) {
@@ -53,7 +93,7 @@ async function add() {
       role: role.value,
       organizationId: role.value === 'client' ? organizationId.value! : undefined
     })
-    generated.value = { email: email.value.trim(), password }
+    generated.value = { email: email.value.trim(), password, mode: 'created' }
     email.value = ''
     organizationId.value = null
   } catch (e: any) {
@@ -127,22 +167,46 @@ async function copyPassword() {
             <span v-if="u.organizationName"> · {{ u.organizationName }}</span>
           </p>
         </div>
-        <UButton
-          v-if="canDelete(u)"
-          variant="ghost" color="error" size="sm" icon="i-lucide-trash-2"
-          :aria-label="$t('users.deleteAriaLabel', { email: u.email })"
-          @click="remove(u)"
-        />
+        <div class="flex shrink-0 gap-1">
+          <UButton
+            v-if="canManage(u)"
+            variant="ghost" color="neutral" size="sm" icon="i-lucide-pencil"
+            :aria-label="$t('users.editAriaLabel', { email: u.email })"
+            @click="edit(u)"
+          />
+          <UButton
+            v-if="canManage(u)"
+            variant="ghost" color="neutral" size="sm" icon="i-lucide-key-round"
+            :aria-label="$t('users.resetPasswordAriaLabel', { email: u.email })"
+            @click="resetPassword(u)"
+          />
+          <UButton
+            v-if="canDelete(u)"
+            variant="ghost" color="error" size="sm" icon="i-lucide-trash-2"
+            :aria-label="$t('users.deleteAriaLabel', { email: u.email })"
+            @click="remove(u)"
+          />
+        </div>
       </div>
       <p v-if="!usersStore.loading && usersStore.list.length === 0" class="p-4 text-(--ui-text-muted)">
         {{ $t('users.emptyTitle') }}
       </p>
     </div>
 
-    <!-- One-time generated-password reveal -->
-    <UModal :open="generated !== null" :title="$t('users.accountCreatedTitle')" @update:open="(v) => { if (!v) generated = null }">
+    <UserFormDialog v-model:open="editOpen" :user="editing" />
+
+    <!-- One-time generated-password reveal, shared by create and reset -->
+    <UModal
+      :open="generated !== null"
+      :title="generated?.mode === 'reset' ? $t('users.passwordResetTitle') : $t('users.accountCreatedTitle')"
+      @update:open="(v) => { if (!v) generated = null }"
+    >
       <template #body>
-        <i18n-t keypath="users.accountCreatedBody" tag="p" class="text-sm text-(--ui-text-muted)">
+        <i18n-t
+          :keypath="generated?.mode === 'reset' ? 'users.passwordResetBody' : 'users.accountCreatedBody'"
+          tag="p"
+          class="text-sm text-(--ui-text-muted)"
+        >
           <template #email>
             <span class="font-medium text-(--ui-text)">{{ generated?.email }}</span>
           </template>

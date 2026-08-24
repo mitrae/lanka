@@ -17,7 +17,7 @@ interface State {
   error: string | null
   _api: Pick<
     ApiClient,
-    'listMedia' | 'deleteMedia' | 'createUpload' | 'completeUpload' | 'getUpload' | 'listActiveUploads' | 'cancelUpload'
+    'listMedia' | 'updateMedia' | 'deleteMedia' | 'createUpload' | 'completeUpload' | 'getUpload' | 'listActiveUploads' | 'cancelUpload'
   >
   _pollTimer: ReturnType<typeof setTimeout> | null
   /** True while polling should be active; stopPolling() flips this so an in-flight tick() can't re-arm the timer. */
@@ -46,6 +46,14 @@ export const useMediaStore = defineStore('media', {
       } finally {
         this.loading = false
       }
+    },
+
+    /** Rename is display-only: the sha256 content address never changes. */
+    async rename(id: number, filename: string): Promise<void> {
+      const updated = await this._api.updateMedia(id, { filename })
+      this.list = this.list.map((m) =>
+        m.id === id ? { ...m, filename: updated.filename } : m
+      )
     },
 
     async delete(id: number, opts: { force?: boolean } = {}): Promise<void> {

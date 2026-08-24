@@ -269,6 +269,9 @@ export const deviceCommands = sqliteTable(
 export const organizations = sqliteTable('organizations', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
+  phone: text('phone'),
+  email: text('email'),
+  notes: text('notes'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .default(sql`(unixepoch() * 1000)`),

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useUsersStore } from '~/app/stores/users'
 import type { User } from '~/app/types/api'
@@ -38,5 +38,31 @@ describe('users store', () => {
     } })
     await s.remove(client.id)
     expect(s.list).toHaveLength(0)
+  })
+
+  it('update replaces the row and re-sorts', async () => {
+    const s = useUsersStore()
+    const renamed: User = { ...client, email: 'aaa@x', organizationName: 'Beta' }
+    const updateUser = vi.fn(async () => renamed)
+    const other: User = { id: 4, email: 'bbb@x', role: 'admin', organizationId: null, organizationName: null, createdAt: '' }
+    s.$patch({ list: [client, other], _api: {
+      listUsers: async () => [], createUser: async () => ({} as any),
+      updateUser, resetUserPassword: async () => ({ generatedPassword: '' }), deleteUser: async () => {}
+    } })
+    await s.update(3, { email: 'aaa@x' })
+    expect(updateUser).toHaveBeenCalledWith(3, { email: 'aaa@x' })
+    expect(s.list.map((u) => u.email)).toEqual(['aaa@x', 'bbb@x'])
+    expect(s.list[0].organizationName).toBe('Beta')
+  })
+
+  it('resetPassword returns the one-time password', async () => {
+    const s = useUsersStore()
+    s.$patch({ _api: {
+      listUsers: async () => [], createUser: async () => ({} as any),
+      updateUser: async () => client,
+      resetUserPassword: async () => ({ generatedPassword: 'fresh-secret' }),
+      deleteUser: async () => {}
+    } })
+    expect(await s.resetPassword(3)).toBe('fresh-secret')
   })
 })
