@@ -221,6 +221,10 @@ class NativeFSBridge(
         if (!privilegedOriginAllowed()) return
         KioskLock.locked = enabled
         Log.i(TAG, "kiosk lock set to $enabled")
+        // The WebView player calls this bridge directly — it never goes through
+        // CommandDispatcher — so the "locking restores the kiosk" rule has to be
+        // applied here too. See KioskForeground for why re-arming isn't enough.
+        if (enabled) KioskForeground.bringToFront(context)
     }
 
     /**
