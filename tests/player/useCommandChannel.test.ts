@@ -10,7 +10,10 @@ class MockWS {
   onerror: (() => void) | null = null
   readyState = 1 // OPEN
   send(msg: string) { this.sent.push(msg) }
-  close() { this.onclose?.() }
+  closeCalls = 0
+  close() { this.closeCalls += 1; this.readyState = 3; this.onclose?.() }
+  /** Simulate a half-open socket: server gone, but onclose/onerror never fire. */
+  goHalfOpen() { this.onclose = null; this.onerror = null }
   open() { this.onopen?.() }
   receive(data: object) { this.onmessage?.({ data: JSON.stringify(data) }) }
 }
@@ -176,7 +179,10 @@ describe('createCommandChannel', () => {
     ch.open()
     ws.open()
     ch.close()
-    expect(ws.readyState).toBe(1) // MockWS doesn't actually set readyState, just checking no throw
+    // The mock now models a real close (readyState -> CLOSED), so assert the
+    // socket was actually torn down rather than that nothing threw.
+    expect(ws.closeCalls).toBe(1)
+    expect(ws.readyState).toBe(3)
   })
 
   it('set-surface calls NativeFS.setSurface and acks on an empty result', () => {
@@ -213,6 +219,84 @@ describe('createCommandChannel', () => {
     ch.open(); ws.open()
     ws.receive({ commandId: 23, cmd: 'set-surface', payload: { surface: 'native' } })
     expect(JSON.parse(ws.sent[0])).toMatchObject({ commandId: 23, status: 'failed', result: 'not supported' })
+    ch.close()
+  })
+})
+
+describe('createCommandChannel — liveness', () => {
+  const PING_MS = 25_000
+  const STALE_MS = 70_000
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-24T21:00:00Z'))
+  })
+
+  it('pings the server periodically once open', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    expect(ws.sent).toHaveLength(0)
+
+    vi.advanceTimersByTime(PING_MS)
+    expect(JSON.parse(ws.sent[0])).toEqual({ type: 'ping' })
+
+    vi.advanceTimersByTime(PING_MS)
+    expect(ws.sent).toHaveLength(2)
+    ch.close()
+  })
+
+  it('a pong keeps the socket alive and is never treated as a command', () => {
+    const nfs = makeNativeFS()
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: nfs, onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    const first = ws
+
+    // Server answers every ping — socket must never be dropped.
+    for (let i = 0; i < 5; i++) {
+      vi.advanceTimersByTime(PING_MS)
+      vi.setSystemTime(new Date(Date.now() + PING_MS))
+      first.receive({ type: 'pong' })
+    }
+    expect(first.closeCalls).toBe(0)
+    expect(nfs.setKioskLock).not.toHaveBeenCalled()
+    ch.close()
+  })
+
+  it('drops and reconnects a half-open socket that stops answering', () => {
+    // The field failure: server gone, onclose/onerror never fire, readyState
+    // stays OPEN, and every dashboard command queues invisibly.
+    const ch = createCommandChannel({ deviceId: 'dev-1', onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    const dead = ws
+    dead.goHalfOpen()
+
+    // Silence past the stale threshold.
+    vi.setSystemTime(new Date(Date.now() + STALE_MS + 1_000))
+    vi.advanceTimersByTime(PING_MS)
+
+    expect(dead.closeCalls).toBe(1) // torn down rather than trusted
+
+    vi.advanceTimersByTime(60_000) // let the backoff elapse
+    expect(ws).not.toBe(dead)      // a fresh socket was created
+    ch.close()
+  })
+
+  it('stops pinging after close()', () => {
+    const ch = createCommandChannel({ deviceId: 'dev-1', onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    ch.close()
+    const before = ws.sent.length
+    vi.advanceTimersByTime(PING_MS * 4)
+    expect(ws.sent).toHaveLength(before)
+  })
+
+  it('still handles real commands while the heartbeat runs', () => {
+    const nfs = makeNativeFS()
+    const ch = createCommandChannel({ deviceId: 'dev-1', nativeFS: nfs, onReload: () => {}, wsFactory })
+    ch.open(); ws.open()
+    vi.advanceTimersByTime(PING_MS)
+    ws.receive({ commandId: 7, cmd: 'kiosk-lock', payload: null })
+    expect(nfs.setKioskLock).toHaveBeenCalledWith(true)
     ch.close()
   })
 })

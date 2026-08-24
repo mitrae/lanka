@@ -6,6 +6,32 @@ import { backoff } from './backoff'
 
 export type StreamState = 'connecting' | 'connected' | 'disconnected'
 
+/**
+ * Give up on a manifest fetch that never settles.
+ *
+ * A TCP connection that dies half-open leaves an in-flight request hanging with
+ * no error and no response, so `reconcile()` would await forever: the 30 s poll
+ * keeps firing but every tick parks on a dead socket, and the player silently
+ * stops noticing playlist changes until the app is restarted. Observed in the
+ * field — the server was serving the manifest correctly while the box sat on
+ * "No content assigned" through several poll cycles.
+ *
+ * Failing fast routes into the existing catch → onError → backoff retry, which
+ * establishes a fresh connection.
+ */
+const FETCH_TIMEOUT_MS = 15_000
+
+/** Reject if `p` has not settled within `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`manifest fetch timed out after ${ms}ms`)), ms)
+    p.then(
+      (v) => { clearTimeout(t); resolve(v) },
+      (e) => { clearTimeout(t); reject(e) }
+    )
+  })
+}
+
 type EventSourceFactory = (url: string) => EventSource
 
 /** Subset of window.NativeFS used by the reconciler. */
@@ -116,7 +142,10 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   async function reconcile(): Promise<void> {
     clearRetryTimer()
     try {
-      const m = await deps.api.getManifest(deps.deviceId)
+      const m = await withTimeout(
+        Promise.resolve(deps.api.getManifest(deps.deviceId)),
+        FETCH_TIMEOUT_MS
+      )
       attempt = 0
       if (m === null) {
         // Only emit on first fetch or on the transition from manifest → null.
