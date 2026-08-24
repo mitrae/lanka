@@ -14,7 +14,13 @@ open class KioskActivity : Activity() {
 
     protected val mainHandler = Handler(Looper.getMainLooper())
 
+    /** One departure = one snap-back. scheduleKioskReturn() runs twice per HOME
+     *  press (onUserLeaveHint, then onStop); the second call only reposts the
+     *  same runnable and must not be counted again. */
+    private var kioskReturnPending = false
+
     private val kioskReturnRunnable = Runnable {
+        kioskReturnPending = false
         startActivity(
             Intent(this, this::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -49,8 +55,14 @@ open class KioskActivity : Activity() {
         else DevicePolicy.stopKioskMode(this)
     }
 
+    override fun onStart() {
+        super.onStart()
+        KioskVisibility.shared.onStarted()
+    }
+
     override fun onResume() {
         super.onResume()
+        KioskVisibility.shared.onResumed()
         KioskLock.listener = lockListener
         // Reconcile UNCONDITIONALLY. A dashboard unlock that arrived while we
         // were paused fired with no listener registered; an `if (locked)` guard
@@ -60,10 +72,14 @@ open class KioskActivity : Activity() {
         applyLockState()
         // Cancel a pending snap-back — we're already in front.
         mainHandler.removeCallbacks(kioskReturnRunnable)
+        kioskReturnPending = false
     }
 
     override fun onPause() {
         super.onPause()
+        // onPause, not just onStop: a translucent overlay pauses us without ever
+        // stopping us, and that still means we are not the visible surface.
+        KioskVisibility.shared.onPaused()
         // Clear only OUR listener — never silently deregister another instance's.
         if (KioskLock.listener === lockListener) KioskLock.listener = null
         hidePinPad()
@@ -91,6 +107,7 @@ open class KioskActivity : Activity() {
 
     override fun onStop() {
         super.onStop()
+        KioskVisibility.shared.onStopped()
         // Catch backgrounding that skipped onUserLeaveHint, but never fight our
         // own recreate() (renderer recovery) or an intentional finish.
         if (!isFinishing && !isChangingConfigurations) scheduleKioskReturn()
@@ -98,12 +115,20 @@ open class KioskActivity : Activity() {
 
     protected fun scheduleKioskReturn() {
         if (!KioskLock.locked) return // unlocked for maintenance — let the user leave
+        if (!kioskReturnPending) {
+            kioskReturnPending = true
+            KioskVisibility.shared.onSnapBackScheduled()
+        }
         mainHandler.removeCallbacks(kioskReturnRunnable)
         mainHandler.postDelayed(kioskReturnRunnable, KIOSK_RETURN_MS)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        // Focus loss without onStop means a dialog/overlay is on top — the one
+        // kiosk failure the snap-back watchdog can never fix, and until now the
+        // one the dashboard could never see.
+        KioskVisibility.shared.onFocusChanged(hasFocus)
         if (hasFocus) KioskFlags.apply(this)
     }
 
