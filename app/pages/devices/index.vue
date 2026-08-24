@@ -130,7 +130,14 @@ function fmtAge(iso: string | null) {
             @click="$router.push(`/devices/${d.id}`)"
           >
             <td class="px-4 py-3">
-              <StatusDot :status="d.status" label />
+              <div class="flex flex-wrap items-center gap-2">
+                <StatusDot :status="d.status" label />
+                <VisibilityBadge
+                  :visibility="d.visibility"
+                  :foreground-package="d.foregroundPackage"
+                  :online="d.status === 'online'"
+                />
+              </div>
             </td>
             <td class="px-4 py-3 font-medium text-(--ui-text-highlighted)">
               {{ d.name ?? $t('devices.unnamed') }}

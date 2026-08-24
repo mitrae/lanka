@@ -220,6 +220,14 @@ async function confirmOta() {
   if (ok) enqueue('ota', { releaseId: selectedReleaseId.value! })
 }
 
+// ── Kiosk visibility ────────────────────────────────────────────────────────
+function fmtDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.round(s / 60)
+  return m < 60 ? `${m}m` : `${Math.round(m / 60)}h`
+}
+
 // ── Player surface (set-surface) ────────────────────────────────────────────
 // Unknown/loading must not read as "WebView": status arrives a beat after the page.
 const surfaceLabel = (s: SurfaceName | null | undefined) =>
@@ -370,6 +378,11 @@ async function confirmSurfaceSwitch() {
             <UBadge :color="status?.surface === 'native' ? 'primary' : 'neutral'" variant="subtle" size="sm">
               {{ surfaceLabel(status?.surface) }}
             </UBadge>
+            <VisibilityBadge
+              :visibility="status?.visibility ?? 'unknown'"
+              :foreground-package="status?.foregroundPackage"
+              :online="status?.online ?? false"
+            />
             <UButton
               size="sm"
               variant="outline"
@@ -388,6 +401,24 @@ async function confirmSurfaceSwitch() {
               Switch to {{ surfaceLabel(surfaceSwitch.requested) }} failed: {{ surfaceSwitch.reason ?? 'unknown' }}
             </span>
           </div>
+
+          <!-- Kiosk visibility. Two different questions, deliberately not
+               conflated: hiddenFor is how long THIS occlusion has lasted,
+               hiddenTime is the total since the app process started. -->
+          <p
+            v-if="status && status.online && status.visibility !== 'foreground'
+              && status.visibility !== 'unknown' && status.visibilitySince"
+            class="text-xs text-(--ui-text-warning)"
+          >
+            {{ $t('devices.hiddenFor', { duration: fmtDuration(Date.now() - status.visibilitySince) }) }}
+          </p>
+          <p v-if="status" class="text-xs text-(--ui-text-dimmed)">
+            {{ $t('devices.kioskIntegrity') }}:
+            {{ $t('devices.snapBacks') }} {{ status.snapBacks }} ·
+            {{ $t('devices.focusLosses') }} {{ status.focusLosses }} ·
+            {{ $t('devices.hiddenTime') }} {{ fmtDuration(status.hiddenMs) }}
+            <span class="opacity-70">({{ $t('devices.sinceAppStart') }})</span>
+          </p>
 
           <!-- APK version + OTA -->
           <div class="flex flex-wrap items-center gap-3">

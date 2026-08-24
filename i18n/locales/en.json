@@ -154,7 +154,17 @@
     "nowPlaying": "Now playing",
     "online": "Online",
     "offline": "Offline",
-    "nothingPlaying": "Nothing playing"
+    "nothingPlaying": "Nothing playing",
+    "notOnScreen": "Not on screen",
+    "coveredBy": "Covered by {app}",
+    "dialogOnTop": "Dialog on top",
+    "unknownApp": "unknown app",
+    "kioskIntegrity": "Kiosk integrity",
+    "snapBacks": "Snap-backs",
+    "focusLosses": "Focus losses",
+    "hiddenTime": "Hidden",
+    "sinceAppStart": "since app start",
+    "hiddenFor": "Hidden for {duration}"
   },
   "addresses": {
     "pageTitle": "Addresses",

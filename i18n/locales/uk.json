@@ -154,7 +154,17 @@
     "nowPlaying": "Зараз відтворюється",
     "online": "У мережі",
     "offline": "Не в мережі",
-    "nothingPlaying": "Нічого не відтворюється"
+    "nothingPlaying": "Нічого не відтворюється",
+    "notOnScreen": "Не на екрані",
+    "coveredBy": "Перекрито застосунком {app}",
+    "dialogOnTop": "Діалог поверх плеєра",
+    "unknownApp": "невідомий застосунок",
+    "kioskIntegrity": "Цілісність кіоску",
+    "snapBacks": "Повернень у фокус",
+    "focusLosses": "Втрат фокуса",
+    "hiddenTime": "Приховано",
+    "sinceAppStart": "від старту застосунку",
+    "hiddenFor": "Приховано вже {duration}"
   },
   "addresses": {
     "pageTitle": "Адреси",
