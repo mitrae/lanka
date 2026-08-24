@@ -256,7 +256,7 @@ New "Remote Control" card:
 ┌─ Remote Control ──────────────────────────────────────┐
 │  APK version: 1.1.0   [Push OTA ▾]                   │
 │                                                        │
-│  [Restart player]  [Screenshot]  [Pull logs]          │
+│  [Reboot device]  [Screenshot]  [Pull logs]           │
 │                                                        │
 │  Recent commands                                       │
 │  ─────────────────────────────────────────────────    │
@@ -270,7 +270,13 @@ New "Remote Control" card:
 - **Push OTA**: release picker dropdown → confirm dialog → POST command
 - **Screenshot**: enqueue → poll → show base64 thumbnail when acked
 - **Pull logs**: enqueue → modal `<pre>` when acked
-- **Restart player**: confirm → enqueue reboot
+- **Reboot device**: confirm → enqueue reboot. Asks the box for a real OS
+  reboot (`DevicePolicy.reboot`, **device-owner only**) and degrades to a
+  player reload elsewhere. Deliberately *not* the same control as the header's
+  **Reload player** (`POST /api/devices/:id/reload` → SSE), which only ever
+  reloads the player — the two coincide on a non-device-owner box, so the
+  labels name their target (player vs device) and the confirm text states the
+  fallback.
 
 ### Telemetry extension
 

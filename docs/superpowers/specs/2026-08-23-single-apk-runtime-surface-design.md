@@ -369,8 +369,10 @@ The static `Native`/`WebView` badge becomes a control:
 
 - The reported badge already refreshes with the existing 5-second
   `refreshStatus` poll, so it flips without a page reload.
-- The "Restart player" confirm text ("The device will reload the kiosk
-  WebView.") becomes surface-neutral ("The player will restart on the box.").
+- The reboot command's confirm text ("The device will reload the kiosk
+  WebView.") becomes surface-neutral. (Superseded 2026-08-24: the button was
+  renamed **Reboot device** and its confirm text now names the device-owner
+  fallback — see the 2026-06-21 remote-management spec.)
 
 ### Data flow of one switch
 

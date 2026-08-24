@@ -151,7 +151,7 @@ async function enqueue(cmd: string, extra?: { releaseId?: number; surface?: Surf
   commandPending.value = true
   try {
     await api.enqueueCommand(id.value, { cmd, ...extra })
-    toast.add({ title: `${cmd} command sent`, color: 'success' })
+    toast.add({ title: t('devices.commandSent', { cmd: commandLabel(cmd) }), color: 'success' })
     await loadCommands()
     if (cmd === 'screenshot') {
       // Poll for ack up to 30s (15 × 2s)
@@ -175,11 +175,35 @@ async function enqueue(cmd: string, extra?: { releaseId?: number; surface?: Surf
       }
     }
   } catch (err: any) {
-    toast.add({ title: 'Failed', description: err.data?.message ?? err.message, color: 'error' })
+    toast.add({
+      title: t('devices.commandFailed'),
+      description: err.data?.message ?? err.message,
+      color: 'error'
+    })
   } finally {
     commandPending.value = false
   }
 }
+
+// Wire enums → operator-facing labels. The raw enum stays in the row's
+// `title` attribute, so a log or a doc reference is still greppable from the UI.
+const COMMAND_LABEL_KEYS: Record<string, string> = {
+  ota: 'devices.cmdOta',
+  reboot: 'devices.cmdReboot',
+  screenshot: 'devices.cmdScreenshot',
+  'log-request': 'devices.cmdLogRequest',
+  'kiosk-lock': 'devices.cmdKioskLock',
+  'kiosk-unlock': 'devices.cmdKioskUnlock',
+  'set-surface': 'devices.cmdSetSurface'
+}
+const COMMAND_STATUS_KEYS: Record<string, string> = {
+  pending: 'devices.cmdStatusPending',
+  sent: 'devices.cmdStatusSent',
+  acked: 'devices.cmdStatusAcked',
+  failed: 'devices.cmdStatusFailed'
+}
+const commandLabel = (cmd: string) => (COMMAND_LABEL_KEYS[cmd] ? t(COMMAND_LABEL_KEYS[cmd]!) : cmd)
+const commandStatusLabel = (s: string) => (COMMAND_STATUS_KEYS[s] ? t(COMMAND_STATUS_KEYS[s]!) : s)
 
 function statusColor(s: string): 'warning' | 'info' | 'success' | 'error' | 'neutral' {
   const map: Record<string, 'warning' | 'info' | 'success' | 'error'> = {
@@ -193,18 +217,21 @@ function statusColor(s: string): 'warning' | 'info' | 'success' | 'error' | 'neu
 
 function relativeTime(ts: string | number): string {
   const ms = typeof ts === 'number' ? ts : new Date(ts).getTime()
-  const diff = Date.now() - ms
-  if (diff < 60_000) return 'just now'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} hr ago`
-  return `${Math.floor(diff / 86_400_000)} d ago`
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (s < 60) return t('devices.agoSeconds', { n: s })
+  if (s < 3600) return t('devices.agoMinutes', { n: Math.floor(s / 60) })
+  if (s < 86400) return t('devices.agoHours', { n: Math.floor(s / 3600) })
+  return t('devices.agoDays', { n: Math.floor(s / 86400) })
 }
 
+// Named for its intent, not its fallback: the command asks the box for a real
+// OS reboot (device-owner only) and degrades to a player reload elsewhere —
+// which is exactly what the header's "Reload player" button does on its own.
 async function confirmReboot() {
   const ok = await confirm({
-    title: 'Restart player?',
-    description: 'The player will restart on the box.',
-    confirmLabel: 'Restart'
+    title: t('devices.rebootConfirmTitle'),
+    description: t('devices.rebootConfirmDescription'),
+    confirmLabel: t('devices.rebootConfirmLabel')
   })
   if (ok) enqueue('reboot')
 }
@@ -213,9 +240,9 @@ async function confirmOta() {
   if (!selectedReleaseId.value) return
   const release = releases.value.find(r => r.id === selectedReleaseId.value)
   const ok = await confirm({
-    title: `Push OTA ${release?.version ?? ''}?`,
-    description: 'The device will download and silently install the APK.',
-    confirmLabel: 'Push OTA'
+    title: t('devices.otaConfirmTitle', { version: release?.version ?? '' }),
+    description: t('devices.otaConfirmDescription'),
+    confirmLabel: t('devices.otaConfirmLabel')
   })
   if (ok) enqueue('ota', { releaseId: selectedReleaseId.value! })
 }
@@ -233,6 +260,13 @@ function fmtDuration(ms: number): string {
 const surfaceLabel = (s: SurfaceName | null | undefined) =>
   s === 'native' ? 'Native' : s === 'webview' ? 'WebView' : '—'
 const otherSurface = computed<SurfaceName>(() => (status.value?.surface === 'native' ? 'webview' : 'native'))
+const SURFACE_PHASE_KEYS: Record<string, string> = {
+  queued: 'devices.phaseQueued',
+  sent: 'devices.phaseSent',
+  applying: 'devices.phaseApplying',
+  failed: 'devices.phaseFailed'
+}
+const phaseLabel = (p: string) => (SURFACE_PHASE_KEYS[p] ? t(SURFACE_PHASE_KEYS[p]!) : p)
 // Re-evaluated on every 10 s command poll / 5 s status poll (both replace the refs).
 const surfaceSwitch = computed(() =>
   surfaceSwitchView(commands.value, (status.value?.surface as SurfaceName | undefined) ?? null, Date.now())
@@ -244,9 +278,9 @@ const surfaceSwitchInFlight = computed(() =>
 async function confirmSurfaceSwitch() {
   const target = otherSurface.value
   const ok = await confirm({
-    title: `Switch player to ${surfaceLabel(target)}?`,
-    description: 'The player restarts on the box. Rollback is switching back — no OTA.',
-    confirmLabel: 'Switch'
+    title: t('devices.surfaceConfirmTitle', { surface: surfaceLabel(target) }),
+    description: t('devices.surfaceConfirmDescription'),
+    confirmLabel: t('devices.surfaceConfirmLabel')
   })
   if (ok) enqueue('set-surface', { surface: target })
 }
@@ -369,12 +403,14 @@ async function confirmSurfaceSwitch() {
 
       <!-- Remote Control card -->
       <section class="soft-card mt-8 p-6">
-        <h3 class="mb-4 text-sm font-semibold text-(--ui-text-highlighted)">Remote Control</h3>
+        <h3 class="mb-4 text-sm font-semibold text-(--ui-text-highlighted)">
+          {{ $t('devices.remoteControlTitle') }}
+        </h3>
 
         <div class="space-y-4">
           <!-- Player surface (runtime-selectable; one APK carries both) -->
           <div class="flex flex-wrap items-center gap-3">
-            <span class="text-sm text-(--ui-text-muted)">Player surface:</span>
+            <span class="text-sm text-(--ui-text-muted)">{{ $t('devices.playerSurfaceLabel') }}</span>
             <UBadge :color="status?.surface === 'native' ? 'primary' : 'neutral'" variant="subtle" size="sm">
               {{ surfaceLabel(status?.surface) }}
             </UBadge>
@@ -390,15 +426,21 @@ async function confirmSurfaceSwitch() {
               :disabled="commandPending || surfaceSwitchInFlight"
               :loading="commandPending"
               @click="confirmSurfaceSwitch"
-            >Switch to {{ surfaceLabel(otherSurface) }}</UButton>
+            >{{ $t('devices.switchToSurface', { surface: surfaceLabel(otherSurface) }) }}</UButton>
             <span v-if="surfaceSwitchInFlight" class="text-xs text-(--ui-text-muted)">
-              Switching to {{ surfaceLabel(surfaceSwitch.requested) }}… ({{ surfaceSwitch.phase }})
+              {{ $t('devices.switchingToSurface', {
+                surface: surfaceLabel(surfaceSwitch.requested),
+                phase: phaseLabel(surfaceSwitch.phase)
+              }) }}
             </span>
             <span v-else-if="surfaceSwitch.phase === 'applying'" class="text-xs text-(--ui-text-muted)">
-              Applying {{ surfaceLabel(surfaceSwitch.requested) }}… (waiting for the box to report back)
+              {{ $t('devices.applyingSurface', { surface: surfaceLabel(surfaceSwitch.requested) }) }}
             </span>
             <span v-else-if="surfaceSwitch.phase === 'failed'" class="text-xs text-(--ui-text-error)">
-              Switch to {{ surfaceLabel(surfaceSwitch.requested) }} failed: {{ surfaceSwitch.reason ?? 'unknown' }}
+              {{ $t('devices.switchToSurfaceFailed', {
+                surface: surfaceLabel(surfaceSwitch.requested),
+                reason: surfaceSwitch.reason ?? $t('devices.unknownReason')
+              }) }}
             </span>
           </div>
 
@@ -423,14 +465,14 @@ async function confirmSurfaceSwitch() {
           <!-- APK version + OTA -->
           <div class="flex flex-wrap items-center gap-3">
             <span class="text-sm text-(--ui-text-muted)">
-              APK on device: <strong>{{ status?.apkVersion ?? '—' }}</strong>
+              {{ $t('devices.apkOnDevice') }} <strong>{{ status?.apkVersion ?? '—' }}</strong>
             </span>
             <div class="flex items-center gap-2">
               <USelect
                 v-model="selectedReleaseId"
                 :items="releases.map(r => ({ label: r.version, value: r.id }))"
                 value-key="value"
-                placeholder="Select release…"
+                :placeholder="$t('devices.selectReleasePlaceholder')"
                 class="w-44"
               />
               <UButton
@@ -438,7 +480,7 @@ async function confirmSurfaceSwitch() {
                 :disabled="!selectedReleaseId || commandPending"
                 :loading="commandPending"
                 @click="confirmOta"
-              >Push OTA</UButton>
+              >{{ $t('devices.pushOta') }}</UButton>
             </div>
           </div>
 
@@ -447,71 +489,75 @@ async function confirmSurfaceSwitch() {
             <UButton
               size="sm"
               variant="outline"
-              leading-icon="i-lucide-refresh-cw"
+              leading-icon="i-lucide-power"
               :loading="commandPending"
               @click="confirmReboot"
-            >Restart player</UButton>
+            >{{ $t('devices.rebootDevice') }}</UButton>
             <UButton
               size="sm"
               variant="outline"
               leading-icon="i-lucide-camera"
               :loading="commandPending"
               @click="enqueue('screenshot')"
-            >Screenshot</UButton>
+            >{{ $t('devices.screenshot') }}</UButton>
             <UButton
               size="sm"
               variant="outline"
               leading-icon="i-lucide-file-text"
               :loading="commandPending"
               @click="enqueue('log-request')"
-            >Pull logs</UButton>
+            >{{ $t('devices.pullLogs') }}</UButton>
             <UButton
               size="sm"
               variant="outline"
               leading-icon="i-lucide-lock"
               :loading="commandPending"
               @click="enqueue('kiosk-lock')"
-            >Lock</UButton>
+            >{{ $t('devices.kioskLock') }}</UButton>
             <UButton
               size="sm"
               variant="outline"
               leading-icon="i-lucide-lock-open"
               :loading="commandPending"
               @click="enqueue('kiosk-unlock')"
-            >Unlock</UButton>
+            >{{ $t('devices.kioskUnlock') }}</UButton>
           </div>
 
           <!-- Recent commands list -->
           <div v-if="commands.length" class="mt-4">
-            <p class="mb-2 text-sm font-medium text-(--ui-text-highlighted)">Recent commands</p>
+            <p class="mb-2 text-sm font-medium text-(--ui-text-highlighted)">
+              {{ $t('devices.recentCommands') }}
+            </p>
             <div class="divide-y divide-(--ui-border) rounded-lg border border-(--ui-border)">
               <div
                 v-for="cmd in commands.slice(0, 10)"
                 :key="cmd.id"
                 class="flex items-center gap-3 px-3 py-2 text-sm"
               >
-                <UBadge :color="statusColor(cmd.status)" size="xs" class="shrink-0">{{ cmd.status }}</UBadge>
-                <span class="font-mono text-(--ui-text-highlighted)">{{ cmd.cmd }}</span>
+                <UBadge :color="statusColor(cmd.status)" size="xs" class="shrink-0">
+                  {{ commandStatusLabel(cmd.status) }}
+                </UBadge>
+                <span class="text-(--ui-text-highlighted)" :title="cmd.cmd">{{ commandLabel(cmd.cmd) }}</span>
                 <span class="ml-auto shrink-0 text-xs text-(--ui-text-muted)">{{ relativeTime(cmd.createdAt) }}</span>
                 <UButton
                   v-if="cmd.status === 'acked' && cmd.cmd === 'screenshot' && cmd.result"
                   size="xs"
                   variant="ghost"
                   @click="screenshotData = cmd.result; showScreenshotModal = true"
-                >view</UButton>
+                >{{ $t('devices.viewResult') }}</UButton>
                 <UButton
                   v-if="cmd.status === 'acked' && cmd.cmd === 'log-request' && cmd.result"
                   size="xs"
                   variant="ghost"
                   @click="logData = cmd.result; showLogModal = true"
-                >view</UButton>
+                >{{ $t('devices.viewResult') }}</UButton>
                 <UButton
                   v-if="cmd.status === 'failed' && cmd.result"
                   size="xs"
                   variant="ghost"
                   color="error"
                   @click="logData = cmd.result; showLogModal = true"
-                >view error</UButton>
+                >{{ $t('devices.viewError') }}</UButton>
               </div>
             </div>
           </div>
@@ -523,28 +569,37 @@ async function confirmSurfaceSwitch() {
   <!-- Screenshot modal -->
   <UModal
     :open="showScreenshotModal"
-    title="Device screenshot"
+    :title="$t('devices.screenshotModalTitle')"
     @update:open="(v) => { if (!v) showScreenshotModal = false }"
   >
     <template #body>
-      <img v-if="screenshotData" :src="screenshotData" class="w-full rounded" alt="Device screenshot" />
+      <img
+        v-if="screenshotData"
+        :src="screenshotData"
+        class="w-full rounded"
+        :alt="$t('devices.screenshotModalTitle')"
+      />
     </template>
     <template #footer>
-      <UButton color="neutral" variant="soft" @click="showScreenshotModal = false">Close</UButton>
+      <UButton color="neutral" variant="soft" @click="showScreenshotModal = false">
+        {{ $t('common.close') }}
+      </UButton>
     </template>
   </UModal>
 
   <!-- Log modal -->
   <UModal
     :open="showLogModal"
-    title="Device logs"
+    :title="$t('devices.logsModalTitle')"
     @update:open="(v) => { if (!v) showLogModal = false }"
   >
     <template #body>
       <pre class="max-h-96 overflow-auto whitespace-pre-wrap text-xs">{{ logData }}</pre>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="soft" @click="showLogModal = false">Close</UButton>
+      <UButton color="neutral" variant="soft" @click="showLogModal = false">
+        {{ $t('common.close') }}
+      </UButton>
     </template>
   </UModal>
 </template>

@@ -2183,10 +2183,10 @@ Add to `<template>`, after the existing device detail cards:
       <UButton
         size="sm"
         variant="outline"
-        leading-icon="i-lucide-refresh-cw"
+        leading-icon="i-lucide-power"
         :loading="commandPending"
-        @click="confirm({ title: 'Restart player?', onConfirm: () => enqueue('reboot') })"
-      >Restart player</UButton>
+        @click="confirm({ title: 'Reboot device?', onConfirm: () => enqueue('reboot') })"
+      >Reboot device</UButton>
       <UButton
         size="sm"
         variant="outline"

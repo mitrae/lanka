@@ -77,7 +77,8 @@ pnpm db:migrate   # apply migrations to data/signage.db
 | GET/PATCH/DELETE | `/api/groups/:id` | Read / rename or move / delete |
 | GET | `/api/devices` (+`?groupId=…&addressId=…&unclaimed=true`) | List with live status |
 | GET/PATCH/DELETE | `/api/devices/:id` | Read / claim-or-rename / delete |
-| POST | `/api/devices/:id/reload` | Kick the WebView to reload via SSE |
+| POST | `/api/devices/:id/reload` | Reload the *player* (SSE `reload` → `window.location.reload()`) |
+| GET/POST | `/api/devices/:id/commands` | Remote-control queue (`ota`, `reboot`, `screenshot`, `log-request`, `kiosk-lock`/`-unlock`, `set-surface`) over the command WS |
 | GET/POST | `/api/playlists` | List (summary) / create |
 | GET/PATCH/DELETE | `/api/playlists/:id` | Read (with items) / rename / delete |
 | PUT | `/api/playlists/:id/items` | Bulk replace items |
@@ -133,7 +134,7 @@ Visit `http://localhost:3000` during dev. Routes:
 - `/` — Overview (stat cards, unclaimed-device claim tray)
 - `/addresses` — Addresses list + detail
 - `/groups` — Groups list + detail (filterable by address)
-- `/devices` — Devices list with live SSE status + detail with reload / assignment override
+- `/devices` — Devices list with live SSE status + detail with reload, remote control, assignment override
 - `/media` — Media library with drag-drop upload
 - `/playlists` — Playlists list + editor (reorder + inline image-duration)
 
