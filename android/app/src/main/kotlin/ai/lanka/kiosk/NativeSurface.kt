@@ -266,6 +266,8 @@ class NativeSurface(
             Log.i(TAG, "kiosk lock set to $enabled")
         }
 
+        override fun bringToFront() = KioskForeground.bringToFront(activity)
+
         override fun setSurface(name: String): String? = switchSurface(name)
 
         /** Capture the player window into a JPEG data URI. Mirrors

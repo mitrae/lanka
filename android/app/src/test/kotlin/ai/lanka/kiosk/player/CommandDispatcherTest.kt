@@ -3,13 +3,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private class FakeActions : CommandActions {
+private open class FakeActions : CommandActions {
     var rebooted = false; var locked: Boolean? = null; var ota: Triple<String, String, Int>? = null; var reloaded = false
     var surfaceRequested: String? = null; var surfaceReason: String? = null
+    var broughtToFront = 0
     override fun reboot(): Boolean { rebooted = true; return true }
     override fun screenshot() = "data:image/png;base64,AAAA"
     override fun getLogs() = "log-line-1"
     override fun setKioskLock(enabled: Boolean) { locked = enabled }
+    open override fun bringToFront() { broughtToFront += 1 }
     override fun installOta(sha256: String, url: String, commandId: Int): Boolean { ota = Triple(sha256, url, commandId); return true }
     override fun reload() { reloaded = true }
     override fun setSurface(name: String): String? { surfaceRequested = name; return surfaceReason }
@@ -28,6 +30,31 @@ class CommandDispatcherTest {
         val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s)
             .handle("""{"commandId":2,"cmd":"kiosk-lock","payload":null}""")
         assertEquals(true, a.locked); assertTrue(s.sent.single().contains("\"status\":\"acked\""))
+    }
+    @Test fun `kiosk-lock brings the player back to the foreground`() {
+        // Locking a box left on the launcher must RESTORE the kiosk. The
+        // snap-back only fires when the player leaves the foreground, so
+        // without this the flag flips and the TV keeps showing the launcher.
+        val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s)
+            .handle("""{"commandId":8,"cmd":"kiosk-lock","payload":null}""")
+        assertEquals(1, a.broughtToFront)
+    }
+    @Test fun `kiosk-unlock does NOT bring the player to the foreground`() {
+        // Unlock is a maintenance window — dragging the player back would
+        // defeat the whole point of it.
+        val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s)
+            .handle("""{"commandId":9,"cmd":"kiosk-unlock","payload":null}""")
+        assertEquals(0, a.broughtToFront)
+    }
+    @Test fun `kiosk-lock still acks when bringing to front fails`() {
+        // A box without SYSTEM_ALERT_WINDOW can't launch from the background.
+        // The lock itself still applied, so reporting the whole command failed
+        // would be a lie: ack it, and let the screen stay where it is.
+        val a = object : FakeActions() { override fun bringToFront() = throw IllegalStateException("no overlay perm") }
+        val s = FakeSender(); CommandDispatcher(a, s)
+            .handle("""{"commandId":10,"cmd":"kiosk-lock","payload":null}""")
+        assertEquals(true, a.locked)
+        assertTrue(s.sent.single().contains("\"status\":\"acked\""))
     }
     @Test fun `log-request acks with logs`() {
         val a = FakeActions(); val s = FakeSender(); CommandDispatcher(a, s)
