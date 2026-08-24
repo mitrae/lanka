@@ -34,13 +34,13 @@ function onConfirm() {
         </p>
         <div class="mt-6 flex justify-end gap-2">
           <UButton variant="ghost" @click="onCancel">
-            {{ options.cancelLabel ?? $t('common.cancel') }}
+            {{ options.cancelLabel }}
           </UButton>
           <UButton
             :color="options.destructive ? 'error' : 'primary'"
             @click="onConfirm"
           >
-            {{ options.confirmLabel ?? $t('common.confirm') }}
+            {{ options.confirmLabel }}
           </UButton>
         </div>
       </div>
