@@ -66,7 +66,8 @@ The TVs run a thin Android WebView kiosk (`android/`, package `ai.lanka.kiosk`) 
   while hidden because the WebView is never `onPause()`d.
 - **On-device PIN escape hatch:** long-press BACK, or five BACK taps in 2 s,
   opens a native `PinPadView` over the player; a correct PIN (sha256-baked via
-  `-PKIOSK_PIN`, empty default = disabled) clears `KioskLock`, releases lock
+  `-PKIOSK_PIN`, **empty default = the feature is silently OFF** — a build
+  without the flag ships no escape hatch at all) clears `KioskLock`, releases lock
   task, **verifies** it is released, and opens Settings. All of it lives in
   `KioskActivity`, shared by both player surfaces. The pad is a **native
   view, not HTML** (must work when the WebView renderer is dead) and it **never
@@ -80,8 +81,17 @@ The TVs run a thin Android WebView kiosk (`android/`, package `ai.lanka.kiosk`) 
   flipped the flag but never called `stopLockTask()`). `onResume` reconciles
   unconditionally, posted listener work re-reads the flag under an identity
   guard, and the dashboard sets the flag off-thread — `start/stopLockTask` are
-  main-thread-only. **Never set `android:enableOnBackInvokedCallback="true"`**
-  in either manifest — it reroutes BACK through `OnBackInvokedDispatcher` and
+  main-thread-only.
+
+  **The fleet PIN is `2408`.** Always build with it, or boxes ship with no local
+  unlock: `LANKA_KIOSK_PIN=2408 scripts/build-apk.sh prod`. Only the sha256 is
+  baked into `BuildConfig`, never the digits — but that hash ships in every APK
+  and a 4-digit space falls to it instantly, so treat the PIN as a deterrent
+  against someone holding the remote at a venue, not as a secret. Verify a build
+  actually has it: `BuildConfig.KIOSK_PIN_LENGTH` must be `4`, not `0`.
+
+  **Never set `android:enableOnBackInvokedCallback="true"`**
+  in the manifest — it reroutes BACK through `OnBackInvokedDispatcher` and
   silently kills the BACK swallow *and* both PIN triggers with no compile
   error.
 
