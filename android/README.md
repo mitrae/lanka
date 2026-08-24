@@ -175,6 +175,9 @@ per device over ADB — no factory reset needed:
 adb shell appops set ai.lanka.kiosk REQUEST_INSTALL_PACKAGES allow
 # Kiosk snap-back: lets the player relaunch itself from the background
 adb shell appops set ai.lanka.kiosk SYSTEM_ALERT_WINDOW allow
+# Name the app that covered the player (visibility telemetry); optional —
+# without it the dashboard still reports "covered", just not by what.
+adb shell appops set ai.lanka.kiosk GET_USAGE_STATS allow
 ```
 
 What you get without device owner:
