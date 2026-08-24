@@ -5,9 +5,18 @@ import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 
 const BodySchema = z.object({
-  currentItemId: z.number().int().positive().nullable(),
+  // Optional, not required-nullable: `undefined` = don't touch and don't count
+  // (the sampling heartbeat), `null` = clear the current item, a number = a real
+  // play start. Without this distinction every heartbeat would inflate
+  // media.play_count by ~120x/hour.
+  currentItemId: z.number().int().positive().nullable().optional(),
   apkVersion: z.string().max(50).optional(),
   surface: z.enum(['webview', 'native']).optional(),
+  visibility: z.enum(['foreground', 'obscured', 'background']).optional(),
+  foregroundPackage: z.string().max(128).nullable().optional(),
+  snapBacks: z.number().int().min(0).optional(),
+  focusLosses: z.number().int().min(0).optional(),
+  hiddenMs: z.number().int().min(0).optional(),
   error: z
     .object({ sha256: z.string().optional(), message: z.string().max(500) })
     .optional()
@@ -30,7 +39,7 @@ export async function handleTelemetry(
     throw createError({ statusCode: 404, message: `Unknown device: ${deviceId}` })
   }
 
-  if (body.currentItemId !== null) {
+  if (body.currentItemId !== undefined && body.currentItemId !== null) {
     const [item] = await db
       .select()
       .from(schema.playlistItems)
@@ -50,13 +59,35 @@ export async function handleTelemetry(
     }
   }
 
+  const visibilityChanged =
+    body.visibility !== undefined && body.visibility !== device.visibility
+
   await db
     .update(schema.devices)
     .set({
-      currentItemId: body.currentItemId,
+      // Omitted currentItemId means "heartbeat" — leave the current item as is.
+      ...(body.currentItemId !== undefined ? { currentItemId: body.currentItemId } : {}),
       lastSeenAt: new Date(),
       ...(body.apkVersion !== undefined ? { apkVersion: body.apkVersion } : {}),
-      ...(body.surface !== undefined ? { surface: body.surface } : {})
+      ...(body.surface !== undefined ? { surface: body.surface } : {}),
+      ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
+      ...(visibilityChanged ? { visibilitySince: new Date() } : {}),
+      // Coupled to visibility, NOT independently optional. Whenever a state is
+      // reported the package column is rewritten: null for foreground, else
+      // whatever was reported (null included). Otherwise a previous intruder's
+      // name lingers and reappears during a later episode whose probe found
+      // nothing.
+      ...(body.visibility !== undefined
+        ? {
+            foregroundPackage:
+              body.visibility === 'foreground' ? null : (body.foregroundPackage ?? null)
+          }
+        : body.foregroundPackage !== undefined
+          ? { foregroundPackage: body.foregroundPackage }
+          : {}),
+      ...(body.snapBacks !== undefined ? { snapBacks: body.snapBacks } : {}),
+      ...(body.focusLosses !== undefined ? { focusLosses: body.focusLosses } : {}),
+      ...(body.hiddenMs !== undefined ? { hiddenMs: body.hiddenMs } : {})
     })
     .where(eq(schema.devices.id, deviceId))
 

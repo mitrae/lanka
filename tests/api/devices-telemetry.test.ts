@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { createTestDb, type TestDb } from '../helpers/test-db'
 import {
@@ -163,5 +163,128 @@ describe('POST /api/devices/:id/telemetry handler', () => {
     await handleTelemetry(db, 'dev-surface', { currentItemId: null })
     const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-surface'))
     expect(row.surface).toBe('native')
+  })
+
+  async function device() {
+    const [dev] = await db
+      .select()
+      .from(schema.devices)
+      .where(eq(schema.devices.id, 'dev-1'))
+    return dev
+  }
+
+  it('defaults visibility to unknown before any report', async () => {
+    await setup()
+    expect((await device()).visibility).toBe('unknown')
+  })
+
+  it('persists visibility and counters', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', {
+      visibility: 'background',
+      foregroundPackage: 'com.netflix.ninja',
+      snapBacks: 7,
+      focusLosses: 2,
+      hiddenMs: 45_000
+    })
+    const dev = await device()
+    expect(dev.visibility).toBe('background')
+    expect(dev.foregroundPackage).toBe('com.netflix.ninja')
+    expect(dev.snapBacks).toBe(7)
+    expect(dev.focusLosses).toBe(2)
+    expect(dev.hiddenMs).toBe(45_000)
+  })
+
+  it('a heartbeat without currentItemId does not count a play', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+    const [m] = await db.select().from(schema.media).where(eq(schema.media.sha256, 'a'))
+    expect(m.playCount).toBe(1)
+  })
+
+  it('a heartbeat without currentItemId leaves the current item alone', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+    expect((await device()).currentItemId).toBe(item.id)
+  })
+
+  it('an explicit null currentItemId still clears', async () => {
+    const { item } = await setup()
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    await handleTelemetry(db, 'dev-1', { currentItemId: null })
+    expect((await device()).currentItemId).toBeNull()
+  })
+
+  it('a heartbeat still refreshes lastSeenAt', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+    expect((await device()).lastSeenAt).not.toBeNull()
+  })
+
+  it('stamps visibilitySince only when the state actually changes', async () => {
+    // Fake timers: three synchronous better-sqlite3 writes can land in the SAME
+    // millisecond, so a real clock makes the "it moved" assertion flaky.
+    vi.useFakeTimers()
+    try {
+      await setup()
+      vi.setSystemTime(new Date('2026-08-23T10:00:00Z'))
+      await handleTelemetry(db, 'dev-1', { visibility: 'background' })
+      const first = (await device()).visibilitySince
+      expect(first).not.toBeNull()
+
+      vi.setSystemTime(new Date('2026-08-23T10:00:10Z'))
+      await handleTelemetry(db, 'dev-1', { visibility: 'background' })
+      expect((await device()).visibilitySince?.getTime()).toBe(first?.getTime())
+
+      vi.setSystemTime(new Date('2026-08-23T10:00:20Z'))
+      await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+      expect((await device()).visibilitySince?.getTime()).not.toBe(first?.getTime())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears a stored foregroundPackage when the device reports foreground', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', {
+      visibility: 'background',
+      foregroundPackage: 'com.netflix.ninja'
+    })
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+    expect((await device()).foregroundPackage).toBeNull()
+  })
+
+  it('does not resurrect a previous intruder when a later report has no package', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', {
+      visibility: 'background',
+      foregroundPackage: 'com.netflix.ninja'
+    })
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground' })
+    await handleTelemetry(db, 'dev-1', { visibility: 'background' })
+    expect((await device()).foregroundPackage).toBeNull()
+  })
+
+  it('leaves visibility untouched when the field is omitted', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', { visibility: 'obscured' })
+    await handleTelemetry(db, 'dev-1', { currentItemId: null })
+    expect((await device()).visibility).toBe('obscured')
+  })
+
+  it('accepts a null foregroundPackage', async () => {
+    await setup()
+    await handleTelemetry(db, 'dev-1', { visibility: 'foreground', foregroundPackage: null })
+    expect((await device()).foregroundPackage).toBeNull()
+  })
+
+  it('rejects an unknown visibility value', async () => {
+    await setup()
+    await expect(
+      handleTelemetry(db, 'dev-1', { visibility: 'sideways' })
+    ).rejects.toThrow()
   })
 })

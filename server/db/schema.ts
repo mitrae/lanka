@@ -54,6 +54,22 @@ export const devices = sqliteTable('devices', {
   // Which player renders on this device: the WebView APK ('webview', default)
   // or the native ExoPlayer APK ('native'). Reported on register/telemetry.
   surface: text('surface').notNull().default('webview'),
+  // Is the player actually ON SCREEN? Reported by the APK from the Activity
+  // lifecycle: 'foreground' | 'obscured' (a dialog is on top) | 'background'
+  // (another app owns the screen). 'unknown' is the pre-report default and is
+  // never sent by a client. See specs/2026-08-23-kiosk-visibility-telemetry-design.md
+  visibility: text('visibility').notNull().default('unknown'),
+  // Stamped server-side, only when the reported visibility differs from the
+  // stored one — so "hidden for 4 minutes" is derivable without the device
+  // tracking it.
+  visibilitySince: integer('visibility_since', { mode: 'timestamp_ms' }),
+  // Package that covered the player, when UsageStats is permitted; else null.
+  foregroundPackage: text('foreground_package'),
+  // Counters since the APK process started — a value going DOWN means the app
+  // restarted. The server stores them as reported and never accumulates.
+  snapBacks: integer('snap_backs').notNull().default(0),
+  focusLosses: integer('focus_losses').notNull().default(0),
+  hiddenMs: integer('hidden_ms').notNull().default(0),
   // Per-device command-channel secret: sha256 of a raw token issued ONCE at the
   // first register (trust-on-first-use; never re-issued). `active` ratchets to
   // true the first time a client connects to the WS with the correct secret;
