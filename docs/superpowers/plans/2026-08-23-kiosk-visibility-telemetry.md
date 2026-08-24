@@ -234,7 +234,8 @@ class KioskVisibilityTest {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd android && ./gradlew test --tests '*KioskVisibilityTest*'`
+Run: `cd android && ./gradlew testDebugUnitTest --tests '*KioskVisibilityTest*'`
+(`test` is a lifecycle aggregate and rejects `--tests`; use the concrete task.)
 Expected: FAIL — `Unresolved reference: KioskVisibility`.
 
 - [ ] **Step 3: Write the implementation**
@@ -357,10 +358,7 @@ class KioskVisibility(private val now: () -> Long = System::currentTimeMillis) {
             episodeStart != null && t - episodeStart >= DEBOUNCE_MS -> raw
             else -> stable
         }
-        if (effective != stable) {
-            stable = effective
-            changeSeq++
-        }
+        promote(effective)
         return Snapshot(
             state = effective,
             snapBacks = snapBacks,
@@ -401,8 +399,23 @@ class KioskVisibility(private val now: () -> Long = System::currentTimeMillis) {
         raw = next
         // Episode boundaries only — a move BETWEEN the two hidden states keeps
         // the original episode start, so the debounce is not restarted.
-        if (next == State.FOREGROUND) episodeSince = null
-        else if (episodeSince == null) episodeSince = t
+        if (next == State.FOREGROUND) {
+            episodeSince = null
+            // Recovery is immediately reportable, so promote it HERE rather than
+            // waiting for a snapshot(). Leaving it to snapshot() meant a
+            // foreground stretch nobody sampled left `stable` holding the old
+            // hidden state, which the next debounce window would then report.
+            promote(State.FOREGROUND)
+        } else if (episodeSince == null) {
+            episodeSince = t
+        }
+    }
+
+    /** Records the reportable state, counting a change so the transport posts. */
+    private fun promote(s: State) {
+        if (s == stable) return
+        stable = s
+        changeSeq++
     }
 
     companion object {
@@ -1749,7 +1762,7 @@ Add these methods inside the **existing** `class TelemetryClientTest` in `androi
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd android && ./gradlew test --tests '*TelemetryClientTest*'`
+Run: `cd android && ./gradlew testDebugUnitTest --tests '*TelemetryClientTest*'`
 Expected: FAIL — `TelemetryClient` has no `visibility` parameter and no `heartbeat`.
 
 - [ ] **Step 3: Enrich every post in `TelemetryClient`**
@@ -1810,7 +1823,7 @@ class TelemetryClient(
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd android && ./gradlew test --tests '*TelemetryClientTest*'`
+Run: `cd android && ./gradlew testDebugUnitTest --tests '*TelemetryClientTest*'`
 Expected: PASS, including the three pre-existing tests in the class.
 
 - [ ] **Step 5: Supply visibility when `NativeSurface` builds its client**
