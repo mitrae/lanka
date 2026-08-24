@@ -9,6 +9,7 @@ import type { Manifest } from '~/app/types/api'
 import { useNativeDevice, PLAYER_VERSION, PLAYER_SURFACE } from './useNativeDevice'
 import { usePlayerEnv, type PlayerEnv } from './usePlayerEnv'
 import { useTelemetry } from './useTelemetry'
+import { createVisibility, shouldPost, type VisibilityHandle } from './useVisibility'
 import {
   createReconciler,
   type NativeFSBridge,
@@ -41,7 +42,12 @@ export function usePlayerBoot(
   const api = apiOverride ?? useApiClient()
   const device = useNativeDevice()
   const env = usePlayerEnv(useRuntimeConfig().public.mediaPublicBase)
-  const telemetry = useTelemetry(api)
+  // Created BEFORE the first reconcile so the very first play start is already
+  // enriched, and handed to useTelemetry so every post carries visibility.
+  const visibility: VisibilityHandle = createVisibility({
+    nativeFS: (globalThis as any).NativeFS
+  })
+  const telemetry = useTelemetry(api, visibility)
 
   const deviceId = ref(device.deviceId())
   const screen = ref<PlayerScreen>('booting')
@@ -53,6 +59,11 @@ export function usePlayerBoot(
 
   let reconciler: ReconcilerHandle | null = null
   let channel: CommandChannelHandle | null = null
+  let sampleTimer: number | null = null
+  // boot() is async but onBeforeUnmount is registered synchronously; without
+  // this flag an unmount during an await leaves resources created afterwards
+  // running forever.
+  let disposed = false
 
   function mountScheduler(m: Manifest): void {
     // Tear down any existing scheduler first so its timers are cancelled.
@@ -184,17 +195,38 @@ export function usePlayerBoot(
       onReload: () => device.reload()
     })
     channel.open()
+
+    if (disposed) return
+    let lastSeq = -1
+    let lastPostAt = 0
+    // Sample cheaply and post on a real change, with the heartbeat as a floor.
+    // A 30 s beat alone would miss an occlusion that starts and ends between
+    // two beats: the state is only promoted inside snapshot().
+    sampleTimer = window.setInterval(() => {
+      const snap = visibility.snapshot()
+      const elapsed = Date.now() - lastPostAt
+      if (!shouldPost(snap.changeSeq, lastSeq, elapsed)) return
+      lastSeq = snap.changeSeq
+      lastPostAt = Date.now()
+      telemetry.heartbeat(deviceId.value)
+    }, 2_000)
   }
 
   void boot()
 
   onBeforeUnmount(() => {
+    disposed = true
     scheduler.value?.stop()
     scheduler.value = null
     reconciler?.close()
     reconciler = null
     channel?.close()
     channel = null
+    if (sampleTimer !== null) {
+      window.clearInterval(sampleTimer)
+      sampleTimer = null
+    }
+    visibility.stop()
   })
 
   return {
