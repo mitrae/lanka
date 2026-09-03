@@ -66,6 +66,19 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
         advance()
     }
 
+    /** Report a failure WITHOUT letting it drive playback: an error in the
+     *  hidden preload slot, or the consecutive error that trips the stalled
+     *  state. Emit-only sibling of [itemErrored]; mirrors the web scheduler. */
+    fun noteError(index: Int, message: String) {
+        if (stopped) return
+        emitError(index, message)
+    }
+
+    /** Whether [itemErrored] moves playback on to another item. Only a
+     *  multi-item loop can; in every single-item mode the view must retry the
+     *  player itself, or a broken frame stays on screen forever. */
+    val advancesOnError: Boolean get() = mode == SchedulerMode.LOOP
+
     fun itemErrored(index: Int, message: String) {
         if (stopped) return
         emitError(index, message)

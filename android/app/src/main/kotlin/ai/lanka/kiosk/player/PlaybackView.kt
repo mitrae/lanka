@@ -30,11 +30,17 @@ import java.util.concurrent.Executors
  * flip which slot is front, crossfade their alphas (~120ms), play the new
  * front, and arm the new back slot with the next preload target.
  *
- * Self-heal mirrors PlayerStage: after [MAX_CONSECUTIVE_ERRORS] consecutive
- * media errors we stop error-driven advancing, show a "stalled" banner, and
- * retry the current items after [RECOVERY_DELAY_MS] — a slow self-healing loop
- * rather than a permanently dark screen. A successful item start / image load
- * resets the counter.
+ * Self-heal mirrors PlayerStage (as revised 2026-09-03): a [StallWatchdog] is
+ * sampled every [STALL_SAMPLE_MS] on the front player's position, since Media3
+ * can sit in STATE_BUFFERING — or STATE_READY with a hung Amlogic MediaCodec —
+ * forever without raising onPlayerError. A stall is reported down the same
+ * path as an error. In single-item modes (nowhere to advance) the view
+ * re-prepares the front item itself; after [MAX_CONSECUTIVE_ERRORS]
+ * consecutive failures it shows a "stalled" banner and retries after
+ * [RECOVERY_DELAY_MS]. Only the FRONT slot may drive any of this — a failure
+ * in the hidden preload slot is recorded for telemetry and nothing else.
+ * Sustained progress ([HEALTHY_PROGRESS_MS] of media time) forgives earlier
+ * failures.
  *
  * Construction is decoupled from networking: pass a [fileUrlResolver]
  * (sha → playable [Uri]: the cached local file when present, else a CDN/proxy
@@ -58,6 +64,17 @@ class PlaybackView @JvmOverloads constructor(
         const val MAX_CONSECUTIVE_ERRORS = 5
         const val RECOVERY_DELAY_MS = 15_000L
         const val CROSSFADE_MS = 120L
+        const val STALL_SAMPLE_MS = 2000L
+        /** Mid-clip freeze: position frozen after the load reached STATE_READY. */
+        const val STALL_PLAYING_MS = 8000L
+        /** Cold prepare(): position sits at 0 while the extractor reads the moov
+         *  atom. On the CDN fallback path re-preparing at 8 s would discard the
+         *  buffered progress and restart the clock — a loop that never
+         *  converges on a slow link. */
+        const val STALL_STARTUP_MS = 45_000L
+        /** Media ms a load must advance before earlier failures are forgiven;
+         *  one frame every few seconds is a crawling decoder, not health. */
+        const val HEALTHY_PROGRESS_MS = 5000L
     }
 
     // Slot A/B swap. When `frontIsA` is true, slot A is front (visible), B is back.
@@ -99,6 +116,20 @@ class PlaybackView @JvmOverloads constructor(
         mountInitial()
     }
 
+    // Freeze detection (see class doc). All main-thread: ExoPlayer is not
+    // thread-safe, and the tick reads it directly.
+    private val watchdog = StallWatchdog(startupMs = STALL_STARTUP_MS, playingMs = STALL_PLAYING_MS)
+    private var everReady = false // this load has reached STATE_READY at least once
+    private var budgetAnchorMs = -1L // position when the error budget was last charged/forgiven
+    private var playNudged = false // a paused stall already got its one play() before a re-prepare
+    private val stallRunnable = object : Runnable {
+        override fun run() {
+            if (released) return
+            sampleProgress()
+            mainHandler.postDelayed(this, STALL_SAMPLE_MS)
+        }
+    }
+
     // Off-UI-thread image decode pool (mirrors the web <img> async decode).
     private val decodeIo = Executors.newSingleThreadExecutor { r ->
         Thread(r, "playback-decode").apply { isDaemon = true }
@@ -133,6 +164,7 @@ class PlaybackView @JvmOverloads constructor(
             repeatMode = Player.REPEAT_MODE_OFF
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
+                    if (state == Player.STATE_READY && slot == frontSlot()) everReady = true
                     if (state == Player.STATE_ENDED) onVideoEnded(slot)
                 }
                 override fun onPlayerError(error: PlaybackException) {
@@ -154,15 +186,19 @@ class PlaybackView @JvmOverloads constructor(
         exoB.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
 
         mountInitial()
+        mainHandler.removeCallbacks(stallRunnable)
+        mainHandler.postDelayed(stallRunnable, STALL_SAMPLE_MS)
 
         unsubscribers += scheduler.onTransition { e ->
             runOnUi {
                 // The NEW front is the current back slot — flip which slot is front.
                 frontIsA = !frontIsA
                 // The old front (now back) becomes the next preload target.
-                val nextItem = manifest.items.getOrNull(e.nextPreload)
+                val nextItem =
+                    if (e.nextPreload == e.to) null else manifest.items.getOrNull(e.nextPreload)
                 setItemInSlot(backSlot(), nextItem)
                 playFrontVideoIfNeeded()
+                resetProgressTracking()
                 crossfade()
             }
         }
@@ -260,11 +296,82 @@ class PlaybackView @JvmOverloads constructor(
     private fun mountInitial() {
         val m = manifest ?: return
         val sched = scheduler ?: return
-        val frontItem = m.items.getOrNull(sched.getFrontIndex())
-        val backItem = m.items.getOrNull(sched.getBackIndex())
+        val frontIdx = sched.getFrontIndex()
+        val backIdx = sched.getBackIndex()
+        val frontItem = m.items.getOrNull(frontIdx)
+        // Single-item modes report back == front. Preparing the same item on the
+        // hidden player too meant two ExoPlayers on one 176 MB file — two
+        // extractors, two buffers and, on an Amlogic box with a handful of
+        // hardware decoder instances, a real chance of starving the visible one.
+        val backItem = if (backIdx == frontIdx) null else m.items.getOrNull(backIdx)
         setItemInSlot(frontSlot(), frontItem)
         setItemInSlot(backSlot(), backItem)
         playFrontVideoIfNeeded()
+        resetProgressTracking()
+    }
+
+    /** Re-prepare the current front item in place — the only recovery available
+     *  when there is nothing to advance to. */
+    private fun retryFrontItem() {
+        val item = itemFor(frontSlot()) ?: return
+        setItemInSlot(frontSlot(), item)
+        playFrontVideoIfNeeded()
+        resetProgressTracking()
+    }
+
+    private fun resetProgressTracking() {
+        watchdog.reset()
+        everReady = false
+        budgetAnchorMs = -1L
+        playNudged = false
+    }
+
+    /** Poll the front player for a frozen position; report a stall as an error
+     *  so it gets a device_errors row and the same retry/backoff treatment. */
+    private fun sampleProgress() {
+        if (stalled) return // the recovery runnable owns retries in this state
+        val item = itemFor(frontSlot())
+        if (item == null || item.type != "video") {
+            resetProgressTracking()
+            return
+        }
+        val exo = exoFor(frontSlot())
+        val state = exo.playbackState
+        // IDLE is the error path's territory (onPlayerError already fired, or
+        // nothing is prepared); ENDED cannot happen under REPEAT_MODE_ONE and
+        // is handled by onVideoEnded otherwise.
+        val expectPlaying = exo.mediaItemCount > 0 &&
+            state != Player.STATE_IDLE && state != Player.STATE_ENDED
+        val position = exo.currentPosition
+        val stalledNow = watchdog.observe(
+            nowMs = android.os.SystemClock.elapsedRealtime(),
+            positionMs = position,
+            expectPlaying = expectPlaying,
+            started = everReady
+        )
+        if (stalledNow) {
+            if (!exo.playWhenReady && !playNudged) {
+                // Cheapest recovery first: a player that lost playWhenReady
+                // (audio-focus policy, a stray pause) needs play(), not a
+                // re-prepare that throws away buffered data. One attempt.
+                playNudged = true
+                exo.playWhenReady = true
+                exo.play()
+                return
+            }
+            val index = manifest?.items?.indexOfFirst { it.id == item.id } ?: return
+            if (index >= 0) reportError(index, if (everReady) "video stalled" else "video never started")
+            return
+        }
+        if (!expectPlaying) return
+        if (budgetAnchorMs < 0L || position < budgetAnchorMs) {
+            budgetAnchorMs = position // first sample after a charge, or a repeat wrap
+            return
+        }
+        if (position - budgetAnchorMs >= HEALTHY_PROGRESS_MS) {
+            consecutiveErrors = 0
+            budgetAnchorMs = position
+        }
     }
 
     private fun crossfade() {
@@ -289,22 +396,26 @@ class PlaybackView @JvmOverloads constructor(
         if (index >= 0) scheduler?.itemEnded(index)
     }
 
-    private fun onVideoError(slot: SlotId, msg: String) {
+    /** Route a failure by which slot raised it. Only the visible slot may
+     *  drive playback; the hidden preload slot's failure is recorded for
+     *  telemetry and nothing else. Before this guard a back-slot error charged
+     *  the budget and — once retryFrontItem existed — re-prepared the perfectly
+     *  healthy front item from 0. */
+    private fun onSlotError(slot: SlotId, msg: String) {
         if (released) return
-        // Errors from the back (preloading) slot still count toward the heal
-        // budget but we only advance via the FRONT slot — mirror PlayerStage,
-        // which reports against whichever slot raised the error.
         val item = itemFor(slot) ?: return
         val index = manifest?.items?.indexOfFirst { it.id == item.id } ?: return
-        if (index >= 0) reportError(index, "video decode/load error: $msg")
+        if (index < 0) return
+        if (slot != frontSlot()) {
+            scheduler?.noteError(index, "$msg (preload)")
+            return
+        }
+        reportError(index, msg)
     }
 
-    private fun onImageError(slot: SlotId, msg: String) {
-        if (released) return
-        val item = itemFor(slot) ?: return
-        val index = manifest?.items?.indexOfFirst { it.id == item.id } ?: return
-        if (index >= 0) reportError(index, msg)
-    }
+    private fun onVideoError(slot: SlotId, msg: String) = onSlotError(slot, "video decode/load error: $msg")
+
+    private fun onImageError(slot: SlotId, msg: String) = onSlotError(slot, msg)
 
     private fun onImageLoaded() {
         consecutiveErrors = 0
@@ -312,15 +423,24 @@ class PlaybackView @JvmOverloads constructor(
 
     private fun reportError(index: Int, msg: String) {
         consecutiveErrors += 1
+        budgetAnchorMs = -1L // forgiveness needs fresh sustained progress from here
+        val sched = scheduler ?: return
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            // Pause error-driven advancing and retry after a delay. Do NOT call
-            // scheduler.stop() — that permanently clears its handlers, so the
-            // screen could only recover via a manifest change (operator action).
+            // Record it first: this is the failure that trips the stalled state,
+            // and it used to be the one failure that never reached device_errors.
+            // Then pause error-driven advancing and retry after a delay. Do NOT
+            // call scheduler.stop() — that permanently clears its handlers, so
+            // the screen could only recover via a manifest change.
+            sched.noteError(index, msg)
             setStalled(true)
             scheduleRecovery()
             return
         }
-        scheduler?.itemErrored(index, msg)
+        sched.itemErrored(index, msg)
+        // A single-item playlist has nowhere to advance to: the scheduler records
+        // the error and returns. Without this the first ExoPlayer error was
+        // terminal — the dead-end the web surface fixed on 2026-09-03.
+        if (!sched.advancesOnError) retryFrontItem()
     }
 
     private fun setStalled(value: Boolean) {
@@ -352,6 +472,7 @@ class PlaybackView @JvmOverloads constructor(
         unsubscribers.forEach { runCatching { it() } }
         unsubscribers.clear()
         clearRecovery()
+        mainHandler.removeCallbacks(stallRunnable)
         slotAView.animate().cancel()
         slotBView.animate().cancel()
         playerViewA.player = null

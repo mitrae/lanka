@@ -69,6 +69,30 @@ class SchedulerTest {
         assertEquals(1, t.size); assertEquals(1, s.getFrontIndex())
     }
 
+    @Test fun `noteError only reports and never advances in any mode`() {
+        val deps = FakeDeps(); val s = Scheduler(listOf(video(1), video(2), video(3)), deps)
+        val errs = mutableListOf<Pair<Int, String>>(); val t = mutableListOf<TransitionEvent>()
+        s.onItemError { i, m -> errs.add(i to m) }; s.onTransition { t.add(it) }; s.start()
+        s.noteError(0, "preload failed")  // index == front: itemErrored would advance here
+        assertEquals(listOf(0 to "preload failed"), errs); assertEquals(0, t.size); assertEquals(0, s.getFrontIndex())
+    }
+
+    @Test fun `advancesOnError is true only for multi-item loops`() {
+        val deps = FakeDeps()
+        assertEquals(true, Scheduler(listOf(video(1), video(2)), deps).advancesOnError)
+        assertEquals(false, Scheduler(listOf(video(1)), deps).advancesOnError)
+        assertEquals(false, Scheduler(listOf(image(1)), deps).advancesOnError)
+        assertEquals(false, Scheduler(emptyList(), deps).advancesOnError)
+    }
+
+    @Test fun `single video itemErrored reports but never advances`() {
+        val deps = FakeDeps(); val s = Scheduler(listOf(video(1)), deps)
+        val errs = mutableListOf<Pair<Int, String>>(); val t = mutableListOf<TransitionEvent>()
+        s.onItemError { i, m -> errs.add(i to m) }; s.onTransition { t.add(it) }; s.start()
+        s.itemErrored(0, "video stalled")
+        assertEquals(listOf(0 to "video stalled"), errs); assertEquals(0, t.size); assertEquals(0, s.getFrontIndex())
+    }
+
     @Test fun `single video mode does not advance`() {
         val deps = FakeDeps(); val s = Scheduler(listOf(video(1)), deps)
         val t = mutableListOf<TransitionEvent>(); val starts = mutableListOf<Int>()
