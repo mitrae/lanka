@@ -26,6 +26,10 @@ export interface VideoProbe {
   height: number
   /** Average frames per second; 0 when ffprobe can't determine it. */
   frameRate: number
+  /** The stream's nominal rate (r_frame_rate). For a VFR phone clip this is the
+   *  peak the encoder was set to — 60 or 120 for slo-mo — even when the
+   *  average sits below 30. 0 when unknown. */
+  frameRateNominal: number
   /** H.264 level ×10 (40 = level 4.0); 0 when unknown. */
   level: number
   durationMs: number
@@ -79,6 +83,7 @@ export async function probeVideo(path: string): Promise<VideoProbe> {
         frameRate:
           parseRate(videoStream.avg_frame_rate) ||
           parseRate(videoStream.r_frame_rate),
+        frameRateNominal: parseRate(videoStream.r_frame_rate),
         // ffprobe reports -99 for "unknown" on some builds; fold that into 0.
         level: Math.max(0, Number(videoStream.level) || 0),
         durationMs,
@@ -100,12 +105,30 @@ export const MAX_KIOSK_FPS = 30
  *  boxes decode dependably through the WebView. */
 export const MAX_KIOSK_LEVEL = 40
 
-/** Whether a measured frame rate is over the cap. Rounded, because the decoder
- *  budget is not a 30.000 cliff and VFR phone clips probe at 30.03 or 29.98 —
- *  an exact compare would send a perfectly playable "30 fps" clip through
- *  another lossy re-encode. */
+/** VFR phone clips probe at 30.03 or 29.98 for a nominal 30; an exact compare
+ *  would send a perfectly playable file through another lossy re-encode. The
+ *  slack is a hair, not a rounding bucket: 1080p30 already sits at 244,800 of
+ *  level 4.0's 245,760 macroblocks/s, so 30.4 fps tips x264 into level 4.1. */
+const FPS_TOLERANCE = 0.1
+
+/** Whether a measured frame rate is over the kiosk cap. */
 export function exceedsFpsCap(fps: number): boolean {
-  return Math.round(fps) > MAX_KIOSK_FPS
+  return fps > MAX_KIOSK_FPS + FPS_TOLERANCE
+}
+
+/**
+ * Whether the encoder must resample this source to `maxFps`.
+ *
+ * Strict, no tolerance: resampling a 30.03 fps source to an exact 30 costs one
+ * dropped frame every ~30 s and guarantees the output never exceeds the cap.
+ * Judged on the nominal rate as well as the average — a VFR clip averaging 28
+ * with 60 fps bursts would otherwise bypass the filter. Unknown (0) means
+ * "might be too high": the cost of capping is a duplicated frame or two, the
+ * cost of not capping is the freeze this whole rule exists to prevent.
+ */
+export function needsFpsCap(p: Pick<VideoProbe, 'frameRate' | 'frameRateNominal'>, maxFps: number): boolean {
+  const peak = Math.max(p.frameRate, p.frameRateNominal)
+  return peak === 0 || peak > maxFps
 }
 
 /**
@@ -113,18 +136,22 @@ export function exceedsFpsCap(fps: number): boolean {
  * WebViews (Amlogic/Xiaomi boxes): h264 Main-or-below, yuv420p, ≤720p short
  * side, ≤30 fps, ≤level 4.0, aac (or no) audio.
  *
- * Unknown frame rate/level (0) counts as safe — an unreadable field is not
- * evidence of a problem, and the maintenance scripts use this to decide what to
- * re-encode.
+ * An UNKNOWN frame rate or level (0) counts as unsafe. This predicate gates the
+ * backfill's decision to skip a file, and unproven is not proven: an unreadable
+ * field must force the re-encode (whose fps filter then normalises it), not
+ * silently pass the file through.
  */
 export function isKioskSafe(p: VideoProbe): boolean {
+  const peakFps = Math.max(p.frameRate, p.frameRateNominal)
   return (
     p.codec === 'h264' &&
     SAFE_PROFILES.has(p.profile) &&
     p.pixFmt === 'yuv420p' &&
     Math.max(p.width, p.height) <= 1280 &&
     Math.min(p.width, p.height) <= 720 &&
-    !exceedsFpsCap(p.frameRate) &&
+    peakFps > 0 &&
+    !exceedsFpsCap(peakFps) &&
+    p.level > 0 &&
     p.level <= MAX_KIOSK_LEVEL &&
     (p.audioCodec === null || p.audioCodec === 'aac')
   )
@@ -186,13 +213,12 @@ export async function transcodeToKioskSafe(
   // "cap" mode — so decide from the source. An unreadable rate (0) is treated as
   // "might be too high": capping costs a duplicated frame or two, not capping
   // risks the freeze this whole change exists to prevent.
-  let sourceFps = 0
+  let capFps = true // an unprobeable source is capped, never trusted
   try {
-    sourceFps = (await probeVideo(inPath)).frameRate
+    capFps = needsFpsCap(await probeVideo(inPath), p.maxFps)
   } catch {
-    /* leave at 0 → cap */
+    /* keep capFps = true */
   }
-  const capFps = sourceFps === 0 || exceedsFpsCap(sourceFps)
 
   const scale = `scale='if(gt(iw,ih),-2,min(${p.maxShort},iw))':'if(gt(iw,ih),min(${p.maxShort},ih),-2)',scale='if(gt(iw,ih),min(${p.maxLong},iw),-2)':'if(gt(iw,ih),-2,min(${p.maxLong},ih))'`
   // Drop frames BEFORE scaling: on a 55 fps 1080p source that is ~45% fewer
@@ -234,8 +260,33 @@ export async function transcodeToKioskSafe(
 }
 
 /**
+ * Checks an encode's probe against the envelope its preset promises. Returns
+ * null when it conforms, otherwise a message naming the violated axis.
+ *
+ * The encoder options *should* make this unreachable, but "should" is not a
+ * production boundary: x264 picks the level itself, the fps filter is
+ * conditional, and a future option tweak could silently widen the output. A
+ * file that fails here must never reach the store, because every TV in the
+ * fleet would then fetch it.
+ */
+export function probeMatchesPreset(p: VideoProbe, preset: QualityPreset): string | null {
+  const q = QUALITY_PRESETS[preset]
+  if (p.codec !== 'h264') return `codec ${p.codec} (want h264)`
+  if (!SAFE_PROFILES.has(p.profile)) return `profile ${p.profile} (want Main or below)`
+  if (p.pixFmt !== 'yuv420p') return `pix_fmt ${p.pixFmt} (want yuv420p)`
+  if (Math.max(p.width, p.height) > q.maxLong || Math.min(p.width, p.height) > q.maxShort) {
+    return `dimensions ${p.width}x${p.height} (want ≤${q.maxLong}x${q.maxShort})`
+  }
+  const peakFps = Math.max(p.frameRate, p.frameRateNominal)
+  if (peakFps > q.maxFps + FPS_TOLERANCE) return `fps ${peakFps.toFixed(2)} (want ≤${q.maxFps})`
+  if (p.level > MAX_KIOSK_LEVEL) return `level ${p.level} (want ≤${MAX_KIOSK_LEVEL})`
+  return null
+}
+
+/**
  * Transcodes a video to the chosen quality preset (always re-encodes), writing
- * to `${tmpDir}/out.mp4`. Returns the output path + a fresh probe.
+ * to `${tmpDir}/out.mp4`. Returns the output path + a fresh probe. Throws if
+ * the output does not match the preset's envelope — see probeMatchesPreset.
  */
 export async function ensureQuality(
   inPath: string,
@@ -245,5 +296,9 @@ export async function ensureQuality(
   const outPath = join(tmpDir, 'out.mp4')
   await transcodeToKioskSafe(inPath, outPath, preset)
   const outProbe = await probeVideo(outPath)
+  const violation = probeMatchesPreset(outProbe, preset)
+  if (violation) {
+    throw new Error(`transcode output violates preset "${preset}": ${violation}`)
+  }
   return { path: outPath, probe: outProbe, transcoded: true }
 }

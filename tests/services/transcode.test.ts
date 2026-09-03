@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ffmpegPath from '@ffmpeg-installer/ffmpeg'
 import ffmpegLib from 'fluent-ffmpeg'
-import { isKioskSafe, ensureQuality, QUALITY_PRESETS, transcodeToKioskSafe, probeVideo } from '../../server/services/transcode'
+import { isKioskSafe, ensureQuality, QUALITY_PRESETS, transcodeToKioskSafe, probeVideo, needsFpsCap, probeMatchesPreset } from '../../server/services/transcode'
 import type { VideoProbe } from '../../server/services/transcode'
 
 ffmpegLib.setFfmpegPath(ffmpegPath.path)
@@ -22,6 +22,7 @@ function probe(overrides: Partial<VideoProbe> = {}): VideoProbe {
     width: 640,
     height: 360,
     frameRate: 25,
+    frameRateNominal: 25,
     level: 31,
     durationMs: 5000,
     audioCodec: 'aac',
@@ -114,17 +115,57 @@ describe('isKioskSafe', () => {
 
   it('tolerates VFR jitter around 30 — a phone "30 fps" clip probes at 30.03', () => {
     expect(isKioskSafe(probe({ frameRate: 30.03 }))).toBe(true)
-    expect(isKioskSafe(probe({ frameRate: 30.4 }))).toBe(true)
+    // 30.4 fps at 1080p tips x264 past level 4.0's macroblock ceiling, so the
+    // tolerance is a hair, not a rounding bucket.
+    expect(isKioskSafe(probe({ frameRate: 30.4 }))).toBe(false)
     expect(isKioskSafe(probe({ frameRate: 31 }))).toBe(false)
   })
 
-  it('accepts an unknown frame rate rather than forcing a re-encode', () => {
-    expect(isKioskSafe(probe({ frameRate: 0 }))).toBe(true)
+  it('judges by the nominal rate too — a VFR clip averaging 28 with 60 fps bursts is not safe', () => {
+    expect(isKioskSafe(probe({ frameRate: 28, frameRateNominal: 60 }))).toBe(false)
+  })
+
+  it('treats an UNKNOWN frame rate or level as unsafe — unproven is not proven', () => {
+    // isKioskSafe gates the backfill's skip decision; an unreadable field must
+    // force the re-encode, not silently pass the file.
+    expect(isKioskSafe(probe({ frameRate: 0, frameRateNominal: 0 }))).toBe(false)
+    expect(isKioskSafe(probe({ level: 0 }))).toBe(false)
   })
 
   it('rejects a level above 4.0', () => {
     expect(isKioskSafe(probe({ level: 42 }))).toBe(false)
     expect(isKioskSafe(probe({ level: 40 }))).toBe(true)
+  })
+})
+
+describe('needsFpsCap', () => {
+  it('caps strictly above the limit — 30.03 is resampled to an exact 30', () => {
+    expect(needsFpsCap(probe({ frameRate: 30.03, frameRateNominal: 30 }), 30)).toBe(true)
+    expect(needsFpsCap(probe({ frameRate: 30, frameRateNominal: 30 }), 30)).toBe(false)
+    expect(needsFpsCap(probe({ frameRate: 24, frameRateNominal: 24 }), 30)).toBe(false)
+  })
+
+  it('caps on the nominal rate when the average hides bursts', () => {
+    expect(needsFpsCap(probe({ frameRate: 28, frameRateNominal: 60 }), 30)).toBe(true)
+  })
+
+  it('caps when the rate is unknown — the cost is a duplicated frame, the risk is the freeze', () => {
+    expect(needsFpsCap(probe({ frameRate: 0, frameRateNominal: 0 }), 30)).toBe(true)
+  })
+})
+
+describe('probeMatchesPreset', () => {
+  it('accepts output inside the preset envelope', () => {
+    expect(probeMatchesPreset(probe({ width: 1280, height: 720, frameRate: 30, level: 31 }), 'standard')).toBeNull()
+    expect(probeMatchesPreset(probe({ width: 1920, height: 1080, frameRate: 30, level: 40 }), 'high')).toBeNull()
+  })
+
+  it('names the violated axis', () => {
+    expect(probeMatchesPreset(probe({ width: 1920, height: 1080 }), 'standard')).toMatch(/dimensions/)
+    expect(probeMatchesPreset(probe({ frameRate: 54.5 }), 'high')).toMatch(/fps/)
+    expect(probeMatchesPreset(probe({ level: 42 }), 'high')).toMatch(/level/)
+    expect(probeMatchesPreset(probe({ profile: 'High' }), 'low')).toMatch(/profile/)
+    expect(probeMatchesPreset(probe({ pixFmt: 'yuv422p' }), 'low')).toMatch(/pix_fmt/)
   })
 })
 
