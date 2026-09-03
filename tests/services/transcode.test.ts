@@ -21,6 +21,8 @@ function probe(overrides: Partial<VideoProbe> = {}): VideoProbe {
     pixFmt: 'yuv420p',
     width: 640,
     height: 360,
+    frameRate: 25,
+    level: 31,
     durationMs: 5000,
     audioCodec: 'aac',
     ...overrides,
@@ -38,12 +40,13 @@ async function generateClip(
     width: number
     height: number
     durationSecs?: number
+    fps?: number
   }
 ): Promise<void> {
-  const { profile, width, height, durationSecs = 1 } = opts
+  const { profile, width, height, durationSecs = 1, fps = 10 } = opts
   return new Promise((resolve, reject) => {
     ffmpegLib()
-      .input(`testsrc=duration=${durationSecs}:size=${width}x${height}:rate=10`)
+      .input(`testsrc=duration=${durationSecs}:size=${width}x${height}:rate=${fps}`)
       .inputOptions(['-f', 'lavfi'])
       .outputOptions([
         '-c:v', 'libx264',
@@ -97,6 +100,31 @@ describe('isKioskSafe', () => {
 
   it('rejects mp3 audioCodec', () => {
     expect(isKioskSafe(probe({ audioCodec: 'mp3' }))).toBe(false)
+  })
+
+  it('rejects >30 fps — 1080p54 is what froze a prod TV mid-clip', () => {
+    expect(isKioskSafe(probe({ frameRate: 54.5454 }))).toBe(false)
+    expect(isKioskSafe(probe({ frameRate: 60 }))).toBe(false)
+  })
+
+  it('accepts 30 fps and below', () => {
+    expect(isKioskSafe(probe({ frameRate: 30 }))).toBe(true)
+    expect(isKioskSafe(probe({ frameRate: 23.976 }))).toBe(true)
+  })
+
+  it('tolerates VFR jitter around 30 — a phone "30 fps" clip probes at 30.03', () => {
+    expect(isKioskSafe(probe({ frameRate: 30.03 }))).toBe(true)
+    expect(isKioskSafe(probe({ frameRate: 30.4 }))).toBe(true)
+    expect(isKioskSafe(probe({ frameRate: 31 }))).toBe(false)
+  })
+
+  it('accepts an unknown frame rate rather than forcing a re-encode', () => {
+    expect(isKioskSafe(probe({ frameRate: 0 }))).toBe(true)
+  })
+
+  it('rejects a level above 4.0', () => {
+    expect(isKioskSafe(probe({ level: 42 }))).toBe(false)
+    expect(isKioskSafe(probe({ level: 40 }))).toBe(true)
   })
 })
 
@@ -203,9 +231,22 @@ describe('ensureQuality (integration)', () => {
 
 describe('QUALITY_PRESETS', () => {
   it('has low/standard/high with the agreed caps + crf', () => {
-    expect(QUALITY_PRESETS.low).toEqual({ maxLong: 854, maxShort: 480, crf: 26, audioBitrate: '96k' })
-    expect(QUALITY_PRESETS.standard).toEqual({ maxLong: 1280, maxShort: 720, crf: 23, audioBitrate: '128k' })
-    expect(QUALITY_PRESETS.high).toEqual({ maxLong: 1920, maxShort: 1080, crf: 20, audioBitrate: '128k' })
+    expect(QUALITY_PRESETS.low).toEqual({
+      maxLong: 854, maxShort: 480, maxFps: 30, crf: 26,
+      maxrate: '2M', bufsize: '4M', audioBitrate: '96k',
+    })
+    expect(QUALITY_PRESETS.standard).toEqual({
+      maxLong: 1280, maxShort: 720, maxFps: 30, crf: 23,
+      maxrate: '4M', bufsize: '8M', audioBitrate: '128k',
+    })
+    expect(QUALITY_PRESETS.high).toEqual({
+      maxLong: 1920, maxShort: 1080, maxFps: 30, crf: 20,
+      maxrate: '6M', bufsize: '12M', audioBitrate: '128k',
+    })
+  })
+
+  it('caps every preset at 30 fps — the WebView decoder budget, not the pixels', () => {
+    for (const p of Object.values(QUALITY_PRESETS)) expect(p.maxFps).toBe(30)
   })
 })
 
@@ -229,6 +270,46 @@ describe('transcodeToKioskSafe per preset', () => {
     expect(p.profile).toBe('Main')
     expect(p.pixFmt).toBe('yuv420p')
   }, 60_000)
+})
+
+describe('frame-rate and bitrate ceilings', () => {
+  let dir: string
+  afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }) })
+
+  it('caps a 60 fps 1080p source to <=30 fps at level <=4.0', async () => {
+    dir = makeTmpDir()
+    const src = join(dir, 'src.mp4')
+    const out = join(dir, 'out.mp4')
+    await generateClip(src, { profile: 'high', width: 1920, height: 1080, durationSecs: 2, fps: 60 })
+    await transcodeToKioskSafe(src, out, 'high')
+    const p = await probeVideo(out)
+    expect(p.frameRate).toBeLessThanOrEqual(30)
+    expect(p.level).toBeLessThanOrEqual(40)
+    // NOTE: `high` output is still 1080p, which isKioskSafe rejects on
+    // resolution alone — the preset deliberately exceeds the documented ≤720p
+    // envelope. fps/level/VBV are now in bounds; the resolution is not.
+    expect(isKioskSafe(p)).toBe(false)
+  }, 120_000)
+
+  it('a 60 fps 1080p source run through `standard` comes out fully kiosk-safe', async () => {
+    dir = makeTmpDir()
+    const src = join(dir, 'src.mp4')
+    const out = join(dir, 'out.mp4')
+    await generateClip(src, { profile: 'high', width: 1920, height: 1080, durationSecs: 2, fps: 60 })
+    await transcodeToKioskSafe(src, out, 'standard')
+    const p = await probeVideo(out)
+    expect(isKioskSafe(p)).toBe(true)
+  }, 120_000)
+
+  it('leaves a source already below the cap alone (no frame duplication)', async () => {
+    dir = makeTmpDir()
+    const src = join(dir, 'src.mp4')
+    const out = join(dir, 'out.mp4')
+    await generateClip(src, { profile: 'main', width: 640, height: 360, durationSecs: 2, fps: 24 })
+    await transcodeToKioskSafe(src, out, 'standard')
+    const p = await probeVideo(out)
+    expect(p.frameRate).toBeCloseTo(24, 1)
+  }, 120_000)
 })
 
 describe('ensureQuality always re-encodes', () => {

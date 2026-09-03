@@ -130,25 +130,31 @@ async function main(): Promise<void> {
       const readable = await store.open(row.sha256)
       await streamToFile(readable as NodeJS.ReadableStream, tmpIn)
 
-      // --- Dry-run: probe only, never transcode (fast preview) ---
-      // A dry-run must be a near-instant probe-only pass so an operator can
-      // preview a large prod library without paying for the full transcode.
+      // --- Probe first, in BOTH modes ---
+      // The conforming-skip has to gate the real run too, not just the preview:
+      // ensureQuality always re-encodes, so without this a re-run rewrites every
+      // row — new sha, new bytes, another generation of lossy re-encode, and a
+      // playlist version bump per file. That is the opposite of the idempotence
+      // this script's header promises, and it is what made a re-run silently
+      // re-encode an already-safe 720p30 clip.
+      const sourceProbe = await probeVideo(tmpIn)
+      if (isKioskSafe(sourceProbe)) {
+        console.log(`${label} skip (already conforming)`)
+        countSkipped++
+        continue
+      }
       if (DRY_RUN) {
-        const probe = await probeVideo(tmpIn)
-        if (isKioskSafe(probe)) {
-          console.log(`${label} skip (already conforming)`)
-          countSkipped++
-        } else {
-          console.log(
-            `${label} [dry-run] WOULD transcode:\n` +
-            `  current: profile=${probe.profile} codec=${probe.codec} pixFmt=${probe.pixFmt} dims=${probe.width}x${probe.height} bytes=${row.bytes}`
-          )
-          countTranscoded++
-        }
+        console.log(
+          `${label} [dry-run] WOULD transcode:\n` +
+          `  current: profile=${sourceProbe.profile} codec=${sourceProbe.codec} pixFmt=${sourceProbe.pixFmt} ` +
+          `dims=${sourceProbe.width}x${sourceProbe.height} fps=${sourceProbe.frameRate.toFixed(2)} ` +
+          `level=${sourceProbe.level} bytes=${row.bytes}`
+        )
+        countTranscoded++
         continue
       }
 
-      // --- Real run: probe + transcode + re-probe ---
+      // --- Real run: transcode + re-probe ---
       const { path: finalPath, probe } = await ensureQuality(tmpIn, tmpDir, 'standard')
 
       // Compute new sha256
@@ -207,6 +213,10 @@ async function main(): Promise<void> {
           width: probe.width,
           height: probe.height,
           durationMs: probe.durationMs,
+          // The backfill always re-encodes at `standard`; leaving a stale
+          // `high` here would have the dashboard advertise a quality the bytes
+          // no longer are.
+          quality: 'standard',
         })
         .where(eq(schema.media.id, row.id))
 

@@ -24,8 +24,22 @@ export interface VideoProbe {
   pixFmt: string
   width: number
   height: number
+  /** Average frames per second; 0 when ffprobe can't determine it. */
+  frameRate: number
+  /** H.264 level ×10 (40 = level 4.0); 0 when unknown. */
+  level: number
   durationMs: number
   audioCodec: string | null
+}
+
+/** Parses ffprobe's "num/den" rate strings; 0 for absent/"0/0"/garbage. */
+function parseRate(raw: string | undefined): number {
+  if (!raw) return 0
+  const [num, den] = raw.split('/')
+  const n = Number(num)
+  const d = den === undefined ? 1 : Number(den)
+  if (!Number.isFinite(n) || !Number.isFinite(d) || d === 0) return 0
+  return n / d
 }
 
 /**
@@ -60,6 +74,13 @@ export async function probeVideo(path: string): Promise<VideoProbe> {
         pixFmt: videoStream.pix_fmt ?? '',
         width: videoStream.width ?? 0,
         height: videoStream.height ?? 0,
+        // avg over r_frame_rate: iPhone clips are variable-rate, and the
+        // container's nominal rate overstates what was actually recorded.
+        frameRate:
+          parseRate(videoStream.avg_frame_rate) ||
+          parseRate(videoStream.r_frame_rate),
+        // ffprobe reports -99 for "unknown" on some builds; fold that into 0.
+        level: Math.max(0, Number(videoStream.level) || 0),
         durationMs,
         audioCodec: audioStream ? (audioStream.codec_name ?? null) : null,
       })
@@ -69,10 +90,32 @@ export async function probeVideo(path: string): Promise<VideoProbe> {
 
 const SAFE_PROFILES = new Set(['Constrained Baseline', 'Baseline', 'Main'])
 
+/** Frames per second the kiosk WebView decoder is reliably good for. Pixels are
+ *  only half the budget: a 1080p54 clip has roughly twice the macroblock rate of
+ *  1080p30 and pushes past H.264 level 4.0, which is where the Amlogic/Xiaomi
+ *  WebView path starts dropping out mid-clip. */
+export const MAX_KIOSK_FPS = 30
+
+/** H.264 level ceiling (×10). 4.0 covers 1080p30 and is the highest level these
+ *  boxes decode dependably through the WebView. */
+export const MAX_KIOSK_LEVEL = 40
+
+/** Whether a measured frame rate is over the cap. Rounded, because the decoder
+ *  budget is not a 30.000 cliff and VFR phone clips probe at 30.03 or 29.98 —
+ *  an exact compare would send a perfectly playable "30 fps" clip through
+ *  another lossy re-encode. */
+export function exceedsFpsCap(fps: number): boolean {
+  return Math.round(fps) > MAX_KIOSK_FPS
+}
+
 /**
  * Returns true if the probe indicates the video is safe to play on kiosk
  * WebViews (Amlogic/Xiaomi boxes): h264 Main-or-below, yuv420p, ≤720p short
- * side, aac (or no) audio.
+ * side, ≤30 fps, ≤level 4.0, aac (or no) audio.
+ *
+ * Unknown frame rate/level (0) counts as safe — an unreadable field is not
+ * evidence of a problem, and the maintenance scripts use this to decide what to
+ * re-encode.
  */
 export function isKioskSafe(p: VideoProbe): boolean {
   return (
@@ -81,30 +124,53 @@ export function isKioskSafe(p: VideoProbe): boolean {
     p.pixFmt === 'yuv420p' &&
     Math.max(p.width, p.height) <= 1280 &&
     Math.min(p.width, p.height) <= 720 &&
+    !exceedsFpsCap(p.frameRate) &&
+    p.level <= MAX_KIOSK_LEVEL &&
     (p.audioCodec === null || p.audioCodec === 'aac')
   )
 }
 
 export type QualityPreset = 'low' | 'standard' | 'high'
 
-/** Resolution cap (scale-down only), CRF, and audio bitrate per preset.
- *  All presets emit H.264 Main / yuv420p / +faststart. `standard` reproduces
- *  the original hardcoded kiosk-safe profile. */
+/** Resolution cap (scale-down only), frame-rate cap, CRF, VBV ceiling and audio
+ *  bitrate per preset. All presets emit H.264 Main / yuv420p / level ≤4.0 /
+ *  +faststart. `standard` reproduces the original hardcoded kiosk-safe profile.
+ *
+ *  `maxrate`/`bufsize` matter as much as the resolution: bare CRF leaves VBV
+ *  unconstrained, so a busy scene can spike far above the average — a prod clip
+ *  averaging 2.4 Mbps peaked at 11 Mbps and froze the TV in that stretch. The
+ *  ceilings turn CRF into capped-CRF: quality-driven where it's cheap, hard
+ *  limited where it isn't. */
 export const QUALITY_PRESETS: Record<QualityPreset, {
   maxLong: number
   maxShort: number
+  maxFps: number
   crf: number
+  maxrate: string
+  bufsize: string
   audioBitrate: string
 }> = {
-  low: { maxLong: 854, maxShort: 480, crf: 26, audioBitrate: '96k' },
-  standard: { maxLong: 1280, maxShort: 720, crf: 23, audioBitrate: '128k' },
-  high: { maxLong: 1920, maxShort: 1080, crf: 20, audioBitrate: '128k' },
+  low: {
+    maxLong: 854, maxShort: 480, maxFps: MAX_KIOSK_FPS, crf: 26,
+    maxrate: '2M', bufsize: '4M', audioBitrate: '96k',
+  },
+  standard: {
+    maxLong: 1280, maxShort: 720, maxFps: MAX_KIOSK_FPS, crf: 23,
+    maxrate: '4M', bufsize: '8M', audioBitrate: '128k',
+  },
+  high: {
+    maxLong: 1920, maxShort: 1080, maxFps: MAX_KIOSK_FPS, crf: 20,
+    maxrate: '6M', bufsize: '12M', audioBitrate: '128k',
+  },
 }
 
 /**
  * Transcodes `inPath` to `outPath` using the specified quality preset:
- *   - H.264 Main profile, yuv420p, veryfast preset, +faststart
+ *   - H.264 Main profile, level ≤4.0, yuv420p, veryfast preset, +faststart
  *   - Scale: short side ≤maxShort, long side ≤maxLong, no upscale, even dimensions
+ *   - Frame rate capped at the preset's maxFps (only when the source exceeds it,
+ *     so a 24 fps source is not padded with duplicate frames)
+ *   - Capped CRF: quality-driven, hard-limited by maxrate/bufsize
  *   - AAC audio at the preset's audioBitrate, stereo
  *
  * Rejects on error or if the encode exceeds TRANSCODE_TIMEOUT_MS.
@@ -115,16 +181,40 @@ export async function transcodeToKioskSafe(
   preset: QualityPreset
 ): Promise<void> {
   const p = QUALITY_PRESETS[preset]
+
+  // The fps filter can only drop or duplicate to hit an exact rate — it has no
+  // "cap" mode — so decide from the source. An unreadable rate (0) is treated as
+  // "might be too high": capping costs a duplicated frame or two, not capping
+  // risks the freeze this whole change exists to prevent.
+  let sourceFps = 0
+  try {
+    sourceFps = (await probeVideo(inPath)).frameRate
+  } catch {
+    /* leave at 0 → cap */
+  }
+  const capFps = sourceFps === 0 || exceedsFpsCap(sourceFps)
+
+  const scale = `scale='if(gt(iw,ih),-2,min(${p.maxShort},iw))':'if(gt(iw,ih),min(${p.maxShort},ih),-2)',scale='if(gt(iw,ih),min(${p.maxLong},iw),-2)':'if(gt(iw,ih),-2,min(${p.maxLong},ih))'`
+  // Drop frames BEFORE scaling: on a 55 fps 1080p source that is ~45% fewer
+  // frames through the scaler, which matters on the 2-vCPU prod box.
+  const vf = capFps ? `fps=${p.maxFps},${scale}` : scale
+
   return new Promise((resolve, reject) => {
     const command = ffmpeg(inPath)
       .outputOptions([
-        '-vf',
-        `scale='if(gt(iw,ih),-2,min(${p.maxShort},iw))':'if(gt(iw,ih),min(${p.maxShort},ih),-2)',scale='if(gt(iw,ih),min(${p.maxLong},iw),-2)':'if(gt(iw,ih),-2,min(${p.maxLong},ih))'`,
+        '-vf', vf,
         '-c:v', 'libx264',
         '-profile:v', 'main',
+        // No explicit -level: x264 derives the minimum level that fits the
+        // capped resolution/fps/bitrate, which lands at or below
+        // MAX_KIOSK_LEVEL. Pinning it to 4.0 would only ever *raise* the
+        // declared level (a 720p30 clip needing 3.1 would advertise 4.0 and ask
+        // decoders for buffers it doesn't need).
         '-pix_fmt', 'yuv420p',
         '-preset', 'veryfast',
         '-crf', String(p.crf),
+        '-maxrate', p.maxrate,
+        '-bufsize', p.bufsize,
         '-c:a', 'aac',
         '-b:a', p.audioBitrate,
         '-ac', '2',
