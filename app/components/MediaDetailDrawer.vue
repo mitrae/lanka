@@ -1,6 +1,7 @@
 <!-- app/components/MediaDetailDrawer.vue -->
 <script setup lang="ts">
 import type { MediaDetail, Organization } from '~/app/types/api'
+import { downloadName, mediaFileUrl } from './MediaDetailDrawer.logic'
 
 const props = defineProps<{ mediaId: number | null }>()
 const emit = defineEmits<{ 'update:open': [boolean]; changed: [] }>()
@@ -90,6 +91,40 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
   >
     <template #body>
       <div v-if="detail" class="space-y-6">
+        <!-- Preview the exact transcoded bytes the TVs receive. Handy when a
+             clip misbehaves on a box: if it plays here but not there, the
+             problem is the box's decoder, not the file. -->
+        <div class="space-y-2">
+          <video
+            v-if="detail.kind === 'video'"
+            :key="detail.sha256"
+            :src="mediaFileUrl(detail.sha256)"
+            controls
+            playsinline
+            preload="metadata"
+            class="w-full rounded-md bg-black"
+          />
+          <img
+            v-else
+            :key="detail.sha256"
+            :src="mediaFileUrl(detail.sha256)"
+            :alt="detail.filename"
+            class="w-full rounded-md bg-black object-contain"
+          >
+          <UButton
+            :to="mediaFileUrl(detail.sha256)"
+            :download="downloadName(detail.filename, detail.mimeType)"
+            external
+            color="neutral"
+            variant="subtle"
+            size="sm"
+            icon="i-lucide-download"
+            block
+          >
+            {{ $t('media.download') }}
+          </UButton>
+        </div>
+
         <div>
           <p class="mb-1 text-sm text-(--ui-text-muted)">{{ $t('media.nameLabel') }}</p>
           <div v-if="editingName" class="flex flex-col gap-2">

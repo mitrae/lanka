@@ -341,7 +341,8 @@
     "nameLabel": "Name",
     "renamed": "File renamed",
     "renameFailed": "Could not rename the file",
-    "renameHint": "Display name only — the stored file is unchanged."
+    "renameHint": "Display name only — the stored file is unchanged.",
+    "download": "Download file"
   },
   "users": {
     "pageTitle": "Users",
