@@ -63,6 +63,30 @@ describe('createStallWatchdog', () => {
     expect(w.observe({ nowMs: 6000, currentTime: 5.000009, expectPlaying: true })).toBe(true)
   })
 
+  it('uses the long startup threshold until playback has begun', () => {
+    // Cold load: currentTime sits at 0 while the first bytes arrive. Treating
+    // that like a mid-clip freeze reloads the element every 8 s and discards
+    // the buffered progress each time — a slow link never converges.
+    const w = createStallWatchdog({ startupMs: 45_000, playingMs: 8000 })
+    w.observe({ nowMs: 0, currentTime: 0, expectPlaying: true, started: false })
+    expect(w.observe({ nowMs: 8000, currentTime: 0, expectPlaying: true, started: false })).toBe(false)
+    expect(w.observe({ nowMs: 30_000, currentTime: 0, expectPlaying: true, started: false })).toBe(false)
+    expect(w.observe({ nowMs: 45_000, currentTime: 0, expectPlaying: true, started: false })).toBe(true)
+  })
+
+  it('switches to the short threshold once playback has begun', () => {
+    const w = createStallWatchdog({ startupMs: 45_000, playingMs: 8000 })
+    w.observe({ nowMs: 0, currentTime: 12, expectPlaying: true, started: true })
+    expect(w.observe({ nowMs: 7000, currentTime: 12, expectPlaying: true, started: true })).toBe(false)
+    expect(w.observe({ nowMs: 8000, currentTime: 12, expectPlaying: true, started: true })).toBe(true)
+  })
+
+  it('a plain number sets both thresholds (existing callers)', () => {
+    const w = createStallWatchdog(6000)
+    w.observe({ nowMs: 0, currentTime: 0, expectPlaying: true, started: false })
+    expect(w.observe({ nowMs: 6000, currentTime: 0, expectPlaying: true, started: false })).toBe(true)
+  })
+
   it('reset() clears the window so a fresh source starts clean', () => {
     const w = createStallWatchdog(6000)
     w.observe({ nowMs: 0, currentTime: 5, expectPlaying: true })

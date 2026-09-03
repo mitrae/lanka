@@ -12,9 +12,16 @@
 // half of that fix.)
 //
 // The watchdog is fed periodic samples and reports a stall once media time has
-// failed to advance for `thresholdMs` while playback was supposed to be
-// progressing. No DOM, no timers — the caller owns both, which keeps this
+// failed to advance for the applicable threshold while playback was supposed to
+// be progressing. No DOM, no timers — the caller owns both, which keeps this
 // testable in the plain-node vitest environment.
+//
+// Two thresholds, because "no progress" means different things before and
+// after the first decoded frame. A cold load legitimately sits at currentTime 0
+// while the moov atom and first GOP arrive; on a slow link that can exceed a
+// mid-clip freeze threshold, and reloading there discards the buffered progress
+// and restarts the clock — a loop that never converges. So a load that has not
+// yet produced a frame gets the long `startupMs`; once it has, `playingMs`.
 
 export interface StallSample {
   /** Wall-clock milliseconds. */
@@ -24,6 +31,9 @@ export interface StallSample {
   /** False while the element is legitimately not advancing (paused, ended,
    *  no source, not the front slot) — those stretches never count as a stall. */
   expectPlaying: boolean
+  /** Whether this load has ever decoded a frame (readyState ≥ HAVE_CURRENT_DATA).
+   *  Selects the threshold; defaults to true for callers with a single one. */
+  started?: boolean
 }
 
 export interface StallWatchdog {
@@ -33,6 +43,13 @@ export interface StallWatchdog {
   reset(): void
 }
 
+export interface StallThresholds {
+  /** Applies until the load has produced its first frame. */
+  startupMs: number
+  /** Applies once playback has begun. */
+  playingMs: number
+}
+
 /** Media time can drift by microseconds on a dead decoder; anything below this
  *  is noise, not progress. Well under one frame at any sane frame rate. */
 const PROGRESS_EPSILON_SECS = 0.001
@@ -40,8 +57,13 @@ const PROGRESS_EPSILON_SECS = 0.001
 export const DEFAULT_STALL_THRESHOLD_MS = 6000
 
 export function createStallWatchdog(
-  thresholdMs: number = DEFAULT_STALL_THRESHOLD_MS
+  thresholds: number | StallThresholds = DEFAULT_STALL_THRESHOLD_MS
 ): StallWatchdog {
+  const t: StallThresholds =
+    typeof thresholds === 'number'
+      ? { startupMs: thresholds, playingMs: thresholds }
+      : thresholds
+
   let sinceMs: number | null = null
   let atTime = 0
 
@@ -66,7 +88,8 @@ export function createStallWatchdog(
         restart(sample)
         return false
       }
-      if (sample.nowMs - sinceMs >= thresholdMs) {
+      const threshold = sample.started === false ? t.startupMs : t.playingMs
+      if (sample.nowMs - sinceMs >= threshold) {
         // Re-arm rather than latch, so a clip that stays frozen yields one
         // recovery attempt per threshold instead of one per sampling tick.
         restart(sample)

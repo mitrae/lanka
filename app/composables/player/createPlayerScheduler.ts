@@ -30,6 +30,14 @@ export interface SchedulerHandle {
   start(): void
   itemEnded(index: number): void
   itemErrored(index: number, message: string): void
+  /**
+   * Report a failure WITHOUT letting it drive playback. For errors that must
+   * reach telemetry but must not advance, retry or count toward the stalled
+   * threshold: a failure in the hidden preload slot (the visible item is
+   * fine), and the consecutive error that trips the stalled state itself
+   * (which `reportError` used to swallow unreported).
+   */
+  noteError(index: number, message: string): void
   stop(): void
   getFrontIndex(): number
   getBackIndex(): number
@@ -146,6 +154,10 @@ export function createPlayerScheduler(
       }
       if (index !== front) return // stale
       advance()
+    },
+    noteError(index, msg) {
+      if (stopped) return
+      emitError(index, msg)
     },
     itemErrored(index, msg) {
       if (stopped) return

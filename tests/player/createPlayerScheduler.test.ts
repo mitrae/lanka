@@ -238,6 +238,24 @@ describe('createPlayerScheduler', () => {
     expect(createPlayerScheduler([], deps).advancesOnError).toBe(false)
   })
 
+  it('noteError only reports — never advances, in any mode', () => {
+    // Used for failures that must reach telemetry but must NOT drive
+    // playback: an error in the hidden preload slot, and the 5th consecutive
+    // error that trips the stalled state (previously swallowed unreported).
+    const items = [video(1), video(2), video(3)]
+    const s = createPlayerScheduler(items, deps)
+    const errs: { index: number; msg: string }[] = []
+    const transitions: unknown[] = []
+    s.onItemError((index, msg) => errs.push({ index, msg }))
+    s.onTransition((e) => transitions.push(e))
+    s.start()
+
+    s.noteError(0, 'preload failed') // index === front, would advance via itemErrored
+    expect(errs).toEqual([{ index: 0, msg: 'preload failed' }])
+    expect(transitions).toEqual([])
+    expect(s.getFrontIndex()).toBe(0)
+  })
+
   it('single-video itemErrored reports the error but never advances', () => {
     const items = [video(1)]
     const s = createPlayerScheduler(items, deps)
