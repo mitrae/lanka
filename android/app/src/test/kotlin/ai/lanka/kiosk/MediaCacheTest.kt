@@ -9,6 +9,7 @@ import org.junit.Before
 import org.junit.Test
 import java.net.ServerSocket
 import java.nio.file.Files
+import java.security.MessageDigest
 
 class MediaCacheTest {
 
@@ -75,7 +76,7 @@ class MediaCacheTest {
 
     @Test fun `downloadSync downloads file successfully`() {
         val content = "hello media content".toByteArray()
-        val sha = "e".repeat(64)
+        val sha = sha256Hex(content)
         val port = serveOnce(200, "video/mp4", content)
         cache.downloadSync(sha, "http://127.0.0.1:$port/media")
         assertTrue(cache.exists(sha))
@@ -95,6 +96,72 @@ class MediaCacheTest {
         assertFalse(cache.exists(sha))
         val tmpFiles = tempDir.listFiles { f -> f.name.endsWith(".tmp") } ?: emptyArray()
         assertEquals(0, tmpFiles.size)
+    }
+
+    // --- download verification: the path IS the hash ---
+
+    @Test fun `downloadSync rejects a body shorter than Content-Length`() {
+        // The JVM's HttpURLConnection returns a clean EOF on a short body — the
+        // exact silent-truncation path the verification exists for. Without it
+        // the partial file is renamed into place, exists() blesses it forever,
+        // and the clip plays up to the cut on every loop.
+        val content = "only part of the file arrives".toByteArray()
+        val sha = sha256Hex(content)
+        val port = serveOnce(200, "video/mp4", content, declaredLength = content.size + 1000)
+        var threw = false
+        try { cache.downloadSync(sha, "http://127.0.0.1:$port/media") } catch (_: Exception) { threw = true }
+        assertTrue("truncated body must throw", threw)
+        assertFalse(cache.exists(sha))
+        assertEquals(0, (tempDir.listFiles { f -> f.name.endsWith(".tmp") } ?: emptyArray()).size)
+    }
+
+    @Test fun `downloadSync rejects bytes whose hash is not the requested sha`() {
+        val content = "these are not the bytes you asked for".toByteArray()
+        val sha = "e".repeat(64) // deliberately not sha256(content)
+        val port = serveOnce(200, "video/mp4", content)
+        var threw = false
+        try { cache.downloadSync(sha, "http://127.0.0.1:$port/media") } catch (_: Exception) { threw = true }
+        assertTrue("hash mismatch must throw", threw)
+        assertFalse(cache.exists(sha))
+        assertEquals(0, (tempDir.listFiles { f -> f.name.endsWith(".tmp") } ?: emptyArray()).size)
+    }
+
+    // --- Range planning (RFC 7233) ---
+
+    @Test fun `no Range header is a full response`() {
+        assertEquals(MediaCache.RangePlan.Full, cache.planRangeForTesting(null, 100))
+    }
+
+    @Test fun `a malformed Range header is ignored, not rejected`() {
+        assertEquals(MediaCache.RangePlan.Full, cache.planRangeForTesting("bytes=abc", 100))
+        assertEquals(MediaCache.RangePlan.Full, cache.planRangeForTesting("bytes=-", 100))
+        assertEquals(MediaCache.RangePlan.Full, cache.planRangeForTesting("items=0-1", 100))
+    }
+
+    @Test fun `well-formed ranges are honoured and clamped`() {
+        assertEquals(MediaCache.RangePlan.Partial(0, 9), cache.planRangeForTesting("bytes=0-9", 100))
+        assertEquals(MediaCache.RangePlan.Partial(50, 99), cache.planRangeForTesting("bytes=50-", 100))
+        assertEquals(MediaCache.RangePlan.Partial(50, 99), cache.planRangeForTesting("bytes=50-500", 100))
+        assertEquals(MediaCache.RangePlan.Partial(90, 99), cache.planRangeForTesting("bytes=-10", 100))
+        assertEquals(MediaCache.RangePlan.Partial(0, 99), cache.planRangeForTesting("bytes=-1000", 100))
+    }
+
+    @Test fun `a range past the end is unsatisfiable, not a silent full body`() {
+        // A full 200 here tells Chromium the server ignores ranges, and it
+        // re-reads the whole object from 0.
+        assertEquals(MediaCache.RangePlan.Unsatisfiable, cache.planRangeForTesting("bytes=100-", 100))
+        assertEquals(MediaCache.RangePlan.Unsatisfiable, cache.planRangeForTesting("bytes=500-600", 100))
+        assertEquals(MediaCache.RangePlan.Unsatisfiable, cache.planRangeForTesting("bytes=60-50", 100))
+        assertEquals(MediaCache.RangePlan.Unsatisfiable, cache.planRangeForTesting("bytes=-0", 100))
+    }
+
+    @Test fun `a partial stream serves exactly the requested bytes from the requested offset`() {
+        val sha = "a".repeat(64)
+        val bytes = ByteArray(1000) { (it % 251).toByte() }
+        java.io.File(tempDir, sha).writeBytes(bytes)
+        val out = cache.openRangeForTesting(sha, 300, 449).use { it.readBytes() }
+        assertEquals(150, out.size)
+        assertArrayEquals(bytes.copyOfRange(300, 450), out)
     }
 
     // --- mimeFor (served Content-Type for the interceptor) ---
@@ -157,7 +224,7 @@ class MediaCacheTest {
         // guard must NOT block the download in that case — only block when
         // available is known positive but still less than contentLength.
         val content = "guard test content".toByteArray()
-        val sha = "g".repeat(64)
+        val sha = sha256Hex(content)
         val port = serveOnce(200, "video/mp4", content)
         cache.downloadSync(sha, "http://127.0.0.1:$port/media")
         assertTrue(cache.exists(sha))
@@ -177,7 +244,11 @@ class MediaCacheTest {
      * response, then shuts down. Returns the port. Uses only standard Java —
      * no external dependencies.
      */
-    private fun serveOnce(status: Int, contentType: String, body: ByteArray): Int {
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /** [declaredLength] lets a test advertise more bytes than it sends. */
+    private fun serveOnce(status: Int, contentType: String, body: ByteArray, declaredLength: Int = body.size): Int {
         val ss = ServerSocket(0)
         val port = ss.localPort
         Thread {
@@ -192,7 +263,7 @@ class MediaCacheTest {
                     404 -> "HTTP/1.1 404 Not Found"
                     else -> "HTTP/1.1 $status"
                 }
-                val headers = "$statusLine\r\nContent-Type: $contentType\r\nContent-Length: ${body.size}\r\n\r\n"
+                val headers = "$statusLine\r\nContent-Type: $contentType\r\nContent-Length: $declaredLength\r\n\r\n"
                 client.getOutputStream().apply {
                     write(headers.toByteArray())
                     write(body)

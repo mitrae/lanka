@@ -6,11 +6,15 @@ import android.os.StatFs
 import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.channels.Channels
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
@@ -75,7 +79,8 @@ class MediaCache private constructor(private val dir: File) {
                     return
                 }
                 val mime = conn.contentType
-                conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                val (written, actualSha) = conn.inputStream.use { copyHashing(it, tmp) }
+                verifyDownload(sha256, contentLength, written, actualSha)
                 if (tmp.renameTo(File(dir, sha256))) {
                     if (mime != null) File(dir, "$sha256$TYPE_SUFFIX").writeText(mime)
                 }
@@ -85,6 +90,45 @@ class MediaCache private constructor(private val dir: File) {
         } catch (e: Exception) {
             tmp.delete()
             throw e
+        }
+    }
+
+    /**
+     * Streams [input] into [tmp], hashing as it goes. Returns bytes written and
+     * the sha256 hex. One pass — the 176 MB clips this fleet plays would make a
+     * second read for hashing noticeable on an Amlogic box.
+     */
+    private fun copyHashing(input: InputStream, tmp: File): Pair<Long, String> {
+        val md = MessageDigest.getInstance("SHA-256")
+        var written = 0L
+        tmp.outputStream().use { out ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                out.write(buf, 0, n)
+                md.update(buf, 0, n)
+                written += n
+            }
+        }
+        return written to md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Refuses a download that is not exactly the object asked for. The path IS
+     * the content hash, so "close enough" does not exist: a short body would be
+     * blessed by [exists] forever and play up to the cut every loop; wrong bytes
+     * under the right name would be served to <video> as if genuine. Android's
+     * HttpURLConnection does throw on a short body when Content-Length is
+     * known, but that is an implementation detail of one stack — the hash is
+     * the contract.
+     */
+    private fun verifyDownload(sha256: String, expectedLength: Long, written: Long, actualSha: String) {
+        if (expectedLength > 0L && written != expectedLength) {
+            throw IOException("truncated download for $sha256: $written of $expectedLength bytes")
+        }
+        if (!actualSha.equals(sha256, ignoreCase = true)) {
+            throw IOException("hash mismatch for $sha256: body hashes to $actualSha")
         }
     }
 
@@ -149,11 +193,17 @@ class MediaCache private constructor(private val dir: File) {
             if (conn.responseCode !in 200..299) return
             val mime = conn.contentType
             val tmp = File(dir, "$sha.${System.nanoTime()}$TMP_SUFFIX")
-            conn.inputStream.use { input -> tmp.outputStream().use { out -> input.copyTo(out) } }
-            if (tmp.renameTo(File(dir, sha))) {
-                if (mime != null) File(dir, "$sha$TYPE_SUFFIX").writeText(mime)
-            } else {
-                tmp.delete()
+            try {
+                val (written, actualSha) = conn.inputStream.use { copyHashing(it, tmp) }
+                verifyDownload(sha, conn.contentLengthLong, written, actualSha)
+                if (tmp.renameTo(File(dir, sha))) {
+                    if (mime != null) File(dir, "$sha$TYPE_SUFFIX").writeText(mime)
+                } else {
+                    tmp.delete()
+                }
+            } catch (e: Exception) {
+                tmp.delete() // previously leaked until the next process start
+                throw e
             }
         } finally {
             conn.disconnect()
@@ -182,42 +232,61 @@ class MediaCache private constructor(private val dir: File) {
             "Accept-Ranges" to "bytes",
             "Cache-Control" to "public, max-age=31536000, immutable"
         )
-        val range = rangeHeader?.let { parseRange(it, total) }
-        return if (range == null) {
-            headers["Content-Length"] = total.toString()
-            WebResourceResponse(mime, null, 200, "OK", headers, FileInputStream(file))
-        } else {
-            val (start, end) = range
-            headers["Content-Range"] = "bytes $start-$end/$total"
-            headers["Content-Length"] = (end - start + 1).toString()
-            WebResourceResponse(mime, null, 206, "Partial Content", headers, boundedStream(file, start, end))
+        return when (val plan = planRange(rangeHeader, total)) {
+            RangePlan.Full -> {
+                headers["Content-Length"] = total.toString()
+                WebResourceResponse(mime, null, 200, "OK", headers, FileInputStream(file))
+            }
+            RangePlan.Unsatisfiable -> {
+                // RFC 7233 §4.4. Answering a full 200 here instead would tell
+                // Chromium the server ignores ranges, and it would re-read the
+                // whole object from 0 — 176 MB through the interceptor for a
+                // request that asked for nothing.
+                headers["Content-Range"] = "bytes */$total"
+                headers["Content-Length"] = "0"
+                WebResourceResponse(mime, null, 416, "Range Not Satisfiable", headers, ByteArrayInputStream(ByteArray(0)))
+            }
+            is RangePlan.Partial -> {
+                headers["Content-Range"] = "bytes ${plan.start}-${plan.end}/$total"
+                headers["Content-Length"] = (plan.end - plan.start + 1).toString()
+                WebResourceResponse(mime, null, 206, "Partial Content", headers, boundedStream(file, plan.start, plan.end))
+            }
         }
     }
 
-    /** A FileInputStream positioned at start, yielding at most (end - start + 1) bytes. */
+    /** Test seam for the Range decision. */
+    internal fun planRangeForTesting(header: String?, total: Long): RangePlan = planRange(header, total)
+
+    /** Test seam for the positioned stream. */
+    internal fun openRangeForTesting(sha256: String, start: Long, end: Long): InputStream =
+        boundedStream(File(dir, sha256), start, end)
+
+    /**
+     * A stream positioned at exactly [start], yielding at most (end - start + 1)
+     * bytes. Positioned through the FileChannel: `InputStream.skip` is allowed
+     * to stop short, and the previous loop then served bytes from the wrong
+     * offset under a truthful Content-Range — the one interceptor bug that
+     * would corrupt playback at a specific timestamp with no error at all.
+     */
     private fun boundedStream(file: File, start: Long, end: Long): InputStream {
-        val fis = FileInputStream(file)
-        var skipped = 0L
-        while (skipped < start) {
-            val s = fis.skip(start - skipped)
-            if (s <= 0L) break
-            skipped += s
-        }
+        val channel = FileInputStream(file).channel
+        channel.position(start)
+        val src = Channels.newInputStream(channel)
         return object : InputStream() {
             private var remaining = end - start + 1
             override fun read(): Int {
                 if (remaining <= 0L) return -1
-                val b = fis.read()
+                val b = src.read()
                 if (b >= 0) remaining--
                 return b
             }
             override fun read(b: ByteArray, off: Int, len: Int): Int {
                 if (remaining <= 0L) return -1
-                val n = fis.read(b, off, minOf(len.toLong(), remaining).toInt())
+                val n = src.read(b, off, minOf(len.toLong(), remaining).toInt())
                 if (n > 0) remaining -= n
                 return n
             }
-            override fun close() = fis.close()
+            override fun close() = channel.close()
         }
     }
 
@@ -237,24 +306,39 @@ class MediaCache private constructor(private val dir: File) {
         }
     }
 
-    private fun parseRange(header: String, total: Long): Pair<Long, Long>? {
-        val m = RANGE.matchEntire(header.trim()) ?: return null
+    /** How to answer a request given its Range header (or none). */
+    internal sealed class RangePlan {
+        /** No header, or a malformed one — RFC 7233 §3.1 says ignore it. */
+        object Full : RangePlan()
+        data class Partial(val start: Long, val end: Long) : RangePlan()
+        /** Well-formed but outside the file: 416. */
+        object Unsatisfiable : RangePlan()
+    }
+
+    private fun planRange(header: String?, total: Long): RangePlan {
+        if (header == null) return RangePlan.Full
+        val m = RANGE.matchEntire(header.trim()) ?: return RangePlan.Full
         val (s, e) = m.destructured
         return try {
-            var start: Long
-            var end: Long
             when {
                 s.isEmpty() && e.isNotEmpty() -> {
-                    val n = e.toLong(); if (n <= 0L) return null
-                    start = maxOf(0L, total - n); end = total - 1
+                    val n = e.toLong()
+                    if (n <= 0L) RangePlan.Unsatisfiable
+                    else RangePlan.Partial(maxOf(0L, total - n), total - 1)
                 }
-                s.isNotEmpty() && e.isEmpty() -> { start = s.toLong(); end = total - 1 }
-                s.isNotEmpty() && e.isNotEmpty() -> { start = s.toLong(); end = minOf(e.toLong(), total - 1) }
-                else -> return null
+                s.isNotEmpty() && e.isEmpty() -> {
+                    val start = s.toLong()
+                    if (start >= total) RangePlan.Unsatisfiable else RangePlan.Partial(start, total - 1)
+                }
+                s.isNotEmpty() && e.isNotEmpty() -> {
+                    val start = s.toLong()
+                    val end = minOf(e.toLong(), total - 1)
+                    if (start >= total || start > end) RangePlan.Unsatisfiable else RangePlan.Partial(start, end)
+                }
+                else -> RangePlan.Full // "bytes=-": malformed
             }
-            if (start < 0L || start >= total || start > end) null else start to end
         } catch (e: NumberFormatException) {
-            null
+            RangePlan.Full
         }
     }
 
