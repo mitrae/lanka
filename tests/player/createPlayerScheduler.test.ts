@@ -228,6 +228,31 @@ describe('createPlayerScheduler', () => {
     expect(s.mode).toBe('empty')
   })
 
+  it('advancesOnError is true only for multi-item loops', () => {
+    // The stage branches on this: when the scheduler cannot advance past a
+    // broken item, the stage must retry the element itself or the screen
+    // freezes permanently. See PlayerStage.reportError.
+    expect(createPlayerScheduler([video(1), video(2)], deps).advancesOnError).toBe(true)
+    expect(createPlayerScheduler([video(1)], deps).advancesOnError).toBe(false)
+    expect(createPlayerScheduler([image(1)], deps).advancesOnError).toBe(false)
+    expect(createPlayerScheduler([], deps).advancesOnError).toBe(false)
+  })
+
+  it('single-video itemErrored reports the error but never advances', () => {
+    const items = [video(1)]
+    const s = createPlayerScheduler(items, deps)
+    const errs: { index: number; msg: string }[] = []
+    const transitions: unknown[] = []
+    s.onItemError((index, msg) => errs.push({ index, msg }))
+    s.onTransition((e) => transitions.push(e))
+    s.start()
+
+    s.itemErrored(0, 'video stalled')
+    expect(errs).toEqual([{ index: 0, msg: 'video stalled' }])
+    expect(transitions).toEqual([])
+    expect(s.getFrontIndex()).toBe(0)
+  })
+
   it('onItemStart returns an unsubscribe function', () => {
     const items = [video(1), video(2)]
     const s = createPlayerScheduler(items, deps)

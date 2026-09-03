@@ -4,6 +4,7 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Manifest, ManifestItem } from '~/app/types/api'
 import type { SchedulerHandle } from '~/app/composables/player/createPlayerScheduler'
 import type { PlayerEnv } from '~/app/composables/player/usePlayerEnv'
+import { createStallWatchdog } from '~/app/composables/player/createStallWatchdog'
 
 const props = defineProps<{
   manifest: Manifest
@@ -33,6 +34,17 @@ let consecutiveErrors = 0
 const stalled = ref(false)
 let recoveryTimer: number | null = null
 
+// Freeze detection. A <video> that dies mid-clip — decoder underrun on the
+// kiosk box, a hung byte range — fires `waiting`/`stalled`, NOT `error`, so
+// `@error`/`@ended` alone leave the frame stuck with no event to act on. We
+// poll currentTime instead and treat "media time frozen while playback was
+// expected" as an error, which feeds the same reporting + retry path.
+const STALL_SAMPLE_MS = 2000
+const STALL_THRESHOLD_MS = 8000
+const watchdog = createStallWatchdog(STALL_THRESHOLD_MS)
+let stallTimer: number | null = null
+let lastSeenTime = -1
+
 function clearRecoveryTimer(): void {
   if (recoveryTimer !== null) {
     window.clearTimeout(recoveryTimer)
@@ -51,6 +63,13 @@ function scheduleRecovery(): void {
     stalled.value = false
     mountInitial()
   }, RECOVERY_DELAY_MS)
+}
+
+/** Forget any in-flight stall window — after a retry, a slot swap or a
+ *  remount the element starts from a clean slate. */
+function resetProgressTracking(): void {
+  watchdog.reset()
+  lastSeenTime = -1
 }
 
 function frontSlot(): 'A' | 'B' {
@@ -85,9 +104,12 @@ function setItemInSlot(slot: 'A' | 'B', item: ManifestItem | null): void {
   }
 }
 
+function frontItem(): ManifestItem | null {
+  return frontIsA.value ? itemInA.value : itemInB.value
+}
+
 function playFrontVideoIfNeeded(): void {
-  const item =
-    frontIsA.value ? itemInA.value : itemInB.value
+  const item = frontItem()
   if (!item || item.type !== 'video') return
   const { video } = elementsFor(frontSlot())
   if (!video) return
@@ -96,6 +118,23 @@ function playFrontVideoIfNeeded(): void {
   void video.play().catch(() => {
     /* autoplay is muted; failures are swallowed and reported on error */
   })
+}
+
+/** Re-mount the current front item in place: re-assign src, reload, play.
+ *  The only recovery available when there is nothing to advance to. */
+function retryFrontItem(): void {
+  const item = frontItem()
+  if (!item) return
+  if (item.type === 'image') {
+    // Re-assigning an identical src is a no-op for <img> — the browser won't
+    // refetch, and no fresh load/error fires — so the retry has to change it.
+    // (<video> always re-runs its load algorithm, and we call load() anyway.)
+    const { img } = elementsFor(frontSlot())
+    if (img) img.removeAttribute('src')
+  }
+  setItemInSlot(frontSlot(), item)
+  playFrontVideoIfNeeded()
+  resetProgressTracking()
 }
 
 function reportError(index: number, msg: string): void {
@@ -109,6 +148,45 @@ function reportError(index: number, msg: string): void {
     return
   }
   props.scheduler.itemErrored(index, msg)
+  // A single-item playlist has nowhere to advance to: the scheduler records the
+  // error and returns. Without this retry the frame stays frozen until an
+  // operator bumps the playlist version — which is exactly how a prod TV sat on
+  // one still frame for hours (2026-09).
+  if (!props.scheduler.advancesOnError) retryFrontItem()
+}
+
+/** Poll the front video for frozen media time; report a stall as an error so it
+ *  gets a device_errors row and the same retry/backoff treatment. */
+function sampleProgress(): void {
+  if (stalled.value) return // the recovery timer owns retries in this state
+  const item = frontItem()
+  const { video } = elementsFor(frontSlot())
+  if (!item || item.type !== 'video' || !video) {
+    resetProgressTracking()
+    return
+  }
+  // `paused` is deliberately NOT part of this: a front video that ended up
+  // paused (rejected play(), dead decoder) is itself a fault we want to retry.
+  const expectPlaying = !!video.currentSrc && !video.ended
+  const currentTime = video.currentTime
+
+  if (
+    watchdog.observe({ nowMs: Date.now(), currentTime, expectPlaying })
+  ) {
+    const index = props.manifest.items.findIndex((i) => i.id === item.id)
+    if (index >= 0) reportError(index, 'video stalled')
+    return
+  }
+  // Real progress clears the error budget, so a clip that hiccups once an hour
+  // never drifts into the stalled banner. "Real" means relative to a previous
+  // sample of THIS load — `lastSeenTime < 0` is the post-reset sentinel, and
+  // comparing against it would count the freshly reloaded element's
+  // currentTime of 0 as progress, wiping the count after every retry and
+  // leaving a permanently frozen clip looping stall→retry with no escalation.
+  if (expectPlaying && lastSeenTime >= 0 && currentTime > lastSeenTime) {
+    consecutiveErrors = 0
+  }
+  lastSeenTime = currentTime
 }
 
 function onVideoEnded(slot: 'A' | 'B'): void {
@@ -141,15 +219,17 @@ function onImgLoad(): void {
 function mountInitial(): void {
   // Put item 0 in the front slot; item 1 in the back slot (may equal 0
   // in single-item mode — that's fine, the stage's display logic is idempotent).
-  const frontItem = props.manifest.items[props.scheduler.getFrontIndex()] ?? null
-  const backItem = props.manifest.items[props.scheduler.getBackIndex()] ?? null
-  setItemInSlot(frontSlot(), frontItem)
-  setItemInSlot(backSlot(), backItem)
+  const front = props.manifest.items[props.scheduler.getFrontIndex()] ?? null
+  const back = props.manifest.items[props.scheduler.getBackIndex()] ?? null
+  setItemInSlot(frontSlot(), front)
+  setItemInSlot(backSlot(), back)
   playFrontVideoIfNeeded()
+  resetProgressTracking()
 }
 
 onMounted(() => {
   mountInitial()
+  stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
 
   const unsubTransition = props.scheduler.onTransition((e) => {
     // The NEW front is the current back slot — flip which slot is front.
@@ -158,6 +238,7 @@ onMounted(() => {
     const nextItem = props.manifest.items[e.nextPreload] ?? null
     setItemInSlot(backSlot(), nextItem)
     playFrontVideoIfNeeded()
+    resetProgressTracking()
   })
   const unsubStart = props.scheduler.onItemStart(() => {
     // For single-image we re-emit onItemStart(0) from inside the scheduler; we
@@ -168,6 +249,10 @@ onMounted(() => {
     unsubTransition()
     unsubStart()
     clearRecoveryTimer()
+    if (stallTimer !== null) {
+      window.clearInterval(stallTimer)
+      stallTimer = null
+    }
   })
 })
 

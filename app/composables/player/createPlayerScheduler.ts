@@ -17,6 +17,16 @@ export interface SchedulerDeps {
 
 export interface SchedulerHandle {
   readonly mode: SchedulerMode
+  /**
+   * Whether `itemErrored` moves playback on to another item.
+   *
+   * Only a multi-item loop can. In every single-item mode the scheduler records
+   * the error and stops there — there is nothing to advance to — so the *stage*
+   * has to retry the media element itself, or a broken frame stays on screen
+   * forever. PlayerStage branches on this rather than re-deriving it from
+   * `mode`.
+   */
+  readonly advancesOnError: boolean
   start(): void
   itemEnded(index: number): void
   itemErrored(index: number, message: string): void
@@ -116,6 +126,9 @@ export function createPlayerScheduler(
   return {
     get mode() {
       return mode
+    },
+    get advancesOnError() {
+      return mode === 'loop'
     },
     start() {
       if (stopped) return
