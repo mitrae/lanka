@@ -34,6 +34,19 @@ COPY --from=builder /app/node_modules  ./node_modules
 COPY --from=builder /app/server/db     ./server/db
 COPY --from=builder /app/drizzle.config.ts ./
 COPY --from=builder /app/package.json  ./
+# Maintenance scripts (`docker compose exec lanka pnpm tsx scripts/<name>.ts`),
+# e.g. transcode-existing.ts backfilling media that predates a kiosk-safety
+# rule. They are NOT part of .output — Nitro only bundles the request path — so
+# without these the scripts are simply absent from the image and every
+# documented "container exec" invocation dies with ERR_MODULE_NOT_FOUND. They
+# import server/services/* by relative path (no `~` alias, so no tsconfig
+# needed) and never touch Nitro auto-imports; `tsx` and the ffmpeg/ffprobe
+# binaries already ship in node_modules, which is a full install from the
+# builder. Together ~200 KB of TS.
+COPY --from=builder /app/server/services ./server/services
+COPY --from=builder /app/scripts         ./scripts
+# Copied last and chmod'ed explicitly: this one must be executable regardless of
+# the mode the builder stage preserved.
 COPY scripts/entrypoint.sh ./scripts/entrypoint.sh
 RUN chmod +x ./scripts/entrypoint.sh
 # Own the whole app tree as the runtime user. The bind-mounted /app/data is

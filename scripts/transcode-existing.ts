@@ -11,15 +11,18 @@
  *   pnpm tsx scripts/transcode-existing.ts              # apply
  *   pnpm tsx scripts/transcode-existing.ts --delete-old # apply + remove old objects
  *
- * On a production server (container exec or SSH):
- *   DATABASE_URL=file:./data/signage.db \
- *   R2_ENDPOINT=https://… R2_BUCKET=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… \
- *   tsx scripts/transcode-existing.ts --dry-run
+ * On a production server, inside the container (the runtime image ships this
+ * script and server/services/* precisely so this works — see the Dockerfile):
+ *   docker compose exec lanka sh -c 'set -a; . /app/.env 2>/dev/null; set +a; \
+ *     pnpm tsx scripts/transcode-existing.ts --dry-run'
  *
  * Env vars read (same as the app):
  *   DATABASE_URL          — defaults to file:./data/signage.db
  *   R2_ENDPOINT, R2_BUCKET, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
- *                         — if all four set: uses R2Store; else LocalDiskStore
+ *                         — or the NUXT_R2_* names prod's .env actually uses.
+ *                           All four set: R2Store. None set: LocalDiskStore.
+ *                           Some set: throws, rather than silently scanning an
+ *                           empty local dir on a box whose media lives in R2.
  *   MEDIA_DIR             — local disk store root (default ./data/media)
  *
  * Idempotent: conforming clips are probed and skipped; safe to re-run.
@@ -55,15 +58,34 @@ const DELETE_OLD = args.includes('--delete-old')
 // Store selection (mirrors media-store-singleton logic without Nitro context)
 // ---------------------------------------------------------------------------
 
+/** Accepts either the bare name or the NUXT_-prefixed one. Production's .env
+ *  uses NUXT_R2_* (the app reads it through runtimeConfig), so honouring only
+ *  the bare names made this script silently pick LocalDiskStore on the very box
+ *  it is meant to be run on — see the throw below. Mirrors import-r2-object.ts. */
+function r2Env(suffix: string): string | undefined {
+  return process.env[`R2_${suffix}`] ?? process.env[`NUXT_R2_${suffix}`]
+}
+
 function buildStore(): MediaStore {
-  const endpoint = process.env.R2_ENDPOINT
-  const bucket = process.env.R2_BUCKET
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY
+  const endpoint = r2Env('ENDPOINT')
+  const bucket = r2Env('BUCKET')
+  const accessKeyId = r2Env('ACCESS_KEY_ID')
+  const secretAccessKey = r2Env('SECRET_ACCESS_KEY')
 
   if (endpoint && bucket && accessKeyId && secretAccessKey) {
     console.log('[store] using R2Store')
     return new R2Store({ endpoint, bucket, accessKeyId, secretAccessKey })
+  }
+
+  // Partially-set R2 config is a misconfiguration, not a request for local
+  // disk. Falling through would scan against a near-empty ./data/media on a
+  // prod box where R2 holds every object, and report a wall of per-row errors
+  // that look like corrupt media rather than a missing variable.
+  if (endpoint || bucket || accessKeyId || secretAccessKey) {
+    throw new Error(
+      'R2 is partially configured (need ENDPOINT, BUCKET, ACCESS_KEY_ID and ' +
+      'SECRET_ACCESS_KEY, as R2_* or NUXT_R2_*); refusing to fall back to local disk'
+    )
   }
 
   const dir = process.env.MEDIA_DIR ?? './data/media'
