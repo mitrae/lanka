@@ -407,4 +407,81 @@ describe('createReconciler — hung fetch', () => {
     expect(settle).not.toBeNull() // the original promise really never resolved
     r.close()
   })
+  describe('deploy propagation via the manifest poll', () => {
+    // The only reload triggers used to be the SSE `reload` event and the WS
+    // `reboot` command. Both go dead on a half-open socket — observed on prod:
+    // a box polled the manifest every 30 s for two deploys while never loading
+    // the new bundle, because nothing it could still hear told it to. The
+    // manifest now carries the server's build id; a mismatch reloads the page.
+    function reconcilerWith(bundleBuild: string | undefined, served: Manifest, guard = memGuard()) {
+      const onReload = vi.fn()
+      const manifests: (Manifest | null)[] = []
+      const r = createReconciler({
+        api: fakeApi({ getManifest: vi.fn().mockResolvedValue(served) }),
+        deviceId: 'tv-1',
+        bundleBuild,
+        reloadGuard: guard,
+        onReload,
+        eventSourceFactory: (u) => new FakeEventSource(u) as any
+      })
+      r.onManifest((x) => manifests.push(x))
+      return { r, onReload, manifests, guard }
+    }
+    function memGuard() {
+      let v: string | null = null
+      return { get: () => v, set: (x: string) => { v = x } }
+    }
+
+    it('reloads instead of emitting when the server build differs from the bundle', async () => {
+      const { r, onReload, manifests } = reconcilerWith('build-A', { ...m(1, 1), playerBuild: 'build-B' })
+      await r.reconcile()
+      expect(onReload).toHaveBeenCalledTimes(1)
+      expect(manifests).toEqual([]) // never mount a playlist on a stale bundle
+      r.close()
+    })
+
+    it('emits normally when builds match', async () => {
+      const { r, onReload, manifests } = reconcilerWith('build-A', { ...m(1, 1), playerBuild: 'build-A' })
+      await r.reconcile()
+      expect(onReload).not.toHaveBeenCalled()
+      expect(manifests).toHaveLength(1)
+      r.close()
+    })
+
+    it('emits normally when either side has no build id (older server or bundle)', async () => {
+      const a = reconcilerWith(undefined, { ...m(1, 1), playerBuild: 'build-B' })
+      await a.r.reconcile()
+      expect(a.onReload).not.toHaveBeenCalled(); expect(a.manifests).toHaveLength(1); a.r.close()
+      const b = reconcilerWith('build-A', m(1, 1))
+      await b.r.reconcile()
+      expect(b.onReload).not.toHaveBeenCalled(); expect(b.manifests).toHaveLength(1); b.r.close()
+    })
+
+    it('reloads at most once per server build, then plays on the stale bundle rather than looping', async () => {
+      // If the WebView served the old shell from cache, every reload would
+      // come back mismatched and the screen would blank every 30 s forever.
+      // The guard remembers which build we already reloaded for.
+      const guard = memGuard()
+      const first = reconcilerWith('build-A', { ...m(1, 1), playerBuild: 'build-B' }, guard)
+      await first.r.reconcile()
+      expect(first.onReload).toHaveBeenCalledTimes(1)
+      expect(guard.get()).toBe('build-B')
+      first.r.close()
+      // "After the reload": same stale bundle, same server build, same guard.
+      const second = reconcilerWith('build-A', { ...m(1, 1), playerBuild: 'build-B' }, guard)
+      await second.r.reconcile()
+      expect(second.onReload).not.toHaveBeenCalled()
+      expect(second.manifests).toHaveLength(1)
+      second.r.close()
+    })
+
+    it('a newer server build after a guarded one reloads again', async () => {
+      const guard = memGuard(); guard.set('build-B')
+      const { r, onReload } = reconcilerWith('build-A', { ...m(1, 1), playerBuild: 'build-C' }, guard)
+      await r.reconcile()
+      expect(onReload).toHaveBeenCalledTimes(1)
+      expect(guard.get()).toBe('build-C')
+      r.close()
+    })
+  })
 })

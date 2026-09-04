@@ -16,6 +16,10 @@ export type Manifest = {
   playlistName: string
   version: number
   items: ManifestItem[]
+  /** Server build id (runtimeConfig.playerBuild); the web player reloads on a
+   *  mismatch with its own bundle. Added by the route handler, not by
+   *  handleManifest, so the pure function stays free of runtime config. */
+  playerBuild?: string
 }
 
 export async function handleManifest(
@@ -81,5 +85,8 @@ export default defineEventHandler(async (event) => {
     setResponseStatus(event, 204)
     return null
   }
-  return manifest
+  // A 204 carries no build id, so a box on "no content" learns of a deploy on
+  // its next non-null manifest. The native surface ignores the field
+  // (kotlinx Json { ignoreUnknownKeys = true }) — it cannot reload code anyway.
+  return { ...manifest, playerBuild: useRuntimeConfig().playerBuild as string }
 })

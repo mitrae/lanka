@@ -180,6 +180,8 @@ export interface Manifest {
   playlistName: string
   version: number
   items: ManifestItem[]
+  /** The server's build id; the player reloads when it differs from its own. */
+  playerBuild?: string
 }
 
 export interface Assignment {

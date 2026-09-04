@@ -1,5 +1,18 @@
 // nuxt.config.ts
+// One id per build, shared by the server (runtimeConfig.playerBuild → the
+// manifest) and the client bundle (__LANKA_BUILD__ via vite.define). They are
+// derived from a single evaluation of this file, so they agree by
+// construction; the web player reloads itself when the manifest's build no
+// longer matches the bundle it is running (usePlayerBoot / useReconciler).
+// Stable in dev so config reloads don't bounce a dev player.
+const playerBuild = process.env.NODE_ENV === 'production'
+  ? (process.env.LANKA_BUILD_ID || new Date().toISOString())
+  : 'dev'
+
 export default defineNuxtConfig({
+  vite: {
+    define: { __LANKA_BUILD__: JSON.stringify(playerBuild) }
+  },
   compatibilityDate: '2026-04-01',
   devtools: { enabled: true },
   ssr: false,
@@ -49,6 +62,7 @@ export default defineNuxtConfig({
     databaseUrl: process.env.DATABASE_URL ?? 'file:./data/signage.db',
     mediaDir: process.env.MEDIA_DIR ?? './data/media',
     appVersion: process.env.npm_package_version ?? 'dev',
+    playerBuild,
     resendApiKey: process.env.RESEND_API_KEY ?? '',
     mailFrom: process.env.MAIL_FROM ?? 'Lanka <no-reply@lanka.live>',
     // Absolute base URL used to build emailed password-reset links (from APP_BASE_URL,

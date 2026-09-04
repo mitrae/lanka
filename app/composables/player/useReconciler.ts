@@ -79,6 +79,20 @@ export interface ReconcilerDeps {
   cdnUrl?: (sha256: string) => string
   eventSourceFactory?: EventSourceFactory
   onReload?: () => void
+  /**
+   * Build id compiled into THIS bundle (`__LANKA_BUILD__`). When the manifest
+   * reports a different server build, the page is reloaded instead of the
+   * manifest being emitted — see reconcile(). Absent in tests and on bundles
+   * that predate the field.
+   */
+  bundleBuild?: string
+  /**
+   * Remembers which server build we already reloaded for, across page loads.
+   * Without it, a WebView serving the old shell from cache would come back
+   * mismatched after every reload and blank the screen every 30 s forever.
+   * Defaults to localStorage; tests pass an in-memory one.
+   */
+  reloadGuard?: { get(): string | null; set(build: string): void }
 }
 
 export interface ReconcilerHandle {
@@ -105,6 +119,12 @@ export interface ReconcilerHandle {
  *   backoff(attempt); reset attempt on next success.
  * - On SSE `manifest-changed`: trigger reconcile().
  * - On SSE `reload`: invoke deps.onReload().
+ * - On a manifest whose `playerBuild` differs from `deps.bundleBuild`: invoke
+ *   deps.onReload() (once per server build) and emit nothing. This is how a
+ *   deploy reaches a box: the SSE `reload` and WS `reboot` both ride sockets
+ *   that go half-open in the field, while the 30 s poll keeps working —
+ *   observed on prod, a box polled through two deploys without ever loading
+ *   the new bundle because nothing it could still hear told it to.
  */
 export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   const factory: EventSourceFactory =
@@ -112,6 +132,7 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
 
   let last: { playlistId: number; version: number } | null = null
   let hasEmitted = false
+  let reloadRequested = false
   let attempt = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
   let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -157,6 +178,16 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
         }
         return
       }
+      if (staleBundle(m)) {
+        // Never mount a playlist on a bundle the server has moved past; the
+        // reload brings the current one, which reconciles from scratch.
+        if (!reloadRequested) {
+          reloadRequested = true
+          deps.reloadGuard?.set(m.playerBuild!)
+          deps.onReload?.()
+        }
+        return
+      }
       const key = { playlistId: m.playlistId, version: m.version }
       if (!shouldReconcile(last, key)) return
       last = key
@@ -182,6 +213,17 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
       }, backoff(attempt))
       attempt += 1
     }
+  }
+
+  /** True when this bundle should be replaced by a reload for `m`'s build —
+   *  and we have not already tried exactly that for this server build. */
+  function staleBundle(m: Manifest): boolean {
+    if (!deps.bundleBuild || !m.playerBuild) return false
+    if (m.playerBuild === deps.bundleBuild) return false
+    // Already reloaded for this build and still stale: something is serving
+    // the old shell. Playing the stale bundle beats a blank screen every 30 s.
+    if (deps.reloadGuard?.get() === m.playerBuild) return false
+    return true
   }
 
   function openStream(): void {

@@ -22,6 +22,11 @@ import {
   type SchedulerHandle
 } from './createPlayerScheduler'
 
+/** Injected by vite.define (nuxt.config.ts); absent under vitest. */
+declare const __LANKA_BUILD__: string | undefined
+/** localStorage key remembering which server build we last reloaded for. */
+const RELOAD_GUARD_KEY = 'lanka.reloadedForBuild'
+
 export type PlayerScreen = 'booting' | 'standby' | 'no-content' | 'playing'
 
 export interface PlayerBootState {
@@ -142,6 +147,11 @@ export function usePlayerBoot(
       deviceId: deviceId.value,
       nativeFS,
       cdnUrl,
+      bundleBuild: typeof __LANKA_BUILD__ === 'string' ? __LANKA_BUILD__ : undefined,
+      reloadGuard: {
+        get: () => { try { return localStorage.getItem(RELOAD_GUARD_KEY) } catch { return null } },
+        set: (b) => { try { localStorage.setItem(RELOAD_GUARD_KEY, b) } catch { /* private mode */ } }
+      },
       onReload: () => device.reload()
     })
 
