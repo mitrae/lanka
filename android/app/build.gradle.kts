@@ -29,8 +29,8 @@ android {
         applicationId = "ai.lanka.kiosk"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.4.0-visibility"
+        versionCode = 3
+        versionName = "0.5.0"
 
         buildConfigField(
             "String",
