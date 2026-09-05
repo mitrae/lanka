@@ -131,14 +131,14 @@ const pendingCount = computed(() => items.value.filter((it) => it.state !== 'que
     :ui="{ width: 'sm:max-w-2xl' }"
   >
     <template #content>
-      <div class="p-6">
+      <div class="p-4 sm:p-6">
         <h3 class="text-base font-semibold">{{ $t('components.mediaUploadDialog.title') }}</h3>
         <p class="mt-1 text-sm text-(--ui-text-muted)">
           {{ $t('components.mediaUploadDialog.description') }}
         </p>
 
         <div
-          class="mt-4 rounded-lg border-2 border-dashed p-8 text-center transition-colors"
+          class="mt-4 rounded-lg border-2 border-dashed p-6 text-center transition-colors sm:p-8"
           :class="{
             'border-primary-500 bg-primary-500/5': dragOver,
             'border-(--ui-border) bg-(--ui-bg-elevated)': !dragOver
@@ -222,12 +222,13 @@ const pendingCount = computed(() => items.value.filter((it) => it.state !== 'que
           <p class="mt-1 text-xs text-(--ui-text-muted)">{{ $t('components.mediaUploadDialog.quality.hint') }}</p>
         </div>
 
-        <div class="mt-6 flex justify-end gap-2">
-          <UButton variant="ghost" @click="cancel">
+        <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <UButton variant="ghost" class="justify-center" @click="cancel">
             {{ uploading ? $t('components.mediaUploadDialog.cancelUpload') : $t('common.cancel') }}
           </UButton>
           <UButton
             color="primary"
+            class="justify-center"
             :loading="uploading"
             :disabled="pendingCount === 0 || uploading"
             @click="upload"

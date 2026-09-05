@@ -50,12 +50,12 @@ async function createPlaylist() {
 
     <div
       v-if="creating"
-      class="soft-card mb-4 flex items-center gap-2 p-4"
+      class="soft-card mb-4 flex flex-col gap-2 p-4 sm:flex-row sm:items-center"
     >
       <UInput
         v-model="newName"
         :placeholder="$t('playlists.namePlaceholder')"
-        class="max-w-md flex-1"
+        class="w-full sm:max-w-md sm:flex-1"
         autofocus
         @keyup.enter="createPlaylist"
       />
@@ -91,7 +91,7 @@ async function createPlaylist() {
             <UIcon name="i-lucide-list-music" class="size-5" />
           </span>
           <div class="min-w-0 flex-1">
-            <p class="font-medium text-(--ui-text-highlighted)">{{ p.name }}</p>
+            <p class="truncate font-medium text-(--ui-text-highlighted)">{{ p.name }}</p>
             <p class="text-xs text-(--ui-text-muted)">
               {{ $t('playlists.itemCount', p.itemCount, { n: p.itemCount }) }}
               · {{ $t('playlists.assignmentCount', p.assignmentCount, { n: p.assignmentCount }) }}

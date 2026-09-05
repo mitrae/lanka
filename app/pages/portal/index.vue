@@ -41,18 +41,21 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
     <p v-else-if="error" class="text-rose-500">{{ error }}</p>
 
     <template v-else-if="stats">
-      <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div class="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <StatCard :label="$t('portal.statMediaItems')" :value="stats.totals.mediaCount" icon="i-lucide-image" />
         <StatCard :label="$t('portal.statScreensReached')" :value="stats.totals.screensReached" icon="i-lucide-tv" tone="blue" />
         <StatCard :label="$t('portal.statOnlineNow')" :value="stats.totals.screensOnline" icon="i-lucide-wifi" tone="emerald" />
         <StatCard :label="$t('portal.statShowingNow')" :value="stats.totals.showingNow" icon="i-lucide-play" tone="amber" />
       </div>
 
-      <div class="soft-card mt-8 overflow-hidden">
-        <table class="w-full text-sm">
+      <!-- Six columns of numbers meant to be compared row-to-row: stacking
+           them into cards destroys the comparison, so this scrolls sideways
+           instead, with the media name pinned as the row's anchor. -->
+      <div class="soft-card mt-6 overflow-x-auto sm:mt-8">
+        <table class="w-full min-w-[42rem] text-sm">
           <thead class="text-left text-xs uppercase tracking-wide text-(--ui-text-muted)">
             <tr class="border-b border-(--ui-border)">
-              <th class="px-5 py-3 font-medium">{{ $t('portal.colMedia') }}</th>
+              <th class="sticky left-0 z-10 w-44 min-w-44 max-w-44 bg-(--card-bg) px-5 py-3 font-medium">{{ $t('portal.colMedia') }}</th>
               <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colScheduled') }}</th>
               <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colOnline') }}</th>
               <th class="px-5 py-3 font-medium tabular-nums">{{ $t('portal.colShowingNow') }}</th>
@@ -62,9 +65,11 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </thead>
           <tbody>
             <tr v-for="m in stats.media" :key="m.mediaId" class="border-b border-(--ui-border) last:border-0">
-              <td class="px-5 py-3">
-                <span class="font-medium text-(--ui-text-highlighted)">{{ m.filename }}</span>
-                <span class="ml-2 rounded-full bg-(--ui-bg-accented) px-2 py-0.5 text-xs text-(--ui-text-muted)">{{ m.kind === 'video' ? $t('components.playlistItemRow.video') : $t('components.playlistItemRow.image') }}</span>
+              <!-- Capped, or one long filename makes the pinned column as wide as
+                   the viewport and scrolling right reveals nothing but itself. -->
+              <td class="sticky left-0 z-10 w-44 min-w-44 max-w-44 bg-(--card-bg) px-5 py-3">
+                <span class="block truncate font-medium text-(--ui-text-highlighted)" :title="m.filename">{{ m.filename }}</span>
+                <span class="mt-1 inline-block rounded-full bg-(--ui-bg-accented) px-2 py-0.5 text-xs text-(--ui-text-muted)">{{ m.kind === 'video' ? $t('components.playlistItemRow.video') : $t('components.playlistItemRow.image') }}</span>
               </td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensScheduled }}</td>
               <td class="px-5 py-3 tabular-nums">{{ m.screensOnline }}</td>

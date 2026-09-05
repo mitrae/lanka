@@ -82,7 +82,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="grid min-h-screen lg:grid-cols-[1.05fr_1fr]">
+  <div class="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
     <!-- Left: broadcast signal panel -->
     <aside class="signal-panel grain relative hidden flex-col justify-between overflow-hidden p-12 text-white lg:flex">
       <!-- concentric signal geometry -->
@@ -131,7 +131,7 @@ onMounted(async () => {
     </aside>
 
     <!-- Right: sign-in form -->
-    <section class="canvas-bg flex items-center justify-center p-8">
+    <section class="canvas-bg flex items-center justify-center px-5 py-8 sm:p-8">
       <div class="reveal w-full max-w-sm">
         <!-- compact brand for narrow viewports where the panel is hidden -->
         <div class="mb-8 flex items-center gap-2.5 lg:hidden">
@@ -139,7 +139,7 @@ onMounted(async () => {
           <span class="text-xl font-semibold tracking-tight">Lanka</span>
         </div>
 
-        <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.signIn') }}</h1>
+        <h1 class="text-2xl font-bold tracking-tight text-(--ui-text-highlighted) sm:text-3xl">{{ $t('auth.signIn') }}</h1>
         <p class="mt-2 text-sm text-(--ui-text-muted)">
           {{ $t('auth.signInSubtitle') }}
         </p>

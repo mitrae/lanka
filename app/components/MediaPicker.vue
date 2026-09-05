@@ -27,7 +27,7 @@ const filtered = computed(() => {
       icon="i-lucide-search"
       class="w-full"
     />
-    <div class="mt-3 grid grid-cols-3 gap-2 max-h-96 overflow-y-auto pr-1">
+    <div class="mt-3 grid grid-cols-2 gap-2 max-h-96 overflow-y-auto pr-1 sm:grid-cols-3">
       <button
         v-for="m in filtered"
         :key="m.id"

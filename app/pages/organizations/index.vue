@@ -83,15 +83,15 @@ async function remove(org: Organization) {
       </template>
     </PageHeader>
 
-    <div class="mb-6 flex max-w-md gap-2">
+    <div class="mb-6 flex w-full max-w-md flex-col gap-2 sm:flex-row">
       <UInput
         v-model="name"
         :placeholder="$t('organizations.namePlaceholder')"
         size="lg"
-        class="flex-1"
+        class="w-full sm:flex-1"
         @keyup.enter="add"
       />
-      <UButton color="primary" size="lg" :loading="creating" @click="add">
+      <UButton color="primary" size="lg" class="w-full justify-center sm:w-auto" :loading="creating" @click="add">
         {{ $t('common.add') }}
       </UButton>
     </div>
@@ -100,7 +100,7 @@ async function remove(org: Organization) {
       <div
         v-for="org in store.list"
         :key="org.id"
-        class="soft-card hover-lift flex flex-col gap-3 p-5"
+        class="soft-card hover-lift flex flex-col gap-3 p-4 sm:p-5"
       >
         <div class="flex items-start gap-3.5">
           <span class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
@@ -110,14 +110,14 @@ async function remove(org: Organization) {
             <p class="truncate font-medium text-(--ui-text-highlighted)">{{ org.name }}</p>
             <p class="font-mono text-xs text-(--ui-text-muted)">#{{ org.id }}</p>
           </div>
-          <div class="flex shrink-0 gap-1">
+          <div class="flex shrink-0 gap-0.5 sm:gap-1">
             <UButton
-              variant="ghost" color="neutral" size="xs" icon="i-lucide-pencil"
+              variant="ghost" color="neutral" size="xs" class="size-8 justify-center" icon="i-lucide-pencil"
               :aria-label="$t('organizations.editAriaLabel', { name: org.name })"
               @click="edit(org)"
             />
             <UButton
-              variant="ghost" color="error" size="xs" icon="i-lucide-trash-2"
+              variant="ghost" color="error" size="xs" class="size-8 justify-center" icon="i-lucide-trash-2"
               :aria-label="$t('organizations.deleteAriaLabel', { name: org.name })"
               @click="remove(org)"
             />

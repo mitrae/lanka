@@ -53,7 +53,7 @@ function addressName(id: number) {
           :items="addressItems"
           value-key="value"
           :placeholder="$t('groups.filterByAddress')"
-          class="w-64"
+          class="w-full sm:w-64"
         />
       </template>
     </PageHeader>
@@ -79,7 +79,7 @@ function addressName(id: number) {
             <UIcon name="i-lucide-folder" class="size-5" />
           </span>
           <div class="min-w-0 flex-1">
-            <p class="font-medium text-(--ui-text-highlighted)">{{ g.name }}</p>
+            <p class="truncate font-medium text-(--ui-text-highlighted)">{{ g.name }}</p>
             <p class="text-xs text-(--ui-text-muted)">
               {{ $t('groups.inAddress', { name: addressName(g.addressId) }) }}
             </p>

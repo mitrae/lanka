@@ -8,8 +8,8 @@ const thumb = computed(() =>
 </script>
 
 <template>
-  <div class="soft-card p-5">
-    <div class="flex items-center justify-between">
+  <div class="soft-card p-4 sm:p-5">
+    <div class="flex items-center justify-between gap-2">
       <h3 class="font-medium text-(--ui-text-highlighted)">{{ $t('devices.nowPlaying') }}</h3>
       <span
         class="rounded-full px-2 py-0.5 text-xs"
@@ -17,9 +17,9 @@ const thumb = computed(() =>
       >{{ status?.online ? $t('devices.online') : $t('devices.offline') }}</span>
     </div>
     <div v-if="status?.currentItem" class="mt-4 flex items-center gap-3">
-      <img v-if="thumb" :src="thumb" class="h-16 w-28 rounded object-cover bg-black" alt="" />
-      <div>
-        <p class="font-medium text-(--ui-text-highlighted)">{{ status.currentItem.filename }}</p>
+      <img v-if="thumb" :src="thumb" class="h-14 w-24 shrink-0 rounded object-cover bg-black sm:h-16 sm:w-28" alt="" />
+      <div class="min-w-0">
+        <p class="truncate font-medium text-(--ui-text-highlighted)">{{ status.currentItem.filename }}</p>
         <p class="text-sm text-(--ui-text-muted)">
           {{ status.currentItem.kind === 'video' ? $t('components.playlistItemRow.video') : $t('components.playlistItemRow.image') }}
           · {{ status.playlistName }}

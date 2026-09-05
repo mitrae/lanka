@@ -121,10 +121,10 @@ async function remove() {
       <USkeleton class="h-24 w-full" />
     </div>
     <template v-else>
-      <section class="soft-card p-6">
-        <div class="flex items-start justify-between">
-          <div class="flex items-start gap-4">
-            <div class="rounded-xl bg-indigo-500/10 p-3 text-indigo-600 dark:text-indigo-400">
+      <section class="soft-card p-4 sm:p-6">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div class="flex min-w-0 items-start gap-3 sm:gap-4">
+            <div class="shrink-0 rounded-xl bg-indigo-500/10 p-2.5 text-indigo-600 sm:p-3 dark:text-indigo-400">
               <UIcon name="i-lucide-building-2" class="size-6" />
             </div>
             <div>
@@ -132,8 +132,8 @@ async function remove() {
                 {{ $t('addresses.addressLabel') }}
               </p>
               <template v-if="!editing">
-                <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ address.name }}</h2>
-                <p class="mt-1 font-mono text-xs text-(--ui-text-muted)">
+                <h2 class="mt-1 truncate text-xl font-semibold text-(--ui-text-highlighted) sm:text-2xl">{{ address.name }}</h2>
+                <p class="mt-1 break-all font-mono text-xs text-(--ui-text-muted)">
                   #{{ address.id }}
                 </p>
               </template>
@@ -147,7 +147,7 @@ async function remove() {
               </template>
             </div>
           </div>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2 sm:shrink-0">
             <template v-if="!editing">
               <UButton
                 variant="soft"
@@ -180,7 +180,7 @@ async function remove() {
         </div>
       </section>
 
-      <section class="soft-card mt-8 p-6">
+      <section class="soft-card mt-6 p-4 sm:mt-8 sm:p-6">
         <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('addresses.playlistSectionTitle') }}</h3>
         <p class="mt-1 text-xs text-(--ui-text-muted)">
           {{ $t('addresses.playlistSectionDescription') }}
@@ -204,13 +204,13 @@ async function remove() {
         </p>
       </section>
 
-      <section class="mt-8">
+      <section class="mt-6 sm:mt-8">
         <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('addresses.groupsInAddress') }}</h3>
-        <div class="mt-4 flex items-center gap-2">
+        <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
           <UInput
             v-model="newGroupName"
             :placeholder="$t('addresses.newGroupPlaceholder')"
-            class="max-w-md flex-1"
+            class="w-full sm:max-w-md sm:flex-1"
             @keyup.enter="createGroup"
           />
           <UButton color="primary" icon="i-lucide-plus" @click="createGroup">
@@ -235,7 +235,7 @@ async function remove() {
               <span class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
                 <UIcon name="i-lucide-folder" class="size-4.5" />
               </span>
-              <span class="flex-1 font-medium text-(--ui-text-highlighted)">{{ g.name }}</span>
+              <span class="min-w-0 flex-1 truncate font-medium text-(--ui-text-highlighted)">{{ g.name }}</span>
               <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />
             </NuxtLink>
           </li>

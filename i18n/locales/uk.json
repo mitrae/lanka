@@ -35,7 +35,9 @@
     "switchToDark": "Перейти в темний режим",
     "switchToLight": "Перейти в світлий режим",
     "system": "Система",
-    "apk": "APK"
+    "apk": "APK",
+    "openMenu": "Відкрити меню",
+    "closeMenu": "Закрити меню"
   },
   "components": {
     "statusDot": {

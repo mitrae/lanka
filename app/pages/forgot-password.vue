@@ -18,7 +18,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="canvas-bg flex min-h-screen items-center justify-center p-8">
+  <div class="canvas-bg flex min-h-dvh items-center justify-center px-5 py-8 sm:p-8">
     <div class="reveal w-full max-w-sm">
       <template v-if="!sent">
         <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.forgotTitle') }}</h1>

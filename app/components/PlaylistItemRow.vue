@@ -18,9 +18,9 @@ defineEmits<{
 
 <template>
   <li
-    class="flex items-center gap-3 rounded-xl border border-(--ui-border) bg-(--ui-bg-elevated) p-3 transition-colors hover:border-(--ui-border-accented)"
+    class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-(--ui-border) bg-(--ui-bg-elevated) p-3 transition-colors hover:border-(--ui-border-accented)"
   >
-    <div class="flex flex-col">
+    <div class="flex shrink-0 flex-col">
       <UButton
         icon="i-lucide-chevron-up"
         color="neutral"
@@ -38,7 +38,7 @@ defineEmits<{
         @click="$emit('move', 1)"
       />
     </div>
-    <div class="aspect-video w-32 shrink-0 overflow-hidden rounded bg-zinc-900">
+    <div class="aspect-video w-24 shrink-0 overflow-hidden rounded bg-zinc-900 sm:w-32">
       <img
         v-if="media?.thumbnailBytes"
         :src="`/media/${media.sha256}/thumb`"
@@ -60,7 +60,7 @@ defineEmits<{
         {{ media?.kind === 'video' ? $t('components.playlistItemRow.video') : $t('components.playlistItemRow.image') }}
       </p>
     </div>
-    <div class="flex flex-col gap-1 items-end">
+    <div class="ml-auto flex w-full flex-row items-center justify-end gap-2 sm:w-auto sm:flex-col sm:items-end sm:gap-1">
       <label class="flex items-center gap-2 text-xs text-(--ui-text-muted)">
         {{ $t('components.playlistItemRow.durationLabel') }}
         <UInput

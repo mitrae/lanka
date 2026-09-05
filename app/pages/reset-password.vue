@@ -36,7 +36,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="canvas-bg flex min-h-screen items-center justify-center p-8">
+  <div class="canvas-bg flex min-h-dvh items-center justify-center px-5 py-8 sm:p-8">
     <div class="reveal w-full max-w-sm">
       <h1 class="text-3xl font-bold tracking-tight text-(--ui-text-highlighted)">{{ $t('auth.resetTitle') }}</h1>
       <p v-if="done" class="mt-2 text-sm text-(--ui-text-muted)">{{ $t('auth.passwordUpdated') }}</p>

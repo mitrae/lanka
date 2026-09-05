@@ -35,7 +35,9 @@
     "switchToDark": "Switch to dark mode",
     "switchToLight": "Switch to light mode",
     "system": "System",
-    "apk": "APK"
+    "apk": "APK",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
   },
   "components": {
     "statusDot": {

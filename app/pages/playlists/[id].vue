@@ -164,8 +164,8 @@ async function deletePlaylist() {
       <USkeleton class="h-32 w-full" />
     </div>
     <template v-else>
-      <section class="soft-card p-6">
-        <div class="flex items-start justify-between">
+      <section class="soft-card p-4 sm:p-6">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
               {{ $t('playlists.playlistLabel') }} · <span class="font-mono">{{ $t('playlists.version', { n: playlist.version }) }}</span>
@@ -177,12 +177,12 @@ async function deletePlaylist() {
               <UInput
                 v-model="editName"
                 autofocus
-                class="mt-1 w-80"
+                class="mt-1 w-full sm:w-80"
                 @keyup.enter="saveName"
               />
             </template>
           </div>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2">
             <template v-if="!editingName">
               <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editingName = true">
                 {{ $t('playlists.rename') }}
@@ -210,7 +210,7 @@ async function deletePlaylist() {
         </div>
       </section>
 
-      <div class="mt-8 grid grid-cols-[1fr_2fr] gap-6">
+      <div class="mt-6 grid grid-cols-1 gap-4 sm:mt-8 sm:gap-6 lg:grid-cols-[1fr_2fr]">
         <section class="soft-card p-4">
           <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('playlists.mediaLibrary') }}</h3>
           <p class="mt-1 text-xs text-(--ui-text-muted)">

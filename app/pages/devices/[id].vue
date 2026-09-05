@@ -299,21 +299,21 @@ async function confirmSurfaceSwitch() {
       <USkeleton class="h-32 w-full" />
     </div>
     <template v-else>
-      <section class="soft-card p-6">
-        <div class="flex items-start justify-between">
-          <div class="flex items-start gap-4">
-            <div class="rounded-xl bg-indigo-500/10 p-3 text-indigo-600 dark:text-indigo-400">
+      <section class="soft-card p-4 sm:p-6">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div class="flex min-w-0 items-start gap-3 sm:gap-4">
+            <div class="shrink-0 rounded-xl bg-indigo-500/10 p-2.5 text-indigo-600 sm:p-3 dark:text-indigo-400">
               <UIcon name="i-lucide-tv" class="size-6" />
             </div>
-            <div>
+            <div class="min-w-0">
               <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">
                 {{ $t('devices.deviceLabel') }}
               </p>
               <template v-if="!editing">
-                <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">
+                <h2 class="mt-1 text-xl font-semibold text-(--ui-text-highlighted) sm:text-2xl">
                   {{ device.name ?? $t('devices.unnamed') }}
                 </h2>
-                <p class="mt-1 font-mono text-xs text-(--ui-text-muted)">
+                <p class="mt-1 break-all font-mono text-xs text-(--ui-text-muted)">
                   {{ device.id }}
                 </p>
                 <p class="mt-2 text-sm text-(--ui-text-muted)">
@@ -326,7 +326,7 @@ async function confirmSurfaceSwitch() {
                 </p>
               </template>
               <template v-else>
-                <div class="mt-1 flex w-80 flex-col gap-2">
+                <div class="mt-1 flex w-full flex-col gap-2 sm:w-80">
                   <UInput v-model="editName" :placeholder="$t('devices.namePlaceholder')" />
                   <USelectMenu
                     v-model="editGroupId"
@@ -340,7 +340,7 @@ async function confirmSurfaceSwitch() {
               </template>
             </div>
           </div>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2 sm:shrink-0">
             <template v-if="!editing">
               <UButton variant="soft" color="neutral" icon="i-lucide-refresh-cw" @click="reload">
                 {{ $t('devices.reloadPlayer') }}
@@ -375,9 +375,9 @@ async function confirmSurfaceSwitch() {
         </div>
       </section>
 
-      <NowPlayingCard :status="status" class="mt-8" />
+      <NowPlayingCard :status="status" class="mt-6 sm:mt-8" />
 
-      <section class="soft-card mt-8 p-6">
+      <section class="soft-card mt-6 p-4 sm:mt-8 sm:p-6">
         <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('devices.playlistSectionTitle') }}</h3>
         <p class="mt-1 text-xs text-(--ui-text-muted)">
           {{ $t('devices.playlistSectionDescription') }}
@@ -402,7 +402,7 @@ async function confirmSurfaceSwitch() {
       </section>
 
       <!-- Remote Control card -->
-      <section class="soft-card mt-8 p-6">
+      <section class="soft-card mt-6 p-4 sm:mt-8 sm:p-6">
         <h3 class="mb-4 text-sm font-semibold text-(--ui-text-highlighted)">
           {{ $t('devices.remoteControlTitle') }}
         </h3>
@@ -467,13 +467,13 @@ async function confirmSurfaceSwitch() {
             <span class="text-sm text-(--ui-text-muted)">
               {{ $t('devices.apkOnDevice') }} <strong>{{ status?.apkVersion ?? '—' }}</strong>
             </span>
-            <div class="flex items-center gap-2">
+            <div class="flex w-full items-center gap-2 sm:w-auto">
               <USelect
                 v-model="selectedReleaseId"
                 :items="releases.map(r => ({ label: r.version, value: r.id }))"
                 value-key="value"
                 :placeholder="$t('devices.selectReleasePlaceholder')"
-                class="w-44"
+                class="w-full sm:w-44"
               />
               <UButton
                 size="sm"
@@ -532,12 +532,12 @@ async function confirmSurfaceSwitch() {
               <div
                 v-for="cmd in commands.slice(0, 10)"
                 :key="cmd.id"
-                class="flex items-center gap-3 px-3 py-2 text-sm"
+                class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm"
               >
                 <UBadge :color="statusColor(cmd.status)" size="xs" class="shrink-0">
                   {{ commandStatusLabel(cmd.status) }}
                 </UBadge>
-                <span class="text-(--ui-text-highlighted)" :title="cmd.cmd">{{ commandLabel(cmd.cmd) }}</span>
+                <span class="min-w-0 truncate text-(--ui-text-highlighted)" :title="cmd.cmd">{{ commandLabel(cmd.cmd) }}</span>
                 <span class="ml-auto shrink-0 text-xs text-(--ui-text-muted)">{{ relativeTime(cmd.createdAt) }}</span>
                 <UButton
                   v-if="cmd.status === 'acked' && cmd.cmd === 'screenshot' && cmd.result"

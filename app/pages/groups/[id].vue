@@ -115,10 +115,10 @@ async function remove() {
       <USkeleton class="h-24 w-full" />
     </div>
     <template v-else>
-      <section class="soft-card p-6">
-        <div class="flex items-start justify-between">
-          <div class="flex items-start gap-4">
-            <div class="rounded-xl bg-indigo-500/10 p-3 text-indigo-600 dark:text-indigo-400">
+      <section class="soft-card p-4 sm:p-6">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div class="flex min-w-0 items-start gap-3 sm:gap-4">
+            <div class="shrink-0 rounded-xl bg-indigo-500/10 p-2.5 text-indigo-600 sm:p-3 dark:text-indigo-400">
               <UIcon name="i-lucide-folder" class="size-6" />
             </div>
             <div>
@@ -126,13 +126,13 @@ async function remove() {
                 {{ $t('groups.groupLabel') }}
               </p>
               <template v-if="!editing">
-                <h2 class="mt-1 text-2xl font-semibold text-(--ui-text-highlighted)">{{ group.name }}</h2>
+                <h2 class="mt-1 truncate text-xl font-semibold text-(--ui-text-highlighted) sm:text-2xl">{{ group.name }}</h2>
                 <p class="mt-1 text-sm text-(--ui-text-muted)">
                   {{ $t('groups.inAddress', { name: addressesStore.list.find((a) => a.id === group!.addressId)?.name ?? '?' }) }}
                 </p>
               </template>
               <template v-else>
-                <div class="mt-1 flex w-80 flex-col gap-2">
+                <div class="mt-1 flex w-full flex-col gap-2 sm:w-80">
                   <UInput v-model="editName" />
                   <USelectMenu
                     v-model="editAddressId"
@@ -143,7 +143,7 @@ async function remove() {
               </template>
             </div>
           </div>
-          <div class="flex gap-2">
+          <div class="flex flex-wrap gap-2 sm:shrink-0">
             <template v-if="!editing">
               <UButton variant="soft" color="neutral" icon="i-lucide-pencil" @click="editing = true">
                 {{ $t('common.edit') }}
@@ -175,7 +175,7 @@ async function remove() {
         </div>
       </section>
 
-      <section class="soft-card mt-8 p-6">
+      <section class="soft-card mt-6 p-4 sm:mt-8 sm:p-6">
         <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('groups.playlistSectionTitle') }}</h3>
         <p class="mt-1 text-xs text-(--ui-text-muted)">
           {{ $t('groups.playlistSectionDescription') }}
@@ -199,7 +199,7 @@ async function remove() {
         </p>
       </section>
 
-      <section class="mt-8">
+      <section class="mt-6 sm:mt-8">
         <h3 class="text-sm font-semibold text-(--ui-text-highlighted)">{{ $t('groups.devicesInGroup') }}</h3>
         <EmptyState
           v-if="devicesStore.list.length === 0"
@@ -214,10 +214,10 @@ async function remove() {
             :key="d.id"
             class="soft-card hover-lift"
           >
-            <NuxtLink :to="`/devices/${d.id}`" class="flex items-center gap-3.5 p-4">
+            <NuxtLink :to="`/devices/${d.id}`" class="flex flex-wrap items-center gap-x-3 gap-y-1 p-4">
               <StatusDot :status="d.status" />
-              <span class="font-medium text-(--ui-text-highlighted)">{{ d.name ?? $t('groups.unnamed') }}</span>
-              <code class="ml-auto max-w-xs truncate font-mono text-xs text-(--ui-text-dimmed)">
+              <span class="min-w-0 truncate font-medium text-(--ui-text-highlighted)">{{ d.name ?? $t('groups.unnamed') }}</span>
+              <code class="ml-auto max-w-full truncate font-mono text-xs text-(--ui-text-dimmed) sm:max-w-xs">
                 {{ d.id }}
               </code>
             </NuxtLink>

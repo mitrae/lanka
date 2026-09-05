@@ -76,7 +76,7 @@ function fmtAge(iso: string | null) {
       icon="i-lucide-tv"
     />
 
-    <div class="flex items-center gap-3">
+    <div class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
       <USelectMenu
         v-model="addressFilter"
         :items="[
@@ -85,7 +85,7 @@ function fmtAge(iso: string | null) {
         ]"
         value-key="value"
         :placeholder="$t('devices.addressPlaceholder')"
-        class="w-48"
+        class="w-full sm:w-48"
       />
       <USelectMenu
         v-model="groupFilter"
@@ -95,7 +95,7 @@ function fmtAge(iso: string | null) {
         ]"
         value-key="value"
         :placeholder="$t('devices.groupPlaceholder')"
-        class="w-48"
+        class="w-full sm:w-48"
       />
       <USelectMenu
         v-model="statusFilter"
@@ -107,11 +107,43 @@ function fmtAge(iso: string | null) {
           { label: $t('devices.statusUnclaimed'), value: 'unclaimed' }
         ]"
         value-key="value"
-        class="w-40"
+        class="col-span-2 w-full sm:col-span-1 sm:w-40"
       />
     </div>
 
-    <div class="mt-6 overflow-hidden soft-card">
+    <!-- Below lg this table is a card list: it is a navigation list wearing a
+         table, so stacking it loses nothing and a 5-column scroller on a phone
+         would be unusable. -->
+    <ul v-if="visible.length > 0" class="mt-5 space-y-2.5 lg:hidden">
+      <li v-for="d in visible" :key="d.id" class="soft-card">
+        <NuxtLink :to="`/devices/${d.id}`" class="flex flex-col gap-2 p-4">
+          <div class="flex items-start justify-between gap-3">
+            <span class="min-w-0 font-medium text-(--ui-text-highlighted)">
+              {{ d.name ?? $t('devices.unnamed') }}
+            </span>
+            <UIcon name="i-lucide-chevron-right" class="mt-0.5 size-4 shrink-0 text-(--ui-text-dimmed)" />
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <StatusDot :status="d.status" label />
+            <VisibilityBadge
+              :visibility="d.visibility"
+              :foreground-package="d.foregroundPackage"
+              :online="d.status === 'online'"
+            />
+          </div>
+          <p class="text-sm text-(--ui-text-muted)">
+            {{ groupName(d.groupId) }}
+            <span v-if="addressForGroup(d.groupId)">· {{ addressForGroup(d.groupId) }}</span>
+          </p>
+          <p class="flex items-center gap-2 text-xs text-(--ui-text-dimmed)">
+            <span>{{ fmtAge(d.lastSeenAt) }}</span>
+            <code class="truncate font-mono">{{ d.id }}</code>
+          </p>
+        </NuxtLink>
+      </li>
+    </ul>
+
+    <div v-if="visible.length > 0" class="mt-6 hidden overflow-hidden soft-card lg:block">
       <table class="w-full text-sm">
         <thead class="border-b border-(--ui-border) text-xs uppercase tracking-wide text-(--ui-text-muted)">
           <tr>
@@ -157,13 +189,14 @@ function fmtAge(iso: string | null) {
           </tr>
         </tbody>
       </table>
-      <div v-if="visible.length === 0" class="p-8">
-        <EmptyState
-          icon="i-lucide-tv"
-          :title="$t('devices.emptyTitle')"
-          :description="$t('devices.emptyDescription')"
-        />
-      </div>
+    </div>
+
+    <div v-if="visible.length === 0" class="soft-card mt-6 p-8">
+      <EmptyState
+        icon="i-lucide-tv"
+        :title="$t('devices.emptyTitle')"
+        :description="$t('devices.emptyDescription')"
+      />
     </div>
   </div>
 </template>

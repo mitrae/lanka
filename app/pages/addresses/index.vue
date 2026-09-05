@@ -50,12 +50,12 @@ async function createAddress() {
 
     <div
       v-if="creating"
-      class="soft-card mb-4 flex items-center gap-2 p-4"
+      class="soft-card mb-4 flex flex-col gap-2 p-4 sm:flex-row sm:items-center"
     >
       <UInput
         v-model="newName"
         :placeholder="$t('addresses.namePlaceholder')"
-        class="flex-1"
+        class="w-full sm:flex-1"
         autofocus
         @keyup.enter="createAddress"
       />
@@ -90,7 +90,7 @@ async function createAddress() {
             <UIcon name="i-lucide-building-2" class="size-5" />
           </span>
           <div class="min-w-0 flex-1">
-            <p class="font-medium text-(--ui-text-highlighted)">{{ addr.name }}</p>
+            <p class="truncate font-medium text-(--ui-text-highlighted)">{{ addr.name }}</p>
             <p class="font-mono text-xs text-(--ui-text-muted)">#{{ addr.id }}</p>
           </div>
           <UIcon name="i-lucide-chevron-right" class="size-4 text-(--ui-text-dimmed)" />

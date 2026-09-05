@@ -143,19 +143,19 @@ async function copyPassword() {
         <UInput v-model="email" type="email" placeholder="person@company.com" size="lg" class="w-full" @keyup.enter="add" />
       </UFormField>
       <UFormField :label="$t('users.roleLabel')">
-        <USelect v-model="role" :items="roleOptions" value-key="value" size="lg" class="w-40" />
+        <USelect v-model="role" :items="roleOptions" value-key="value" size="lg" class="w-full sm:w-40" />
       </UFormField>
       <UFormField v-if="role === 'client'" :label="$t('users.organizationLabel')">
-        <USelect v-model="organizationId" :items="orgOptions" value-key="value" :placeholder="$t('common.selectPlaceholder')" size="lg" class="w-48" />
+        <USelect v-model="organizationId" :items="orgOptions" value-key="value" :placeholder="$t('common.selectPlaceholder')" size="lg" class="w-full sm:w-48" />
       </UFormField>
-      <UButton color="primary" size="lg" :loading="creating" @click="add">{{ $t('common.create') }}</UButton>
+      <UButton color="primary" size="lg" class="w-full justify-center sm:w-auto" :loading="creating" @click="add">{{ $t('common.create') }}</UButton>
     </div>
 
     <div class="soft-card divide-y divide-(--ui-border)">
       <div
         v-for="u in usersStore.list"
         :key="u.id"
-        class="flex items-center gap-3.5 p-4"
+        class="flex items-center gap-3 p-3.5 sm:gap-3.5 sm:p-4"
       >
         <span class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
           {{ u.email.slice(0, 2).toUpperCase() }}
@@ -167,22 +167,22 @@ async function copyPassword() {
             <span v-if="u.organizationName"> · {{ u.organizationName }}</span>
           </p>
         </div>
-        <div class="flex shrink-0 gap-1">
+        <div class="flex shrink-0 gap-0.5 sm:gap-1">
           <UButton
             v-if="canManage(u)"
-            variant="ghost" color="neutral" size="sm" icon="i-lucide-pencil"
+            variant="ghost" color="neutral" size="sm" class="size-9 justify-center" icon="i-lucide-pencil"
             :aria-label="$t('users.editAriaLabel', { email: u.email })"
             @click="edit(u)"
           />
           <UButton
             v-if="canManage(u)"
-            variant="ghost" color="neutral" size="sm" icon="i-lucide-key-round"
+            variant="ghost" color="neutral" size="sm" class="size-9 justify-center" icon="i-lucide-key-round"
             :aria-label="$t('users.resetPasswordAriaLabel', { email: u.email })"
             @click="resetPassword(u)"
           />
           <UButton
             v-if="canDelete(u)"
-            variant="ghost" color="error" size="sm" icon="i-lucide-trash-2"
+            variant="ghost" color="error" size="sm" class="size-9 justify-center" icon="i-lucide-trash-2"
             :aria-label="$t('users.deleteAriaLabel', { email: u.email })"
             @click="remove(u)"
           />

@@ -149,7 +149,7 @@ onBeforeUnmount(() => { if (timer) clearInterval(timer) })
           </div>
         </div>
 
-        <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
           <dt class="text-(--ui-text-muted)">{{ $t('media.plays') }}</dt>
           <dd class="tabular-nums font-medium">{{ detail.playCount }}</dd>
           <dt class="text-(--ui-text-muted)">{{ $t('media.type') }}</dt>

@@ -24,7 +24,7 @@ function onConfirm() {
     :ui="{ width: 'sm:max-w-md' }"
   >
     <template #content>
-      <div class="p-6">
+      <div class="p-4 sm:p-6">
         <h3 class="text-base font-semibold">{{ options.title }}</h3>
         <p
           v-if="options.description"
@@ -32,11 +32,12 @@ function onConfirm() {
         >
           {{ options.description }}
         </p>
-        <div class="mt-6 flex justify-end gap-2">
-          <UButton variant="ghost" @click="onCancel">
+        <div class="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <UButton variant="ghost" class="justify-center" @click="onCancel">
             {{ options.cancelLabel }}
           </UButton>
           <UButton
+            class="justify-center"
             :color="options.destructive ? 'error' : 'primary'"
             @click="onConfirm"
           >

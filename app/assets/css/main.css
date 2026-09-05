@@ -46,13 +46,16 @@
   --donut-track: rgba(255, 255, 255, 0.10);
 }
 
-:root { min-width: 1280px; }
-
 body {
   @apply text-(--ui-text);
-  min-width: 1280px;
   background-color: var(--canvas-bottom);
+  /* Phones in landscape inflate font sizes unless this is pinned. */
+  -webkit-text-size-adjust: 100%;
 }
+
+/* Notch / home-indicator padding for the sticky mobile chrome. */
+.safe-t { padding-top: env(safe-area-inset-top, 0px); }
+.safe-b { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
 h1, h2, h3 { font-family: var(--font-display); }
 
@@ -66,6 +69,21 @@ h1, h2, h3 { font-family: var(--font-display); }
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
     linear-gradient(180deg, var(--canvas-top), var(--canvas-bottom) 58%);
   background-size: auto, auto, 44px 44px, 44px 44px, auto;
+}
+
+/* The glows and grid above are sized for a desktop canvas; at phone widths a
+   1100px glow covers the whole viewport and reads as a flat wash. Scale the
+   decoration down with the surface so it stays decoration. */
+@media (max-width: 640px) {
+  .app-bg {
+    background-image:
+      radial-gradient(420px 260px at 10% -6%, var(--glow-indigo), transparent 62%),
+      radial-gradient(360px 240px at 96% -4%, var(--glow-violet), transparent 58%),
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(180deg, var(--canvas-top), var(--canvas-bottom) 58%);
+    background-size: auto, auto, 28px 28px, 28px 28px, auto;
+  }
 }
 
 /* ---- Calm vertical canvas (login form pane, simple shells) ---- */

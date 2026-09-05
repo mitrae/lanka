@@ -31,14 +31,14 @@ const stats = computed(() => {
       icon="i-lucide-layout-dashboard"
     />
 
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-4">
+    <div class="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
       <StatCard :label="$t('overview.statTotalDevices')" :value="stats.total" icon="i-lucide-tv" />
       <StatCard :label="$t('overview.statOnlineNow')" :value="stats.online" icon="i-lucide-wifi" tone="emerald" />
       <StatCard :label="$t('overview.statOfflineLong')" :value="stats.offlineLong" icon="i-lucide-wifi-off" tone="rose" />
       <StatCard :label="$t('overview.statUnclaimed')" :value="stats.unclaimed" icon="i-lucide-inbox" tone="amber" />
     </div>
 
-    <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="mt-6 grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-3">
       <div class="soft-card flex items-center justify-center p-6">
         <Donut :value="stats.online" :total="stats.total" :label="$t('overview.screensOnline')" color="#22c55e" />
       </div>

@@ -78,15 +78,16 @@ async function apply() {
 </script>
 
 <template>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
     <USelectMenu
       v-model="selected"
       :items="items"
       value-key="value"
-      class="flex-1"
+      class="w-full sm:flex-1"
     />
     <UButton
       color="primary"
+      class="w-full justify-center sm:w-auto"
       :disabled="selected === props.currentPlaylistId"
       @click="apply"
     >

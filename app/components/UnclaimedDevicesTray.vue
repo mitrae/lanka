@@ -55,7 +55,7 @@ async function claim(row: DeviceListRow) {
 
 <template>
   <section class="soft-card overflow-hidden">
-    <header class="flex items-center justify-between border-b border-(--ui-border) px-5 py-3">
+    <header class="flex items-center justify-between gap-2 border-b border-(--ui-border) px-4 py-3 sm:px-5">
       <h2 class="text-sm font-semibold">{{ $t('components.unclaimedDevicesTray.title') }}</h2>
       <span class="text-xs text-(--ui-text-muted)">
         {{ $t('components.unclaimedDevicesTray.pending', unclaimed.length, { named: { n: unclaimed.length } }) }}
@@ -72,16 +72,16 @@ async function claim(row: DeviceListRow) {
       <li
         v-for="row in unclaimed"
         :key="row.id"
-        class="flex items-center gap-3 px-5 py-3"
+        class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-3 sm:px-5"
       >
-        <code class="font-mono text-xs text-(--ui-text-muted) w-60 truncate">
+        <code class="w-full truncate font-mono text-xs text-(--ui-text-muted) sm:w-60">
           {{ row.id }}
         </code>
         <UInput
           :model-value="(form[row.id] ||= { name: '', groupId: null }).name"
           :placeholder="$t('components.unclaimedDevicesTray.namePlaceholder')"
           size="sm"
-          class="w-48"
+          class="w-full sm:w-48"
           @update:model-value="(val) => (form[row.id] ||= { name: '', groupId: null }).name = String(val)"
         />
         <USelectMenu
@@ -90,12 +90,13 @@ async function claim(row: DeviceListRow) {
           value-key="value"
           :placeholder="$t('components.unclaimedDevicesTray.groupPlaceholder')"
           size="sm"
-          class="w-48"
+          class="w-full sm:w-48"
           @update:model-value="(val) => (form[row.id] ||= { name: '', groupId: null }).groupId = val as number"
         />
         <UButton
           color="primary"
           size="sm"
+          class="w-full justify-center sm:w-auto"
           icon="i-lucide-check"
           @click="claim(row)"
         >

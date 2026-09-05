@@ -35,7 +35,7 @@ function fmtDuration(ms: number | null) {
       <p class="truncate text-sm font-medium" :title="media.filename">
         {{ media.filename }}
       </p>
-      <div class="mt-1 flex items-center justify-between text-xs text-(--ui-text-muted)">
+      <div class="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-(--ui-text-muted)">
         <span>
           {{ formatBytes(media.bytes) }}
           <template v-if="media.durationMs"> · {{ fmtDuration(media.durationMs) }}</template>
@@ -67,7 +67,8 @@ function fmtDuration(ms: number | null) {
         </div>
       </div>
     </div>
-    <div class="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">
+    <!-- No hover on touch: the delete affordance is always visible below sm. -->
+    <div class="absolute right-2 top-2 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
       <UButton
         icon="i-lucide-trash-2"
         color="error"

@@ -10,11 +10,11 @@ defineProps<{
 </script>
 
 <template>
-  <div class="soft-card hover-lift p-5">
+  <div class="soft-card hover-lift p-4 sm:p-5">
     <div class="flex items-center gap-3">
       <div
         v-if="icon"
-        class="rounded-xl p-2.5"
+        class="shrink-0 rounded-xl p-2 sm:p-2.5"
         :class="{
           'bg-(--ui-bg-accented) text-(--ui-text-muted)': !tone || tone === 'neutral',
           'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400': tone === 'emerald',
@@ -25,9 +25,9 @@ defineProps<{
       >
         <UIcon :name="icon" class="size-5" />
       </div>
-      <div>
-        <p class="text-xs uppercase tracking-wide text-(--ui-text-muted)">{{ label }}</p>
-        <p class="font-display text-3xl font-bold tabular-nums text-(--ui-text-highlighted)">{{ value }}</p>
+      <div class="min-w-0">
+        <p class="text-[11px] uppercase leading-tight tracking-wide text-(--ui-text-muted) sm:text-xs">{{ label }}</p>
+        <p class="font-display text-2xl font-bold tabular-nums text-(--ui-text-highlighted) sm:text-3xl">{{ value }}</p>
       </div>
     </div>
     <p v-if="hint" class="mt-3 text-xs text-(--ui-text-muted)">{{ hint }}</p>

@@ -6,10 +6,10 @@
 
 <template>
   <section class="soft-card overflow-hidden">
-    <header class="border-b border-(--ui-border) px-5 py-3">
+    <header class="border-b border-(--ui-border) px-4 py-3 sm:px-5">
       <h2 class="text-sm font-semibold">{{ $t('components.errorFeed.title') }}</h2>
     </header>
-    <div class="p-5">
+    <div class="p-4 sm:p-5">
       <EmptyState
         icon="i-lucide-clock-alert"
         :title="$t('components.errorFeed.pendingTitle')"

@@ -96,13 +96,13 @@ async function remove(m: MediaListRow) {
       </template>
     </PageHeader>
 
-    <div v-if="store.list.length > 0" class="mb-4 flex items-center gap-2">
+    <div v-if="store.list.length > 0" class="mb-4 flex flex-wrap items-center gap-2">
       <USelect
         v-model="orgFilter"
         :items="orgFilterOptions"
         value-key="value"
         icon="i-lucide-briefcase"
-        class="w-56"
+        class="w-full sm:w-56"
         :aria-label="$t('media.filterByOrganization')"
       />
       <UButton
@@ -137,7 +137,7 @@ async function remove(m: MediaListRow) {
         {{ $t('media.clearFilter') }}
       </UButton>
     </EmptyState>
-    <div v-else class="grid grid-cols-4 gap-4">
+    <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
       <MediaProcessingCard v-for="j in visibleUploads" :key="j.id" :job="j" />
       <MediaCard
         v-for="m in visibleMedia"
