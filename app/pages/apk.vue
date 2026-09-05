@@ -1,5 +1,6 @@
 <!-- app/pages/apk.vue -->
 <script setup lang="ts">
+import type { TableColumn } from '@nuxt/ui'
 import type { ApkRelease } from '~/app/types/api'
 
 definePageMeta({ layout: 'default' })
@@ -64,12 +65,17 @@ function formatBytes(b: number) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`
 }
 
-const columns = computed(() => [
-  { key: 'version', label: t('apk.colVersion') },
-  { key: 'size', label: t('apk.colSize') },
-  { key: 'sha256', label: t('apk.colSha256') },
-  { key: 'uploadedAt', label: t('apk.colUploaded') },
-  { key: 'actions', label: '' }
+// Nuxt UI v4's UTable is a TanStack table: columns are ColumnDefs
+// (`accessorKey`/`header`, `id` for a column with no field behind it), the rows
+// prop is `data`, and cell slots are `<id>-cell` receiving a TanStack Row whose
+// record is `row.original`. The v2 shape (`key`/`label` + `<key>-data`) is
+// silently ignored — it rendered a table with no columns and no rows.
+const columns = computed<TableColumn<ApkRelease>[]>(() => [
+  { accessorKey: 'version', header: t('apk.colVersion') },
+  { accessorKey: 'size', header: t('apk.colSize') },
+  { accessorKey: 'sha256', header: t('apk.colSha256') },
+  { accessorKey: 'uploadedAt', header: t('apk.colUploaded') },
+  { id: 'actions', header: '' }
 ])
 </script>
 
@@ -91,7 +97,7 @@ const columns = computed(() => [
           <UInput
             v-model="versionInput"
             :placeholder="$t('apk.versionPlaceholder')"
-            class="w-48"
+            class="w-full sm:w-48"
           />
         </UFormField>
         <UButton
@@ -127,27 +133,30 @@ const columns = computed(() => [
         :description="$t('apk.emptyDescription')"
       />
 
+      <!-- UTable's root is `overflow-auto`; widen the inner <table> instead so
+           the card scrolls sideways on a phone rather than squashing columns. -->
       <UTable
         v-else
-        :rows="releases"
+        :ui="{ base: 'min-w-[36rem]' }"
+        :data="releases"
         :columns="columns"
       >
-        <template #size-data="{ row }">
-          {{ formatBytes(row.size) }}
+        <template #size-cell="{ row }">
+          {{ formatBytes(row.original.size) }}
         </template>
-        <template #sha256-data="{ row }">
-          <code class="text-xs">{{ row.sha256.slice(0, 12) }}…</code>
+        <template #sha256-cell="{ row }">
+          <code class="text-xs">{{ row.original.sha256.slice(0, 12) }}…</code>
         </template>
-        <template #uploadedAt-data="{ row }">
-          {{ new Date(row.uploadedAt).toLocaleString() }}
+        <template #uploadedAt-cell="{ row }">
+          {{ new Date(row.original.uploadedAt).toLocaleString() }}
         </template>
-        <template #actions-data="{ row }">
+        <template #actions-cell="{ row }">
           <div class="flex gap-2">
             <UButton
               size="xs"
               variant="ghost"
               leading-icon="i-lucide-download"
-              :to="api.apkDownloadUrl(row.id)"
+              :to="api.apkDownloadUrl(row.original.id)"
               target="_blank"
             >
               {{ $t('apk.download') }}
@@ -157,7 +166,7 @@ const columns = computed(() => [
               color="error"
               variant="ghost"
               leading-icon="i-lucide-trash-2"
-              @click="deleteRelease(row)"
+              @click="deleteRelease(row.original)"
             >
               {{ $t('apk.delete') }}
             </UButton>
