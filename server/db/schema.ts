@@ -232,7 +232,12 @@ export const deviceErrors = sqliteTable(
 
 export const apkReleases = sqliteTable('apk_releases', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  /** Display label. Defaults to the manifest's versionName; an operator may
+   *  override it (e.g. "0.5.0-hotfix"), but never contradict versionName. */
   version: text('version').notNull(),
+  /** From the APK's own manifest (nullable for rows uploaded before the server
+   *  read manifests). Used to refuse OTA downgrades and same-code re-installs. */
+  versionCode: integer('version_code'),
   sha256: text('sha256').notNull().unique(),
   size: integer('size').notNull(),
   uploadedAt: integer('uploaded_at', { mode: 'timestamp_ms' })

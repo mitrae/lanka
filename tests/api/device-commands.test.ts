@@ -37,6 +37,58 @@ describe('device commands API', () => {
     expect(result.commandId).toBeTypeOf('number')
   })
 
+  describe('ota downgrade guard', () => {
+    async function release(version: string, versionCode: number | null, sha: string) {
+      const [r] = await db.insert(schema.apkReleases)
+        .values({ version, versionCode, sha256: sha.repeat(64), size: 1 }).returning()
+      return r
+    }
+    async function boxRuns(apkVersion: string | null) {
+      await db.update(schema.devices).set({ apkVersion }).where(eq(schema.devices.id, 'dev-1'))
+    }
+
+    it('409s when the box already runs the same or a newer versionCode', async () => {
+      await release('0.5.0', 3, 'a'); await boxRuns('0.5.0')
+      const same = await release('0.5.0-rebuild', 3, 'b')
+      const older = await release('0.4.0', 2, 'c')
+      await expect(handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: same.id }))
+        .rejects.toMatchObject({ statusCode: 409 })
+      await expect(handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: older.id }))
+        .rejects.toMatchObject({ statusCode: 409 })
+    })
+
+    it('allows a newer versionCode', async () => {
+      await release('0.5.0', 3, 'a'); await boxRuns('0.5.0')
+      const newer = await release('0.6.0', 4, 'b')
+      const r = await handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: newer.id })
+      expect(r.commandId).toBeTypeOf('number')
+    })
+
+    it('matches the box version against suffixed labels and picks the highest code', async () => {
+      await release('0.5.0', 3, 'a'); await release('0.5.0-hotfix', 4, 'b'); await boxRuns('0.5.0')
+      const code4 = await release('0.5.1', 4, 'c')
+      await expect(handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: code4.id }))
+        .rejects.toMatchObject({ statusCode: 409 })
+    })
+
+    it('never blocks when the box version is unknown here, or codes are missing', async () => {
+      const target = await release('0.5.0', 3, 'a')
+      await boxRuns('0.4.0-visibility') // sideloaded, never uploaded
+      expect((await handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: target.id })).commandId).toBeTypeOf('number')
+      await boxRuns(null)
+      expect((await handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: target.id })).commandId).toBeTypeOf('number')
+      const legacy = await release('0.3.0', null, 'd'); await boxRuns('0.5.0') // pre-manifest row
+      expect((await handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: legacy.id })).commandId).toBeTypeOf('number')
+    })
+
+    it('force overrides the guard', async () => {
+      await release('0.5.0', 3, 'a'); await boxRuns('0.5.0')
+      const older = await release('0.4.0', 2, 'b')
+      const r = await handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota', releaseId: older.id, force: true })
+      expect(r.commandId).toBeTypeOf('number')
+    })
+  })
+
   it('enqueue ota 400s on missing releaseId', async () => {
     await expect(
       handleEnqueueCommand(db, hub, 'dev-1', { cmd: 'ota' })

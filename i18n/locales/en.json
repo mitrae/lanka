@@ -212,7 +212,8 @@
     "viewError": "view error",
     "screenshotModalTitle": "Device screenshot",
     "logsModalTitle": "Device logs",
-    "unknownReason": "unknown"
+    "unknownReason": "unknown",
+    "releaseOnDevice": "on this box"
   },
   "addresses": {
     "pageTitle": "Addresses",
@@ -451,7 +452,10 @@
     "deleted": "Deleted",
     "deleteFailed": "Delete failed",
     "emptyTitle": "No releases yet",
-    "emptyDescription": "Upload an APK build to make it available for OTA updates."
+    "emptyDescription": "Upload an APK build to make it available for OTA updates.",
+    "labelOptional": "Label (optional)",
+    "labelHelp": "Version is read from the APK itself. A label may only add a suffix, e.g. 0.5.0-hotfix.",
+    "colVersionCode": "Code"
   },
   "auth": {
     "signIn": "Sign in",

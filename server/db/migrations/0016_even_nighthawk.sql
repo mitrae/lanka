@@ -1,0 +1,1 @@
+ALTER TABLE `apk_releases` ADD `version_code` integer;

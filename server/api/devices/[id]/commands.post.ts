@@ -12,7 +12,9 @@ const COMMAND_TYPES = ['ota', 'reboot', 'screenshot', 'log-request', 'kiosk-lock
 const EnqueueSchema = z.object({
   cmd: z.enum(COMMAND_TYPES),
   releaseId: z.number().int().positive().optional(),
-  surface: z.enum(['webview', 'native']).optional()
+  surface: z.enum(['webview', 'native']).optional(),
+  /** ota only: send even if the box already runs this versionCode or newer. */
+  force: z.boolean().optional()
 })
 
 export type EnqueueInput = z.infer<typeof EnqueueSchema>
@@ -43,6 +45,16 @@ export async function handleEnqueueCommand(
       .from(schema.apkReleases)
       .where(eq(schema.apkReleases.id, input.releaseId))
     if (!release) throw createError({ statusCode: 404, message: 'APK release not found' })
+    if (!input.force) {
+      const current = await currentReleaseOf(db, device.apkVersion)
+      if (current?.versionCode != null && release.versionCode != null && release.versionCode <= current.versionCode) {
+        throw createError({
+          statusCode: 409,
+          message: `box already runs ${current.version} (code ${current.versionCode}); ` +
+            `${release.version} is code ${release.versionCode}. Pass force to send it anyway.`
+        })
+      }
+    }
     payload = {
       releaseId: release.id,
       version: release.version,
@@ -57,6 +69,28 @@ export async function handleEnqueueCommand(
 
   const commandId = await hub.enqueue(db, deviceId, input.cmd, payload)
   return { commandId }
+}
+
+/**
+ * The release the box currently runs, judged by the versionName it reports.
+ * Labels may extend versionName with a suffix ("0.5.0-hotfix"), so match on
+ * equality or `<versionName>-…` and take the highest code among matches. null
+ * when the box's build was never uploaded here (sideloaded, or pre-dates
+ * manifest reading) -- an unknown current version never blocks an OTA.
+ */
+async function currentReleaseOf(
+  db: BetterSQLite3Database<typeof schema>,
+  apkVersion: string | null
+) {
+  if (!apkVersion) return null
+  const rows = await db.select().from(schema.apkReleases)
+  const matching = rows.filter(
+    (r) => r.version === apkVersion || r.version.startsWith(`${apkVersion}-`)
+  )
+  if (matching.length === 0) return null
+  return matching.reduce((best, r) =>
+    (r.versionCode ?? -1) > (best.versionCode ?? -1) ? r : best
+  )
 }
 
 export async function handleListCommands(

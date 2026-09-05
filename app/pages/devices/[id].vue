@@ -236,6 +236,13 @@ async function confirmReboot() {
   if (ok) enqueue('reboot')
 }
 
+/** The box reports its manifest versionName; a release label may extend it
+ *  with a suffix. Same rule as the server's downgrade guard. */
+function isOnThisBox(r: ApkRelease): boolean {
+  const v = status.value?.apkVersion
+  return !!v && (r.version === v || r.version.startsWith(`${v}-`))
+}
+
 async function confirmOta() {
   if (!selectedReleaseId.value) return
   const release = releases.value.find(r => r.id === selectedReleaseId.value)
@@ -470,7 +477,10 @@ async function confirmSurfaceSwitch() {
             <div class="flex w-full items-center gap-2 sm:w-auto">
               <USelect
                 v-model="selectedReleaseId"
-                :items="releases.map(r => ({ label: r.version, value: r.id }))"
+                :items="releases.map(r => ({
+                  label: r.version + (isOnThisBox(r) ? ` · ${$t('devices.releaseOnDevice')}` : ''),
+                  value: r.id
+                }))"
                 value-key="value"
                 :placeholder="$t('devices.selectReleasePlaceholder')"
                 class="w-full sm:w-44"

@@ -28,14 +28,14 @@ onMounted(load)
 async function onFileChange(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
-  if (!versionInput.value.trim()) {
-    toast.add({ title: t('apk.enterVersionFirst'), color: 'warning' })
-    if (fileInput.value) fileInput.value.value = ''
-    return
-  }
+  // The server reads versionName/versionCode out of the APK's own manifest;
+  // the label here is optional and may only extend that version (e.g.
+  // "0.5.0-hotfix"). Nothing is derived from the filename -- it is a hint at
+  // most, and the operator may have renamed the file.
   const form = new FormData()
   form.append('file', file)
-  form.append('version', versionInput.value.trim())
+  const label = versionInput.value.trim()
+  if (label) form.append('version', label)
   uploading.value = true
   try {
     await api.uploadApk(form)
@@ -72,6 +72,7 @@ function formatBytes(b: number) {
 // silently ignored — it rendered a table with no columns and no rows.
 const columns = computed<TableColumn<ApkRelease>[]>(() => [
   { accessorKey: 'version', header: t('apk.colVersion') },
+  { accessorKey: 'versionCode', header: t('apk.colVersionCode') },
   { accessorKey: 'size', header: t('apk.colSize') },
   { accessorKey: 'sha256', header: t('apk.colSha256') },
   { accessorKey: 'uploadedAt', header: t('apk.colUploaded') },
@@ -92,16 +93,12 @@ const columns = computed<TableColumn<ApkRelease>[]>(() => [
       <template #header>
         <span class="font-medium">{{ $t('apk.uploadCard') }}</span>
       </template>
-      <!-- The version gate is visible, not a toast: with the field empty the
-           file button is disabled and the field says why. Before this, picking
-           a file with no version silently discarded it behind a 5 s toast —
-           the operator saw "nothing happens". -->
+      <!-- No version gate any more: the server reads the version from the APK
+           itself. The field is an optional label (must extend the real
+           versionName). Until 2026-09-06 an empty field silently discarded
+           the chosen file behind a 5 s toast -- "nothing happens". -->
       <div class="flex flex-wrap items-end gap-3">
-        <UFormField
-          :label="$t('apk.colVersion')"
-          :help="versionInput.trim() ? undefined : $t('apk.enterVersionFirst')"
-          required
-        >
+        <UFormField :label="$t('apk.labelOptional')" :help="$t('apk.labelHelp')">
           <UInput
             v-model="versionInput"
             :placeholder="$t('apk.versionPlaceholder')"
@@ -110,7 +107,6 @@ const columns = computed<TableColumn<ApkRelease>[]>(() => [
         </UFormField>
         <UButton
           :loading="uploading"
-          :disabled="!versionInput.trim()"
           leading-icon="i-lucide-upload"
           color="primary"
           @click="fileInput?.click()"
@@ -150,6 +146,9 @@ const columns = computed<TableColumn<ApkRelease>[]>(() => [
         :data="releases"
         :columns="columns"
       >
+        <template #versionCode-cell="{ row }">
+          <span class="tabular-nums">{{ row.original.versionCode ?? '—' }}</span>
+        </template>
         <template #size-cell="{ row }">
           {{ formatBytes(row.original.size) }}
         </template>

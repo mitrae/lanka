@@ -212,7 +212,8 @@
     "viewError": "переглянути помилку",
     "screenshotModalTitle": "Знімок екрана пристрою",
     "logsModalTitle": "Логи пристрою",
-    "unknownReason": "невідомо"
+    "unknownReason": "невідомо",
+    "releaseOnDevice": "на цьому пристрої"
   },
   "addresses": {
     "pageTitle": "Адреси",
@@ -451,7 +452,10 @@
     "deleted": "Видалено",
     "deleteFailed": "Помилка видалення",
     "emptyTitle": "Поки немає релізів",
-    "emptyDescription": "Завантажте збірку APK, щоб зробити її доступною для OTA-оновлень."
+    "emptyDescription": "Завантажте збірку APK, щоб зробити її доступною для OTA-оновлень.",
+    "labelOptional": "Мітка (необов’язково)",
+    "labelHelp": "Версію сервер читає з самого APK. Мітка може лише додати суфікс, напр. 0.5.0-hotfix.",
+    "colVersionCode": "Код"
   },
   "auth": {
     "signIn": "Увійти",

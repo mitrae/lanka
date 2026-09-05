@@ -35,12 +35,13 @@ describe('APK release API', () => {
     const stream = Readable.from(Buffer.from('apkbytes'))
     const result = await handleUploadApk(db, fakeStore, {
       sha256,
-      version: '1.2.3',
+      manifest: { packageName: 'ai.lanka.kiosk', versionName: '1.2.3', versionCode: 7 },
       size: 8,
       stream,
       uploadedBy: null
     })
     expect(result.version).toBe('1.2.3')
+    expect(result.versionCode).toBe(7)
     expect(result.sha256).toBe(sha256)
     expect(result.size).toBe(8)
   })

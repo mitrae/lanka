@@ -278,6 +278,8 @@ export interface DeviceNowPlaying {
 export interface ApkRelease {
   id: number
   version: string
+  /** From the APK manifest; null for releases uploaded before the server read it. */
+  versionCode: number | null
   sha256: string
   size: number
   uploadedAt: string | number
