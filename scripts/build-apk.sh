@@ -16,9 +16,10 @@ set -euo pipefail
 #   LANKA_PROD_URL  (default http://100.79.177.86        — prod box: Hetzner, nginx tailnet block :80)
 #   LANKA_KIOSK_PIN (optional; 4+ digits → baked PIN escape hatch, see android/README.md)
 #
-# Output (copied next to the gradle artifact, so dev+prod coexist on disk):
-#   android/app/build/outputs/apk/debug/app-debug-DEV.apk
-#   android/app/build/outputs/apk/debug/app-debug-PROD.apk
+# Output (copied next to the gradle artifact, so dev+prod coexist on disk;
+# <version> comes from android/version.properties):
+#   android/app/build/outputs/apk/debug/lanka-kiosk-<version>-DEV.apk
+#   android/app/build/outputs/apk/debug/lanka-kiosk-<version>-PROD.apk
 
 DEV_URL="${LANKA_DEV_URL:-http://100.123.113.86:5100}"
 PROD_URL="${LANKA_PROD_URL:-http://100.79.177.86}"
@@ -38,13 +39,20 @@ fi
 
 cd "$(dirname "$0")/../android"
 OUT_DIR="app/build/outputs/apk/debug"
+# The version lives in android/version.properties (gradle reads the same file),
+# so the output name can carry it: readable in a file picker, and a hint the
+# dashboard pre-fills from. The server still reads the manifest -- the name is a
+# label, never the truth.
+VERSION="$(grep -E '^versionName=' version.properties | cut -d= -f2 | tr -d ' \r')"
+[[ -n "$VERSION" ]] || { echo "!! versionName missing from android/version.properties" >&2; exit 1; }
 
 build() {
   local label="$1" url="$2"
-  echo "==> APK ($label) → $url"
+  echo "==> APK ($label, $VERSION) → $url"
   ./gradlew :app:assembleDebug -PLANKA_SERVER_URL="$url" "${PIN_ARG[@]}" --console=plain
-  cp "$OUT_DIR/app-debug.apk" "$OUT_DIR/app-debug-${label}.apk"
-  echo "    → $OUT_DIR/app-debug-${label}.apk"
+  local out="$OUT_DIR/lanka-kiosk-${VERSION}-${label}.apk"
+  cp "$OUT_DIR/app-debug.apk" "$out"
+  echo "    → $out"
 }
 
 case "${1:-both}" in

@@ -18,6 +18,11 @@ val keystoreProps = Properties().apply {
 }
 fun signProp(prop: String, env: String): String? =
     keystoreProps.getProperty(prop) ?: System.getenv(env)
+// Bare `java.util.Properties` does not resolve in a .kts build script -- `java`
+// there is the Java plugin extension, not the package -- hence the import above.
+val appVersion = Properties().apply {
+    rootProject.file("version.properties").inputStream().use { load(it) }
+}
 val releaseStoreFile = signProp("storeFile", "LANKA_KEYSTORE_PATH")?.let { rootProject.file(it) }
 val hasReleaseSigning = releaseStoreFile?.exists() == true
 
@@ -29,8 +34,11 @@ android {
         applicationId = "ai.lanka.kiosk"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.5.0"
+        // Single source of truth for the APK version: android/version.properties.
+        // scripts/build-apk.sh reads the same file to name the outputs, and the
+        // server reads the values back out of the built manifest on upload.
+        versionCode = appVersion.getProperty("versionCode").toInt()
+        versionName = appVersion.getProperty("versionName")
 
         buildConfigField(
             "String",
