@@ -92,8 +92,16 @@ const columns = computed<TableColumn<ApkRelease>[]>(() => [
       <template #header>
         <span class="font-medium">{{ $t('apk.uploadCard') }}</span>
       </template>
+      <!-- The version gate is visible, not a toast: with the field empty the
+           file button is disabled and the field says why. Before this, picking
+           a file with no version silently discarded it behind a 5 s toast —
+           the operator saw "nothing happens". -->
       <div class="flex flex-wrap items-end gap-3">
-        <UFormField :label="$t('apk.colVersion')">
+        <UFormField
+          :label="$t('apk.colVersion')"
+          :help="versionInput.trim() ? undefined : $t('apk.enterVersionFirst')"
+          required
+        >
           <UInput
             v-model="versionInput"
             :placeholder="$t('apk.versionPlaceholder')"
@@ -102,6 +110,7 @@ const columns = computed<TableColumn<ApkRelease>[]>(() => [
         </UFormField>
         <UButton
           :loading="uploading"
+          :disabled="!versionInput.trim()"
           leading-icon="i-lucide-upload"
           color="primary"
           @click="fileInput?.click()"
