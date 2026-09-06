@@ -5,6 +5,7 @@ import type { Manifest, ManifestItem } from '~/app/types/api'
 import type { SchedulerHandle } from '~/app/composables/player/createPlayerScheduler'
 import type { PlayerEnv } from '~/app/composables/player/usePlayerEnv'
 import { createStallWatchdog } from '~/app/composables/player/createStallWatchdog'
+import { describeMediaError } from '~/app/composables/player/describeMediaError'
 
 const props = defineProps<{
   manifest: Manifest
@@ -55,6 +56,27 @@ const HEALTHY_PROGRESS_SECS = 5
 const watchdog = createStallWatchdog({ startupMs: STALL_STARTUP_MS, playingMs: STALL_PLAYING_MS })
 let stallTimer: number | null = null
 let everDecoded = false // this load has reached HAVE_CURRENT_DATA at least once
+
+// Interceptor bypass. On the APK the media URL is answered by MediaCache's
+// shouldInterceptRequest once the file is cached, and on at least one TV
+// (Haier, Chrome 152 WebView, APK 0.4.0) the media pipeline rejects that
+// response instantly — the clip streams fine from the CDN for the ~10 minutes
+// the background download takes, then errors on every load once cached
+// (prod, 2026-09-06). fetch() does not care about the media pipeline's
+// objections, so after a direct-URL failure the bytes are fetched once and
+// played from a blob: URL. The fetch goes to the SAME-ORIGIN /media/<sha>
+// path, never the CDN: a cross-origin fetch needs CORS headers, and an
+// intercepted (cached) response carries none. One attempt per item per
+// recovery cycle; a blob that itself fails to play marks the item so no more
+// 60 MB fetches are spent on bytes the pipeline has already rejected.
+const blobUrlBySlot: Record<'A' | 'B', string | null> = { A: null, B: null }
+const blobState = new Map<number, 'tried' | 'failed'>()
+
+function releaseBlob(slot: 'A' | 'B'): void {
+  const url = blobUrlBySlot[slot]
+  if (url) URL.revokeObjectURL(url)
+  blobUrlBySlot[slot] = null
+}
 let budgetAnchorTime = -1 // currentTime when the error budget was last charged/forgiven
 let playNudged = false // a paused stall already got its one play() before a reload
 
@@ -74,6 +96,9 @@ function scheduleRecovery(): void {
     // re-arm — a slow self-healing retry instead of a permanently dark screen.
     consecutiveErrors = 0
     stalled.value = false
+    // A new cycle gets one more blob attempt per item — unless the blob
+    // itself was rejected, which is permanent for this mount.
+    for (const [id, st] of blobState) if (st === 'tried') blobState.delete(id)
     mountInitial()
   }, RECOVERY_DELAY_MS)
 }
@@ -107,6 +132,7 @@ function setItemInSlot(slot: 'A' | 'B', item: ManifestItem | null): void {
   const { video, img } = elementsFor(slot)
   if (slot === 'A') itemInA.value = item
   else itemInB.value = item
+  releaseBlob(slot)
 
   if (!video || !img) return
 
@@ -274,7 +300,52 @@ function onSlotError(slot: 'A' | 'B', msg: string): void {
 }
 
 function onVideoError(slot: 'A' | 'B'): void {
-  onSlotError(slot, 'video decode/load error')
+  const { video } = elementsFor(slot)
+  const item = slot === 'A' ? itemInA.value : itemInB.value
+  const detail = video
+    ? describeMediaError(video.error, {
+        networkState: video.networkState,
+        readyState: video.readyState,
+        source: blobUrlBySlot[slot] ? 'blob' : undefined
+      })
+    : 'video decode/load error'
+  const viaBlob = !!blobUrlBySlot[slot]
+  if (viaBlob && item) blobState.set(item.id, 'failed')
+  if (!viaBlob && slot === frontSlot() && item?.type === 'video' && video && !blobState.has(item.id)) {
+    blobState.set(item.id, 'tried')
+    // Record the direct-URL failure, then retry via blob: without charging the
+    // error budget — the retry itself decides whether this is a real fault.
+    const index = props.manifest.items.findIndex((i) => i.id === item.id)
+    if (index >= 0) props.scheduler.noteError(index, `${detail} → retrying via blob`)
+    void playViaBlob(slot, item, video)
+    return
+  }
+  onSlotError(slot, detail)
+}
+
+async function playViaBlob(slot: 'A' | 'B', item: ManifestItem, video: HTMLVideoElement): Promise<void> {
+  // Same-origin on purpose (see the blob comment above). On the APK the
+  // interceptor still answers this from the cache; in a browser it is the
+  // app's own /media proxy.
+  const url = `/media/${item.sha256}`
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const blob = await res.blob()
+    // The slot may have moved on while we were fetching.
+    const stillHere = (slot === 'A' ? itemInA.value : itemInB.value)?.id === item.id
+    if (!stillHere) return
+    releaseBlob(slot)
+    const blobUrl = URL.createObjectURL(blob)
+    blobUrlBySlot[slot] = blobUrl
+    video.src = blobUrl
+    video.load()
+    resetProgressTracking()
+    if (slot === frontSlot()) playFrontVideoIfNeeded()
+  } catch (e) {
+    blobState.set(item.id, 'failed')
+    onSlotError(slot, `blob fetch failed: ${(e as Error).message}`)
+  }
 }
 
 function onImgError(slot: 'A' | 'B'): void {
