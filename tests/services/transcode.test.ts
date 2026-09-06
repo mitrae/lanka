@@ -25,7 +25,7 @@ function probe(overrides: Partial<VideoProbe> = {}): VideoProbe {
     frameRateNominal: 25,
     level: 31,
     durationMs: 5000,
-    audioCodec: 'aac',
+    audioCodec: null,
     ...overrides,
   }
 }
@@ -95,11 +95,15 @@ describe('isKioskSafe', () => {
     expect(isKioskSafe(probe({ codec: 'hevc' }))).toBe(false)
   })
 
-  it('accepts null audioCodec (video-only)', () => {
+  it('accepts null audioCodec (video-only) — the only safe state', () => {
     expect(isKioskSafe(probe({ audioCodec: null }))).toBe(true)
   })
 
-  it('rejects mp3 audioCodec', () => {
+  it('rejects ANY audio track, aac included — the player is muted and a Haier AAC decoder killed playback', () => {
+    // prod 2026-09-06: PIPELINE_ERROR_DECODE "Failed to send audio packet"
+    // on a 6-byte AAC frame at 37.8 s, after the loop seek; Chromium fails
+    // the whole element on an audio decode error even when muted.
+    expect(isKioskSafe(probe({ audioCodec: 'aac' }))).toBe(false)
     expect(isKioskSafe(probe({ audioCodec: 'mp3' }))).toBe(false)
   })
 
@@ -166,6 +170,7 @@ describe('probeMatchesPreset', () => {
     expect(probeMatchesPreset(probe({ level: 42 }), 'high')).toMatch(/level/)
     expect(probeMatchesPreset(probe({ profile: 'High' }), 'low')).toMatch(/profile/)
     expect(probeMatchesPreset(probe({ pixFmt: 'yuv422p' }), 'low')).toMatch(/pix_fmt/)
+    expect(probeMatchesPreset(probe({ audioCodec: 'aac' }), 'standard')).toMatch(/audio/)
   })
 })
 
@@ -261,6 +266,8 @@ describe('ensureQuality (integration)', () => {
 
       expect(result.transcoded).toBe(true)
       expect(result.path).not.toBe(srcPath)
+      // The source had an AAC track; the kiosk output must have none.
+      expect(result.probe.audioCodec).toBeNull()
     },
     60_000
   )
@@ -272,18 +279,9 @@ describe('ensureQuality (integration)', () => {
 
 describe('QUALITY_PRESETS', () => {
   it('has low/standard/high with the agreed caps + crf', () => {
-    expect(QUALITY_PRESETS.low).toEqual({
-      maxLong: 854, maxShort: 480, maxFps: 30, crf: 26,
-      maxrate: '2M', bufsize: '4M', audioBitrate: '96k',
-    })
-    expect(QUALITY_PRESETS.standard).toEqual({
-      maxLong: 1280, maxShort: 720, maxFps: 30, crf: 23,
-      maxrate: '4M', bufsize: '8M', audioBitrate: '128k',
-    })
-    expect(QUALITY_PRESETS.high).toEqual({
-      maxLong: 1920, maxShort: 1080, maxFps: 30, crf: 20,
-      maxrate: '6M', bufsize: '12M', audioBitrate: '128k',
-    })
+    expect(QUALITY_PRESETS.low).toEqual({ maxLong: 854, maxShort: 480, maxFps: 30, crf: 26, maxrate: '2M', bufsize: '4M' })
+    expect(QUALITY_PRESETS.standard).toEqual({ maxLong: 1280, maxShort: 720, maxFps: 30, crf: 23, maxrate: '4M', bufsize: '8M' })
+    expect(QUALITY_PRESETS.high).toEqual({ maxLong: 1920, maxShort: 1080, maxFps: 30, crf: 20, maxrate: '6M', bufsize: '12M' })
   })
 
   it('caps every preset at 30 fps — the WebView decoder budget, not the pixels', () => {

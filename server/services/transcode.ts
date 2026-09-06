@@ -134,7 +134,7 @@ export function needsFpsCap(p: Pick<VideoProbe, 'frameRate' | 'frameRateNominal'
 /**
  * Returns true if the probe indicates the video is safe to play on kiosk
  * WebViews (Amlogic/Xiaomi boxes): h264 Main-or-below, yuv420p, ≤720p short
- * side, ≤30 fps, ≤level 4.0, aac (or no) audio.
+ * side, ≤30 fps, ≤level 4.0, and NO audio track.
  *
  * An UNKNOWN frame rate or level (0) counts as unsafe. This predicate gates the
  * backfill's decision to skip a file, and unproven is not proven: an unreadable
@@ -153,15 +153,22 @@ export function isKioskSafe(p: VideoProbe): boolean {
     !exceedsFpsCap(peakFps) &&
     p.level > 0 &&
     p.level <= MAX_KIOSK_LEVEL &&
-    (p.audioCodec === null || p.audioCodec === 'aac')
+    // No audio track at all. The player is muted on both surfaces, and an
+    // audio DECODE error fails the whole <video> element regardless: a Haier
+    // TV's AAC decoder rejected one 6-byte frame at 37.8 s after the loop seek
+    // (prod, 2026-09-06 — "Failed to send audio packet for decoding"), and the
+    // clip died on every pass from then on. A track nobody can hear is only a
+    // second decoder that can fail.
+    p.audioCodec === null
   )
 }
 
 export type QualityPreset = 'low' | 'standard' | 'high'
 
-/** Resolution cap (scale-down only), frame-rate cap, CRF, VBV ceiling and audio
- *  bitrate per preset. All presets emit H.264 Main / yuv420p / level ≤4.0 /
- *  +faststart. `standard` reproduces the original hardcoded kiosk-safe profile.
+/** Resolution cap (scale-down only), frame-rate cap, CRF and VBV ceiling per
+ *  preset. All presets emit H.264 Main / yuv420p / level ≤4.0 / +faststart and
+ *  NO audio track (see isKioskSafe). `standard` reproduces the original
+ *  hardcoded kiosk-safe profile.
  *
  *  `maxrate`/`bufsize` matter as much as the resolution: bare CRF leaves VBV
  *  unconstrained, so a busy scene can spike far above the average — a prod clip
@@ -175,20 +182,10 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
   crf: number
   maxrate: string
   bufsize: string
-  audioBitrate: string
 }> = {
-  low: {
-    maxLong: 854, maxShort: 480, maxFps: MAX_KIOSK_FPS, crf: 26,
-    maxrate: '2M', bufsize: '4M', audioBitrate: '96k',
-  },
-  standard: {
-    maxLong: 1280, maxShort: 720, maxFps: MAX_KIOSK_FPS, crf: 23,
-    maxrate: '4M', bufsize: '8M', audioBitrate: '128k',
-  },
-  high: {
-    maxLong: 1920, maxShort: 1080, maxFps: MAX_KIOSK_FPS, crf: 20,
-    maxrate: '6M', bufsize: '12M', audioBitrate: '128k',
-  },
+  low: { maxLong: 854, maxShort: 480, maxFps: MAX_KIOSK_FPS, crf: 26, maxrate: '2M', bufsize: '4M' },
+  standard: { maxLong: 1280, maxShort: 720, maxFps: MAX_KIOSK_FPS, crf: 23, maxrate: '4M', bufsize: '8M' },
+  high: { maxLong: 1920, maxShort: 1080, maxFps: MAX_KIOSK_FPS, crf: 20, maxrate: '6M', bufsize: '12M' },
 }
 
 /**
@@ -198,7 +195,8 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
  *   - Frame rate capped at the preset's maxFps (only when the source exceeds it,
  *     so a 24 fps source is not padded with duplicate frames)
  *   - Capped CRF: quality-driven, hard-limited by maxrate/bufsize
- *   - AAC audio at the preset's audioBitrate, stereo
+ *   - No audio track (-an): the player is muted, and an audio decoder is one
+ *     more thing that can fail the element
  *
  * Rejects on error or if the encode exceeds TRANSCODE_TIMEOUT_MS.
  */
@@ -241,9 +239,7 @@ export async function transcodeToKioskSafe(
         '-crf', String(p.crf),
         '-maxrate', p.maxrate,
         '-bufsize', p.bufsize,
-        '-c:a', 'aac',
-        '-b:a', p.audioBitrate,
-        '-ac', '2',
+        '-an',
         '-movflags', '+faststart',
       ])
       .output(outPath)
@@ -280,6 +276,7 @@ export function probeMatchesPreset(p: VideoProbe, preset: QualityPreset): string
   const peakFps = Math.max(p.frameRate, p.frameRateNominal)
   if (peakFps > q.maxFps + FPS_TOLERANCE) return `fps ${peakFps.toFixed(2)} (want ≤${q.maxFps})`
   if (p.level > MAX_KIOSK_LEVEL) return `level ${p.level} (want ≤${MAX_KIOSK_LEVEL})`
+  if (p.audioCodec !== null) return `audio track ${p.audioCodec} (want none)`
   return null
 }
 
