@@ -63,8 +63,10 @@ let everDecoded = false // this load has reached HAVE_CURRENT_DATA at least once
 // response instantly — the clip streams fine from the CDN for the ~10 minutes
 // the background download takes, then errors on every load once cached
 // (prod, 2026-09-06). fetch() does not care about the media pipeline's
-// objections, so after a direct-URL failure the bytes are fetched once and
-// played from a blob: URL. The fetch goes to the SAME-ORIGIN /media/<sha>
+// objections, so after a direct-URL failure -- an `error`, OR a stall the
+// watchdog catches (prod 2026-09-06: the cached path starved the pipeline
+// after ~10 s of every load, while the blob played 11 min clean) -- the bytes
+// are fetched once and played from a blob: URL. The fetch goes to the SAME-ORIGIN /media/<sha>
 // path, never the CDN: a cross-origin fetch needs CORS headers, and an
 // intercepted (cached) response carries none. One attempt per item per
 // recovery cycle; a blob that itself fails to play marks the item so no more
@@ -251,9 +253,17 @@ function sampleProgress(): void {
       return
     }
     const index = props.manifest.items.findIndex((i) => i.id === item.id)
-    if (index >= 0) {
-      reportError(index, everDecoded ? 'video stalled' : 'video never started')
+    if (index < 0) return
+    const what = everDecoded ? 'video stalled' : 'video never started'
+    if (!blobUrlBySlot[frontSlot()] && !blobState.has(item.id)) {
+      // Same escape hatch as onVideoError: a direct-URL load that cannot make
+      // progress gets one blob attempt before it costs the error budget.
+      blobState.set(item.id, 'tried')
+      props.scheduler.noteError(index, `${what} → retrying via blob`)
+      void playViaBlob(frontSlot(), item, video)
+      return
     }
+    reportError(index, blobUrlBySlot[frontSlot()] ? `${what} [src=blob]` : what)
     return
   }
 

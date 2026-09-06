@@ -5,6 +5,15 @@ set -euo pipefail
 # chosen per box from the dashboard). The server URL is compile-time
 # (BuildConfig.LANKA_SERVER_URL), so "dev" and "prod" are separate builds.
 #
+# RELEASE-SIGNED, always. A debug-signed APK carries whatever debug key the
+# building environment happened to have — a worktree/sandbox gets its own — and
+# an APK signed by a different key can never OTA onto a box (Android refuses
+# the update and wipes nothing; our OtaInstaller refuses it first). That is
+# exactly how a TV ended up unreachable by OTA on 2026-09-06. The one
+# android/lanka-release.jks (+ keystore.properties, both gitignored, BACK THEM
+# UP) is the fleet's identity; this script refuses to build without it rather
+# than emit an unsigned or debug-signed artifact by accident.
+#
 # Usage:
 #   scripts/build-apk.sh            # both (dev + prod)
 #   scripts/build-apk.sh dev        # dev only
@@ -16,10 +25,12 @@ set -euo pipefail
 #   LANKA_PROD_URL  (default http://100.79.177.86        — prod box: Hetzner, nginx tailnet block :80)
 #   LANKA_KIOSK_PIN (optional; 4+ digits → baked PIN escape hatch, see android/README.md)
 #
-# Output (copied next to the gradle artifact, so dev+prod coexist on disk;
-# <version> comes from android/version.properties):
-#   android/app/build/outputs/apk/debug/lanka-kiosk-<version>-DEV.apk
-#   android/app/build/outputs/apk/debug/lanka-kiosk-<version>-PROD.apk
+# Output (in its OWN directory: AGP prunes files it doesn't know about from a
+# variant's output dir on the next package task, so a DEV copy left in
+# apk/release/ vanished when PROD was built; <version> comes from
+# android/version.properties):
+#   android/app/build/outputs/lanka/lanka-kiosk-<version>-DEV.apk
+#   android/app/build/outputs/lanka/lanka-kiosk-<version>-PROD.apk
 
 DEV_URL="${LANKA_DEV_URL:-http://100.123.113.86:5100}"
 PROD_URL="${LANKA_PROD_URL:-http://100.79.177.86}"
@@ -38,7 +49,14 @@ else
 fi
 
 cd "$(dirname "$0")/../android"
-OUT_DIR="app/build/outputs/apk/debug"
+[[ -f keystore.properties ]] || {
+  echo "!! android/keystore.properties missing — refusing to build an unsigned/debug-signed APK." >&2
+  echo "!! See android/README.md 'Release build (signed)'; restore lanka-release.jks + keystore.properties from backup." >&2
+  exit 1
+}
+GRADLE_OUT="app/build/outputs/apk/release"
+OUT_DIR="app/build/outputs/lanka"
+mkdir -p "$OUT_DIR"
 # The version lives in android/version.properties (gradle reads the same file),
 # so the output name can carry it: readable in a file picker, and a hint the
 # dashboard pre-fills from. The server still reads the manifest -- the name is a
@@ -49,9 +67,9 @@ VERSION="$(grep -E '^versionName=' version.properties | cut -d= -f2 | tr -d ' \r
 build() {
   local label="$1" url="$2"
   echo "==> APK ($label, $VERSION) → $url"
-  ./gradlew :app:assembleDebug -PLANKA_SERVER_URL="$url" "${PIN_ARG[@]}" --console=plain
+  ./gradlew :app:assembleRelease -PLANKA_SERVER_URL="$url" "${PIN_ARG[@]}" --console=plain
   local out="$OUT_DIR/lanka-kiosk-${VERSION}-${label}.apk"
-  cp "$OUT_DIR/app-debug.apk" "$out"
+  cp "$GRADLE_OUT/app-release.apk" "$out"
   echo "    → $out"
 }
 

@@ -154,12 +154,18 @@ keystore means every box must uninstall/reinstall (a different signature can't
 1. **Enable Developer options + USB debugging** (or "Apps from unknown sources").
 2. **Install Tailscale** — official app from Play Store, or sideload its APK.
    Sign in, confirm the TV appears in your tailnet admin panel.
-3. **Sideload the Lanka APK** — copy `app-debug.apk` to a USB stick, plug into
-   the TV, install via a file manager. Alternatively over ADB:
+3. **Sideload the Lanka APK** — build it with `scripts/build-apk.sh prod`
+   (release-signed with the fleet keystore; never a debug build, see below),
+   copy `app/build/outputs/lanka/lanka-kiosk-<version>-PROD.apk` to a
+   USB stick, plug into the TV, install via a file manager. Alternatively over
+   ADB:
    ```bash
    adb connect <tv-ip>:5555
-   adb install -r app-debug.apk
+   adb install -r lanka-kiosk-<version>-PROD.apk
    ```
+   A box that already runs an APK signed by *another* key (an old debug build)
+   cannot be upgraded in place: `adb uninstall ai.lanka.kiosk` first, then
+   install. It re-registers as a new device — re-assign its playlist.
 4. Open **Lanka** from the launcher. Splash → WebView loads `/player`.
    The device appears in the Lanka dashboard's unclaimed tray; assign a
    playlist there.
