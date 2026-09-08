@@ -44,6 +44,7 @@ import { LocalDiskStore } from '../server/services/media-store'
 import { R2Store } from '../server/services/r2-store'
 import type { MediaStore } from '../server/services/media-store'
 import { ensureQuality, probeVideo, isKioskSafe } from '../server/services/transcode'
+import { storeThumbnailFromFile } from '../server/services/thumbnails'
 import { bumpPlaylistVersion } from '../server/services/playlist-version'
 
 // ---------------------------------------------------------------------------
@@ -213,6 +214,21 @@ async function main(): Promise<void> {
       // 1. Upload the transcoded file
       await store.put(newSha, createReadStream(finalPath), 'video/mp4')
 
+      // 1b. Re-key the thumbnail. Thumbnails are addressed by the media hash,
+      // so the one generated at ingest sits under the OLD sha and is invisible
+      // to /media/:sha/thumb the moment step 2 rewrites the row — the card
+      // still renders an <img> (thumbnail_bytes is non-null) and it 404s, i.e.
+      // a broken image in the dashboard, forever. Regenerate from the file we
+      // just produced rather than copying the old object: the transcode can
+      // change the dimensions the thumbnail is meant to represent.
+      let newThumbnailBytes: number | null = null
+      try {
+        newThumbnailBytes = await storeThumbnailFromFile(store, newSha, 'video', finalPath)
+      } catch (err) {
+        // A null column renders the kind icon; a stale count renders a break.
+        console.warn(`${label} WARN: thumbnail regeneration failed:`, (err as Error).message)
+      }
+
       // 2. Update the media row
       //
       // NOTE: steps 2-3 (row update + playlist version bumps) are NOT atomic
@@ -239,6 +255,7 @@ async function main(): Promise<void> {
           // `high` here would have the dashboard advertise a quality the bytes
           // no longer are.
           quality: 'standard',
+          thumbnailBytes: newThumbnailBytes,
         })
         .where(eq(schema.media.id, row.id))
 
@@ -257,6 +274,7 @@ async function main(): Promise<void> {
       // 4. Optionally delete the old object
       if (DELETE_OLD) {
         await store.delete(oldSha)
+        await store.deleteThumbnail(oldSha)
         console.log(`${label} deleted old object ${oldSha.slice(0, 12)}…`)
       }
 

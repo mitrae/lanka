@@ -3,10 +3,11 @@ import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import type { Readable } from 'node:stream'
+import { Readable } from 'node:stream'
 import sharp from 'sharp'
 import ffmpegPath from '@ffmpeg-installer/ffmpeg'
 import ffmpeg from 'fluent-ffmpeg'
+import type { MediaStore } from './media-store'
 
 ffmpeg.setFfmpegPath(ffmpegPath.path)
 
@@ -58,4 +59,28 @@ export async function generateVideoThumbnail(
   } finally {
     await rm(tmpDir, { recursive: true, force: true })
   }
+}
+
+/**
+ * Generates the thumbnail for `filePath` and stores it under `sha`, so the
+ * object always lands on the same hash the media row will carry. Returns the
+ * byte length to write to `media.thumbnail_bytes`.
+ *
+ * Any caller that changes a row's `sha256` (the transcode backfill) must call
+ * this with the new sha: the thumbnail is keyed by content hash, so an
+ * unmigrated thumb is invisible to `/media/:sha/thumb` and the dashboard shows
+ * a broken image forever. See server/services/thumbnail-repair.ts.
+ */
+export async function storeThumbnailFromFile(
+  store: MediaStore,
+  sha: string,
+  kind: 'video' | 'image',
+  filePath: string
+): Promise<number> {
+  const buf =
+    kind === 'image'
+      ? await generateImageThumbnail(createReadStream(filePath))
+      : await generateVideoThumbnail(createReadStream(filePath))
+  await store.putThumbnail(sha, Readable.from([buf]))
+  return buf.length
 }
