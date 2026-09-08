@@ -481,8 +481,8 @@
     "observedAt": "Observed at {time}",
     "missed": "Missed",
     "notYet": "Not yet due",
-      "noWindow": "No window",
-      "noWindowWarning": "The schedule is enabled but no window could be computed — the clip has no known duration. Nothing has been sent to any device.",
+    "noWindow": "No window",
+    "noWindowWarning": "The schedule is enabled but no window could be computed — the clip has no known duration. Nothing has been sent to any device.",
     "noPlaylistWarning": "These devices have no playlist assigned. They receive no manifest and will not observe.",
     "clipInUse": "Used by the daily schedule"
   },

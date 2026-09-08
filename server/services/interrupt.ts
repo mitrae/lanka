@@ -282,7 +282,13 @@ export async function handlePutInterrupt(
   // all, while the dashboard renders every device red "Missed" from 09:00
   // onwards. Refuse it here: an operator reading "the whole fleet failed" when
   // nothing was ever sent is the worst failure this page can produce.
-  if (!clip.durationMs || clip.durationMs <= 0) {
+  //
+  // Gated on `enabled`, deliberately. /schedule's save() always sends mediaId,
+  // so an unconditional guard would leave an operator whose row already points
+  // at a duration-less clip unable to reach the OFF switch without first
+  // swapping clips. A disabled config publishes no window anyway — which is
+  // exactly the state they are asking for.
+  if (body.enabled && (!clip.durationMs || clip.durationMs <= 0)) {
     throw createError({
       statusCode: 400,
       message: 'A clip with no known duration cannot define an interrupt window'

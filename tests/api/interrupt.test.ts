@@ -73,6 +73,20 @@ describe('interrupt config API', () => {
     ).rejects.toMatchObject({ statusCode: 400 })
   })
 
+  it('still lets a duration-less clip be DISABLED — the off switch is always reachable', async () => {
+    // save() on /schedule always sends mediaId, so an unconditional duration
+    // guard would leave an operator whose row already points at a
+    // duration-less clip unable to turn the schedule off without first
+    // swapping clips. On a compliance feature, an unreachable off switch is
+    // the wrong failure.
+    const m = await seedMedia(db, { sha256: 'noduration2', kind: 'video', durationMs: null })
+    const res = await handlePutInterrupt(
+      db, { mediaId: m.id, atMinutes: AT_9AM, enabled: false }, Date.now()
+    )
+    expect(res.config).toMatchObject({ mediaId: m.id, enabled: false })
+    expect(res.window).toBeNull()
+  })
+
   it('rejects media that does not exist', async () => {
     await expect(
       handlePutInterrupt(db, { mediaId: 999, atMinutes: AT_9AM, enabled: true }, Date.now())
