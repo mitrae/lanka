@@ -17,11 +17,15 @@ const { t } = useI18n()
 const store = useMediaStore()
 const confirm = useConfirm()
 const toast = useToast()
+const api = useApiClient()
 
 const orgsStore = useOrganizationsStore()
 
 const showUpload = ref(false)
 const selectedId = ref<number | null>(null)
+/** The daily interrupt's clip, if configured. Fetched once -- this page only
+ *  needs to badge one row, not drive the schedule itself. */
+const interruptMediaId = ref<number | null>(null)
 
 const orgFilter = ref<OrgFilter>(ORG_FILTER_ALL)
 
@@ -40,6 +44,11 @@ onMounted(() => {
   store.refresh()
   store.pollUploads()
   orgsStore.refresh()
+  // Best-effort: a failure here only means the badge doesn't show, not that
+  // the page is broken.
+  api.getInterrupt()
+    .then((s) => { interruptMediaId.value = s.config?.mediaId ?? null })
+    .catch(() => {})
 })
 onUnmounted(() => store.stopPolling())
 
@@ -143,6 +152,7 @@ async function remove(m: MediaListRow) {
         v-for="m in visibleMedia"
         :key="m.id"
         :media="m"
+        :scheduled="m.id === interruptMediaId"
         @select="selectedId = m.id"
         @delete="remove"
       />

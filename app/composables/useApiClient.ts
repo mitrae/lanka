@@ -15,6 +15,8 @@ import type {
   DeviceNowPlaying,
   Group,
   GroupDetail,
+  InterruptPut,
+  InterruptStatus,
   Manifest,
   Media,
   MediaDetail,
@@ -148,6 +150,10 @@ export interface ApiClient {
 
   // portal
   getPortalStats(): Promise<OrgReach>
+
+  // scheduled interrupt
+  getInterrupt(): Promise<InterruptStatus>
+  putInterrupt(body: InterruptPut): Promise<InterruptStatus>
 
   // assignments (target-addressed)
   assignDeviceToPlaylist(
@@ -305,6 +311,11 @@ export function createApiClient(fetch: FetchFn): ApiClient {
 
     // portal
     getPortalStats: () => fetch<OrgReach>('/api/portal/stats', { method: 'GET' }),
+
+    // scheduled interrupt
+    getInterrupt: () => fetch<InterruptStatus>('/api/interrupt', { method: 'GET' }),
+    putInterrupt: (body) =>
+      fetch<InterruptStatus>('/api/interrupt', { method: 'PUT', body }),
 
     // assignments
     assignDeviceToPlaylist: (deviceId, body) =>
