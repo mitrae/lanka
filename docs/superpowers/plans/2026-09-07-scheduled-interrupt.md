@@ -4083,6 +4083,66 @@ No unit test reaches the part that actually matters. Build a **production** bund
 9. Repeat every step on the native surface (`set-surface native`). Everything in
    `NativeSurface`/`PlaybackView` is build-verified only; this checklist is its
    entire verification.
+10. **Run two consecutive windows** — two mornings, or reconfigure for a second
+    window the same day. Every test and every other step here exercises exactly
+    *one* window, which is why a second-window bug (the latch marking tomorrow
+    as already-played) survived fifteen tasks of review and was caught only by
+    the final read. This is the highest-value step on the list and it stays
+    valuable now that the bug is fixed: it is the only thing that exercises the
+    latch at all.
+11. **Set the TV's system clock an hour wrong** before the window and confirm it
+    still fires at the right instant (`adb shell date`, or just turn off
+    automatic time). The `serverNow` → offset correction is the most
+    load-bearing mechanism in the design that no test can validate against real
+    hardware, and it is trivial to exercise.
+12. **Point the schedule at a deliberately broken clip** — an H.264 High-profile
+    file, whose failure mode on these boxes is already documented. Expect the
+    screen back within ~5 s on both surfaces, with a `device_errors` row
+    carrying the sha and NO `last_interrupt_at`. This is the only way to see
+    "failure is loud, never blank" actually working rather than assumed.
+13. **Cover the two screens the overlay reaches but the stage does not:** a
+    device with no playlist (confirm `/schedule` warns, and that the box
+    correctly does *not* observe, per the 204 contract), and a box sitting on
+    the standby or no-content screen when the window opens (confirm the overlay
+    appears anyway, on both surfaces). Neither claim is observable to any test.
+
+**Two steps whose failure looks like success**, so watch for them specifically:
+step 4 (no page reload) — if the watchdog gate regresses the screen still comes
+back, just from item 0 with the playlist restarted; and step 8 (mid-window
+playlist edit) — the only observation point in either toolchain for native
+z-order, where a regression puts the playlist *on top of* the clip.
+
+## Known follow-ups (deferred from the final review)
+
+Not defects that block merge; each was judged and deferred deliberately.
+
+1. **The interrupt pre-download has no attempt cap or backoff**
+   (`useReconciler.ts`). It is on the every-fetch path by design — the clip must
+   be on disk before 09:00 even on an unchanged playlist — but `NativeFS.download()`
+   blocks the JS thread, so a clip that persistently fails to land parks the
+   player's single thread every 30 s indefinitely. While parked nothing else on
+   that thread runs, including the 500 ms interrupt tick; a park coinciding with
+   09:00:00 misses the window outright, and the 500 ms arm timeout cannot help
+   because it is a `setTimeout` on the same blocked thread. Native is not
+   exposed (its prefetch runs on the manifest-poll executor). Fix is an attempt
+   cap or `backoff()`; deferred because where the counter lives wants thought.
+2. **The join offset is captured at arm time, not at seek time**
+   (`usePlayerBoot.ts` → `InterruptOverlay.onLoadedMetadata`). On a cold load —
+   cache miss, CDN fallback, blob retry — metadata can arrive seconds later, so
+   the box joins behind the rest of the fleet and the "every screen shows the
+   same second" property degrades. The wall-clock end bounds the damage. Fix:
+   recompute from `Date.now()` plus the timer's offset inside `onLoadedMetadata`.
+3. **`sampleInterrupt` has no test.** The wall-clock end rule and the latch —
+   the two behaviours defining the window's lifecycle — are exercised by nothing;
+   the Critical above lived inside that gap. Cheapest durable pin: expose a
+   `_sampleInterrupt` test hook (the file already precedents `_resetNativeDeviceCache`),
+   inject a clock, and drive two consecutive windows.
+4. **`app/pages/media.vue` calls `GET /api/interrupt` on every visit** purely to
+   badge one row, which runs a full fleet-status computation including a
+   per-device `resolvePlaylistForDevice`. Free when unconfigured, cheap at fleet
+   size. Consider a light variant or carrying `isInterruptClip` on the media row.
+5. Dead `Number(p.y ?? p.year)` branch in `server/services/interrupt.ts` —
+   `Intl` never emits a part of type `y`.
 
 ## Rollout
 
