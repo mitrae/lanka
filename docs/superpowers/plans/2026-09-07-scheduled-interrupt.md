@@ -4061,7 +4061,15 @@ No unit test reaches the part that actually matters. Build a **production** bund
 5. `device_errors` stays clean; `devices.last_interrupt_at` lands within a second or two of the window start, and `/schedule` shows the device as observed.
 6. Late join: start the box mid-window; it enters at the right offset and still ends on time.
 7. Pull the network before the window: it fires anyway, from the schedule it already holds, off the local cache.
-8. Repeat on the native surface (`set-surface native`).
+8. **Edit the assigned playlist while the window is running** (bump its version
+   from the dashboard, so a manifest change lands mid-observance). The clip must
+   stay on screen and on top for the rest of the minute, and the playlist must
+   resume normally after. On the native surface this is the one step that
+   exercises the `showOnly` z-order/visibility path, which no test in either
+   toolchain can observe — it was a Critical found only by reading.
+9. Repeat every step on the native surface (`set-surface native`). Everything in
+   `NativeSurface`/`PlaybackView` is build-verified only; this checklist is its
+   entire verification.
 
 ## Rollout
 
