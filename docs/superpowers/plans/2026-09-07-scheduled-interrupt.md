@@ -1525,6 +1525,47 @@ describe('pause/resume', () => {
     expect(h.pending).toBe(0)
   })
 
+  it('does not advance on itemEnded while paused', () => {
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    const transitions: number[] = []
+    s.onTransition((e) => transitions.push(e.to))
+    s.start()
+    s.pause()
+    s.itemEnded(0)
+    expect(transitions).toEqual([])
+    expect(s.getFrontIndex()).toBe(0)
+  })
+
+  it('still REPORTS itemErrored while paused, but does not advance', () => {
+    // A decoder that dies mid-observance must reach device_errors; what it must
+    // not do is move the front index out from under the element the stage is
+    // about to resume.
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    const errors: string[] = []
+    const transitions: number[] = []
+    s.onItemError((_i, m) => errors.push(m))
+    s.onTransition((e) => transitions.push(e.to))
+    s.start()
+    s.pause()
+    s.itemErrored(0, 'decoder died')
+    expect(errors).toEqual(['decoder died'])
+    expect(transitions).toEqual([])
+    expect(s.getFrontIndex()).toBe(0)
+  })
+
+  it('leaves exactly one timer after an itemEnded is dropped and the scheduler resumes', () => {
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    s.start()
+    h.advance(4_000)
+    s.pause()
+    s.itemEnded(0) // dropped
+    s.resume()
+    expect(h.pending).toBe(1)
+  })
+
   it('single-video mode has no timer to pause and survives both calls', () => {
     const one = [{ id: 1, type: 'video', sha256: 'v', durationMs: 5_000 }]
     const h = harness(one)
@@ -1553,10 +1594,63 @@ Add to the `SchedulerHandle` interface, after `stop()`:
    * Freeze the playlist for a scheduled interrupt: cancel the image slide
    * timer, remembering how much of it was left. No transitions, no item starts.
    * Idempotent.
+   *
+   * While paused the scheduler REFUSES to advance. `itemEnded` is dropped and
+   * `itemErrored` still reports but does not move the front index — see the
+   * guards in those methods for why.
    */
   pause(): void
   /** Re-arm the slide timer with its REMAINING time. Idempotent. */
   resume(): void
+```
+
+**Guard the advancing paths against a paused scheduler.** `pause()` promises
+"no transitions", but nothing enforces it: the stage keeps feeding events during
+the interrupt, and the front video — paused, not torn down — can still fire
+`error` when its decoder dies, which is a documented Amlogic failure. An
+`ended` can also race the pause boundary.
+
+If `advance()` runs while paused the damage is not merely a leaked timer: the
+scheduler's front index moves while the visible element is still the old,
+paused item, so `standUp()` restores the back slot from the new index and calls
+`play()` on the wrong element — a broken screen once the observance ends.
+
+In `itemEnded`, change the first line to:
+
+```ts
+    itemEnded(index) {
+      // Dropped while paused: advancing here would desync the front index from
+      // the element the stage is about to resume.
+      if (stopped || paused) return
+```
+
+In `itemErrored`, keep the report but refuse the advance — a failure during the
+observance must still reach `device_errors`:
+
+```ts
+    itemErrored(index, msg) {
+      if (stopped) return
+      emitError(index, msg)
+      // Report, never advance: same desync hazard as itemEnded.
+      if (paused) return
+```
+
+`noteError` needs no guard — it only emits and never advances.
+
+Also guard `start()`, and make `armImageTimer` defensive about an existing
+handle. Overwriting `imageTimer` without clearing leaks the old handle, which
+is a latent bug independent of pausing:
+
+```ts
+    start() {
+      if (stopped || paused) return
+      if (mode === 'empty') return
+```
+
+```ts
+  function armImageTimer(index: number, ms: number): void {
+    clearImageTimer() // never overwrite a live handle — that leaks it
+    imageTimerIndex = index
 ```
 
 Replace the timer state and `armImageTimerIfNeeded` with:
@@ -3208,6 +3302,27 @@ class SchedulerPauseTest {
         assertEquals(1, s.getFrontIndex())
     }
 
+    @Test fun `does not advance on itemEnded while paused`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        s.pause()
+        s.itemEnded(0)
+        assertEquals(0, s.getFrontIndex())
+    }
+
+    @Test fun `reports itemErrored while paused without advancing`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        val errors = mutableListOf<String>()
+        s.onItemError { _, m -> errors.add(m) }
+        s.start()
+        s.pause()
+        s.itemErrored(0, "decoder died")
+        assertEquals(listOf("decoder died"), errors)
+        assertEquals(0, s.getFrontIndex())
+    }
+
     @Test fun `stop while paused leaves no timer`() {
         val deps = FakeDeps()
         val s = Scheduler(twoImages, deps)
@@ -3327,6 +3442,7 @@ Replace the timer state and arming:
     }
 
     private fun armImageTimer(index: Int, ms: Long) {
+        clearImageTimer() // never overwrite a live handle — that leaks it
         imageTimerIndex = index
         imageTimerArmedAt = nowMs()
         imageTimerMs = ms
@@ -3356,12 +3472,43 @@ interface SchedulerDeps {
 
 In `Scheduler`, reference it as `private fun nowMs() = deps.now()`.
 
+**Guard the advancing paths**, exactly as the TypeScript twin does and for the
+same reason — a paused front player can still surface an error, and advancing
+would desync the front index from the surface the host is about to resume:
+
+```kotlin
+    fun start() {
+        if (stopped || paused || mode == SchedulerMode.EMPTY) return
+        emitItemStart(0); armImageTimerIfNeeded(0)
+    }
+
+    fun itemEnded(index: Int) {
+        // Dropped while paused — see the TS twin.
+        if (stopped || paused) return
+        if (mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
+        if (index != front) return
+        advance()
+    }
+
+    fun itemErrored(index: Int, message: String) {
+        if (stopped) return
+        emitError(index, message)
+        if (paused) return // report, never advance
+        if (mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
+        if (index != front) return
+        advance()
+    }
+```
+
+`noteError` needs no guard — it only emits.
+
 Add the two methods:
 
 ```kotlin
     /**
      * Freeze the playlist for a scheduled interrupt: cancel the slide timer,
-     * remembering how much of it was left. Idempotent.
+     * remembering how much of it was left. While paused the scheduler refuses
+     * to advance. Idempotent.
      */
     fun pause() {
         if (stopped || paused) return
