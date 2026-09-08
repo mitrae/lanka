@@ -387,7 +387,7 @@ export async function getInterrupt(
 - [ ] **Step 6: Run the tests**
 
 Run: `pnpm vitest run tests/services/interrupt.test.ts`
-Expected: PASS (15 tests)
+Expected: PASS (14 tests)
 
 - [ ] **Step 7: Run the full suite so the new migration is proven against every existing test**
 
@@ -1399,7 +1399,7 @@ export function createInterruptTimer(): InterruptTimerHandle {
 - [ ] **Step 4: Run the tests**
 
 Run: `pnpm vitest run tests/player/createInterruptTimer.test.ts`
-Expected: PASS (15 tests)
+Expected: PASS (14 tests)
 
 - [ ] **Step 5: Commit**
 
