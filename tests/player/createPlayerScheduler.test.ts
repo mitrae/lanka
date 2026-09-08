@@ -353,5 +353,40 @@ describe('createPlayerScheduler', () => {
       s.resume()
       expect(s.mode).toBe('single-video')
     })
+
+    it('does not advance on itemEnded while paused', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      const transitions: number[] = []
+      s.onTransition((e) => transitions.push(e.to))
+      s.start()
+      s.pause()
+      s.itemEnded(0)
+      expect(transitions).toEqual([])
+      expect(s.getFrontIndex()).toBe(0)
+    })
+
+    it('still REPORTS itemErrored while paused, but does not advance', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      const errors: string[] = []
+      const transitions: number[] = []
+      s.onItemError((_i, m) => errors.push(m))
+      s.onTransition((e) => transitions.push(e.to))
+      s.start()
+      s.pause()
+      s.itemErrored(0, 'decoder died')
+      expect(errors).toEqual(['decoder died'])
+      expect(transitions).toEqual([])
+      expect(s.getFrontIndex()).toBe(0)
+    })
+
+    it('leaves exactly one timer after an itemEnded is dropped and the scheduler resumes', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      s.start()
+      deps.advanceTime(4_000)
+      s.pause()
+      s.itemEnded(0) // dropped
+      s.resume()
+      expect(deps.pending()).toBe(1)
+    })
   })
 })

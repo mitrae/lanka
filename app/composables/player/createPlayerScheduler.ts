@@ -42,7 +42,9 @@ export interface SchedulerHandle {
   /**
    * Freeze the playlist for a scheduled interrupt: cancel the image slide
    * timer, remembering how much of it was left. No transitions, no item starts.
-   * Idempotent.
+   * While paused the scheduler refuses to advance: `itemEnded` is dropped and
+   * `itemErrored` still reports (telemetry must not go blind) but does not
+   * move the front index. Idempotent.
    */
   pause(): void
   /** Re-arm the slide timer with its REMAINING time. Idempotent. */
@@ -117,6 +119,7 @@ export function createPlayerScheduler(
   }
 
   function armImageTimer(index: number, ms: number): void {
+    clearImageTimer() // never overwrite a live handle — that leaks it
     imageTimerIndex = index
     imageTimerArmedAt = deps.now()
     imageTimerMs = ms
@@ -158,13 +161,15 @@ export function createPlayerScheduler(
       return mode === 'loop'
     },
     start() {
-      if (stopped) return
+      if (stopped || paused) return
       if (mode === 'empty') return
       emitItemStart(0)
       armImageTimerIfNeeded(0)
     },
     itemEnded(index) {
-      if (stopped) return
+      // Dropped while paused: advancing here would desync the front index from
+      // the element the stage is about to resume.
+      if (stopped || paused) return
       if (mode === 'empty' || mode === 'single-video') return
       if (mode === 'single-image') {
         // Stage shouldn't call itemEnded for single-image — timer is
@@ -181,6 +186,8 @@ export function createPlayerScheduler(
     itemErrored(index, msg) {
       if (stopped) return
       emitError(index, msg)
+      // Report, never advance: same desync hazard as itemEnded.
+      if (paused) return
       if (mode === 'empty' || mode === 'single-video' || mode === 'single-image') {
         return
       }
