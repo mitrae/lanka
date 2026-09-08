@@ -475,6 +475,7 @@
     "save": "Save schedule",
     "saved": "Schedule saved",
     "saveFailed": "Failed to save schedule",
+    "loadFailed": "Failed to load schedule status",
     "statusTitle": "Today's observance",
     "refresh": "Refresh",
     "observedAt": "Observed at {time}",

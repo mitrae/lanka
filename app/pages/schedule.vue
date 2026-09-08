@@ -13,6 +13,7 @@
 import type { TableColumn } from '@nuxt/ui'
 import { useMediaStore } from '~/app/stores/media'
 import type { InterruptDeviceStatus, InterruptStatus } from '~/app/types/api'
+import { deviceInterruptOutcome, type InterruptOutcome } from '~/app/utils/interruptStatus'
 
 definePageMeta({ layout: 'default' })
 
@@ -103,22 +104,30 @@ function kyivMinutesNow(): number {
   return hh * 60 + mm
 }
 
-/** Today's outcome for one device: observed, missed, not yet due, or nothing
- *  scheduled at all. `observedToday` is already computed against today's
- *  occurrence server-side -- this only has to pick the label. */
+/** Today's outcome for one device -- the compliance-critical judgment itself
+ *  lives in the pure, unit-tested `deviceInterruptOutcome`. This is just the
+ *  impure clock read (kyivMinutesNow) plus the i18n/colour mapping. */
+function outcomeFor(d: InterruptDeviceStatus): InterruptOutcome {
+  return deviceInterruptOutcome(d, status.value?.config ?? null, kyivMinutesNow())
+}
+
 function deviceState(d: InterruptDeviceStatus): string {
-  if (d.observedToday && d.lastInterruptAt !== null) {
-    return t('schedule.observedAt', { time: new Date(d.lastInterruptAt).toLocaleTimeString() })
+  switch (outcomeFor(d)) {
+    case 'observed':
+      return t('schedule.observedAt', { time: new Date(d.lastInterruptAt!).toLocaleTimeString() })
+    case 'missed':
+      return t('schedule.missed')
+    case 'notYet':
+      return t('schedule.notYet')
+    case 'notScheduled':
+      return t('schedule.notScheduled')
   }
-  const cfg = status.value?.config
-  if (!cfg || !cfg.enabled) return t('schedule.notScheduled')
-  return kyivMinutesNow() >= cfg.atMinutes ? t('schedule.missed') : t('schedule.notYet')
 }
 
 function deviceStateColor(d: InterruptDeviceStatus): 'success' | 'error' | 'neutral' {
-  if (d.observedToday && d.lastInterruptAt !== null) return 'success'
-  const cfg = status.value?.config
-  if (cfg?.enabled && kyivMinutesNow() >= cfg.atMinutes) return 'error'
+  const outcome = outcomeFor(d)
+  if (outcome === 'observed') return 'success'
+  if (outcome === 'missed') return 'error'
   return 'neutral'
 }
 
@@ -126,6 +135,12 @@ async function refreshStatus(): Promise<void> {
   refreshing.value = true
   try {
     status.value = await api.getInterrupt()
+  } catch (err: any) {
+    toast.add({
+      title: t('schedule.loadFailed'),
+      description: err.data?.message ?? err.message,
+      color: 'error'
+    })
   } finally {
     refreshing.value = false
   }
@@ -159,9 +174,20 @@ onMounted(async () => {
   try {
     const [s] = await Promise.all([api.getInterrupt(), mediaStore.refresh()])
     applyStatus(s)
+  } catch (err: any) {
+    // A silent failure here is the worst possible outcome on this page: it
+    // renders identically to a fresh, unconfigured install -- "nothing is
+    // scheduled" -- when the truth may be "the fleet's status is unknown."
+    toast.add({
+      title: t('schedule.loadFailed'),
+      description: err.data?.message ?? err.message,
+      color: 'error'
+    })
   } finally {
     loading.value = false
   }
+  // Armed regardless of the initial load's outcome: a transient failure on
+  // mount must not also disarm the page's only path to recovering on its own.
   pollTimer = setInterval(refreshStatus, STATUS_POLL_MS)
 })
 
