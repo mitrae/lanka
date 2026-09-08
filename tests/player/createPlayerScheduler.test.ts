@@ -281,4 +281,77 @@ describe('createPlayerScheduler', () => {
     s.itemEnded(0)
     expect(starts).toEqual([0])
   })
+
+  describe('pause/resume', () => {
+    const twoImages = [image(1, 10_000), image(2, 10_000)]
+
+    it('does not advance while paused', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      const transitions: number[] = []
+      s.onTransition((e) => transitions.push(e.to))
+      s.start()
+
+      deps.advanceTime(4_000)
+      s.pause()
+      deps.advanceTime(60_000) // a whole interrupt window, and then some
+      expect(transitions).toEqual([])
+      expect(s.getFrontIndex()).toBe(0)
+    })
+
+    it('resumes with the REMAINING time, not a fresh full duration', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      const transitions: number[] = []
+      s.onTransition((e) => transitions.push(e.to))
+      s.start()
+
+      deps.advanceTime(4_000)
+      s.pause()
+      deps.advanceTime(60_000)
+      s.resume()
+
+      deps.advanceTime(5_999)
+      expect(transitions).toEqual([]) // 6 s remained
+      deps.advanceTime(1)
+      expect(transitions).toEqual([1])
+    })
+
+    it('is idempotent in both directions', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      s.start()
+      deps.advanceTime(4_000)
+      s.pause()
+      s.pause()
+      s.resume()
+      s.resume()
+      deps.advanceTime(6_000)
+      expect(s.getFrontIndex()).toBe(1)
+    })
+
+    it('resume is a no-op when nothing was paused', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      s.start()
+      s.resume()
+      deps.advanceTime(10_000)
+      expect(s.getFrontIndex()).toBe(1)
+    })
+
+    it('stop() while paused leaves no timer behind', () => {
+      const s = createPlayerScheduler(twoImages, deps)
+      s.start()
+      s.pause()
+      s.stop()
+      s.resume()
+      deps.advanceTime(60_000)
+      expect(deps.pending()).toBe(0)
+    })
+
+    it('single-video mode has no timer to pause and survives both calls', () => {
+      const one = [video(1, 5_000)]
+      const s = createPlayerScheduler(one, deps)
+      s.start()
+      s.pause()
+      s.resume()
+      expect(s.mode).toBe('single-video')
+    })
+  })
 })
