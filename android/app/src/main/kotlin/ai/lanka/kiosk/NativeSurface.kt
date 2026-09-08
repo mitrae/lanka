@@ -105,6 +105,9 @@ class NativeSurface(
     private var interruptPlayer: ExoPlayer? = null
     private var interruptView: PlayerView? = null
     private var interruptStartsAt = 0L
+    // Latches telemetry.interruptStarted to one post per window. Reset at the
+    // top of beginInterrupt() so the next window reports independently.
+    private var interruptReported = false
     private val interruptExec = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "interrupt-tick").apply { isDaemon = true }
     }
@@ -298,6 +301,8 @@ class NativeSurface(
             if (mediaCache.exists(sha)) Uri.fromFile(mediaCache.file(sha))
             else Uri.parse("${BuildConfig.LANKA_SERVER_URL}/media/$sha")
 
+        interruptReported = false
+        val startsAt = state.schedule.startsAt
         val exo = ExoPlayer.Builder(activity).build().apply {
             volume = 0f // no audio, ever
             repeatMode = Player.REPEAT_MODE_OFF
@@ -306,6 +311,21 @@ class NativeSurface(
                     // Loud, never blank: give the screen back and record it.
                     telemetry.itemFailed(deviceId, null, sha, "interrupt: ${error.errorCodeName}")
                     onUi { endInterrupt() }
+                }
+
+                /**
+                 * Proof of observance, posted only once the clip is genuinely
+                 * rendering — NOT at handover. A screen whose clip fails to
+                 * decode must read as missed, or devices.last_interrupt_at
+                 * reports an observance that never reached the glass, which is
+                 * the one thing that field exists to rule out. Mirrors the web
+                 * overlay's `started` emit.
+                 */
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying && !interruptReported) {
+                        interruptReported = true
+                        telemetry.interruptStarted(deviceId, startsAt)
+                    }
                 }
             })
             setMediaItem(MediaItem.fromUri(uri))
@@ -321,10 +341,9 @@ class NativeSurface(
         }
         interruptPlayer = exo
         interruptView = view
-        interruptStartsAt = state.schedule.startsAt
+        interruptStartsAt = startsAt
         root.addView(view, matchParent())
         view.bringToFront()
-        telemetry.interruptStarted(deviceId, interruptStartsAt)
     }
 
     /**
