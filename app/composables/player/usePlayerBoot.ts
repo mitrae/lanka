@@ -129,6 +129,14 @@ export function usePlayerBoot(
       interruptOffsetMs.value = state.offsetMs
       interruptPhase.value = 'arming'
       // No stage on screen (standby / no-content): nobody will acknowledge.
+      // NOTE on this branch: with today's contract it is defensive rather than
+      // live. A device with no playlist gets a bare 204, and the reconciler's
+      // 204 path zeroes the schedule too, so screen and clock cannot diverge.
+      // It is kept deliberately: the 204 behaviour is a decision that was
+      // taken explicitly and may be revisited (delivering the observance to
+      // unassigned screens was considered and deferred), and without this
+      // branch that change would deadlock the handshake on a stage that will
+      // never acknowledge.
       if (screen.value !== 'playing') {
         onStageStoodDown()
         return

@@ -444,6 +444,15 @@ onMounted(() => {
   mountInitial()
   stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
 
+  // This component is keyed on playlistId:version, so a manifest change during
+  // an interrupt REMOUNTS it with `suspended` already true. The watch below is
+  // not immediate, so without this the fresh stage would preload the back slot
+  // and play the playlist underneath a live overlay: three decoders on a box
+  // with a handful, and the watchdog reloading the page ~8 s in.
+  // The emit is harmless here — the parent is already past `arming`, so its
+  // handler is a no-op.
+  if (props.suspended) standDown()
+
   const stopSuspendWatch = watch(
     () => props.suspended === true,
     (on) => (on ? standDown() : standUp())

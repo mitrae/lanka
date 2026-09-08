@@ -201,4 +201,37 @@ describe('PlayerStage suspension', () => {
     setSpy.mockRestore()
     clearSpy.mockRestore()
   })
+
+  it('stands down immediately when mounted already suspended — a manifest change during the observance remounts the stage keyed on playlistId:version, with `suspended` already true and no transition for the watcher to react to', async () => {
+    // Without a mount-time check, a fresh stage would run mountInitial() (load
+    // + play the front item, preload the back item) underneath a still-live
+    // overlay: three decoders on a box with a handful, plus the watchdog
+    // reloading the page ~8 s in once it notices the front item isn't
+    // actually advancing.
+    const scheduler = createPlayerScheduler(items, {
+      now: () => Date.now(),
+      setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+      clearTimeout: (h) => window.clearTimeout(h as number)
+    })
+    const pauseSpy = vi.spyOn(scheduler, 'pause')
+    const setSpy = vi.spyOn(window, 'setInterval')
+    const clearSpy = vi.spyOn(window, 'clearInterval')
+
+    const w = mount(PlayerStage, {
+      props: { manifest, scheduler, env, suspended: true } as any
+    })
+
+    expect(pauseSpy).toHaveBeenCalled()
+    expect(w.emitted('stood-down')).toBeTruthy()
+    // Back slot released: mountInitial() would have preloaded 'b' into it.
+    const videos = w.findAll('video')
+    expect(videos[1].attributes('src')).toBeUndefined()
+    // The watchdog interval onMounted armed is cleared again by the mount-time
+    // standDown() — sampling never runs while the fresh stage is suspended.
+    expect(setSpy).toHaveBeenCalledTimes(1)
+    expect(clearSpy).toHaveBeenCalledWith(setSpy.mock.results[0]!.value)
+
+    setSpy.mockRestore()
+    clearSpy.mockRestore()
+  })
 })
