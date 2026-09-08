@@ -3242,7 +3242,7 @@ git commit -m "feat(dashboard): schedule page — interrupt config and per-devic
 - Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/player/Scheduler.kt`
 - Create: `android/app/src/main/kotlin/ai/lanka/kiosk/player/InterruptTimer.kt`
 - Create: `android/app/src/test/kotlin/ai/lanka/kiosk/player/InterruptTimerTest.kt`
-- Create: `android/app/src/test/kotlin/ai/lanka/kiosk/player/SchedulerPauseTest.kt`
+- Modify: `android/app/src/test/kotlin/ai/lanka/kiosk/player/SchedulerTest.kt` (add pause/resume cases, reusing its existing FakeDeps)
 
 **Interfaces:**
 - Consumes: the manifest contract from Task 3.
@@ -3579,18 +3579,32 @@ Replace the timer state and arming:
     }
 ```
 
-`SchedulerDeps` has no clock, so add one with a default so existing callers and `AndroidSchedulerDeps` keep compiling:
+`SchedulerDeps` has no clock, so add one — **abstract, with no default body**:
 
 ```kotlin
 interface SchedulerDeps {
     fun setTimeout(cb: () -> Unit, ms: Long): Any
     fun clearTimeout(handle: Any)
-    /** Virtualised in tests; System.uptimeMillis() in production. */
-    fun now(): Long = android.os.SystemClock.uptimeMillis()
+    /** Virtualised in tests; SystemClock.uptimeMillis() in production. */
+    fun now(): Long
 }
 ```
 
-**In the JVM unit-test source set `android.os.SystemClock` is unavailable**, which is why `FakeDeps` above overrides `now()`.
+**Do not give it a default of `android.os.SystemClock.uptimeMillis()`.** This
+module sets `unitTests.isReturnDefaultValues = true`, so in a JVM test that call
+returns **0** instead of throwing — every existing scheduler test would run
+against a frozen clock, `pause()` would compute a nonsense elapsed time, and
+nothing would fail. An abstract method makes the compiler name every implementor
+instead.
+
+There are exactly two implementors, and both must gain `now()`:
+
+- `AndroidSchedulerDeps` (production) → `override fun now(): Long = android.os.SystemClock.uptimeMillis()`
+- `FakeDeps` in the **existing** `SchedulerTest.kt` → it already carries a virtual
+  clock field used as `now + ms`; expose it as `override fun now(): Long = <that field>`.
+
+**Reuse that existing `FakeDeps` for the new pause/resume tests** rather than
+defining a second one. Two fake clocks in one module is how they drift apart.
 
 In `Scheduler`, reference it as `private fun nowMs() = deps.now()`.
 
