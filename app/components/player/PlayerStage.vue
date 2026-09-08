@@ -413,6 +413,13 @@ function standDown(): void {
     window.clearInterval(stallTimer)
     stallTimer = null
   }
+  // A stage already mid-backoff has a recovery timer armed. Left running it
+  // fires mountInitial() DURING the observance, which re-assigns src on both
+  // slots: the paused front decoder is re-primed (destroying the frame-exact
+  // resume, and re-priming is what killed a prod TV) and the back slot is
+  // re-armed, putting three live decoders on a box that has a handful — while
+  // the overlay is on screen. standUp() re-arms it if we are still stalled.
+  clearRecoveryTimer()
   emit('stood-down')
 }
 
@@ -428,6 +435,9 @@ function standUp(): void {
   if (stallTimer === null) {
     stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
   }
+  // Re-arm the backoff we cancelled on the way down, or a stage that entered
+  // the observance stalled would sit stalled forever with no timer to heal it.
+  if (stalled.value) scheduleRecovery()
 }
 
 onMounted(() => {

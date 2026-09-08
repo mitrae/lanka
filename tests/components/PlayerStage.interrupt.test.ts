@@ -3,7 +3,7 @@
 // PlayerStage's suspension handshake for the scheduled interrupt. Needs a real
 // DOM (mounted <video> elements) — see InterruptOverlay.test.ts for the idiom.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import PlayerStage from '~/app/components/player/PlayerStage.vue'
 import { createPlayerScheduler } from '~/app/composables/player/createPlayerScheduler'
 
@@ -133,5 +133,72 @@ describe('PlayerStage suspension', () => {
 
     const back = w.findAll('video')[1].element as HTMLVideoElement
     expect(back.getAttribute('src')).toBeNull()
+  })
+
+  it('cancels a pending stall-recovery timer on suspend, and re-arms it on resume if still stalled', async () => {
+    // Drive the stage into its OWN self-heal backoff for real (5 consecutive
+    // reportError() calls -> stalled.value = true -> scheduleRecovery() arms
+    // a 15s window's recoveryTimer), then prove suspending cancels that exact
+    // timer rather than leaving it to fire mountInitial() mid-observance.
+    //
+    // A single-item video manifest keeps this tractable: the front item never
+    // advances (advancesOnError === false), so every 'error' trigger lands on
+    // the same <video>, and every error goes through PlayerStage's one-free-
+    // blob-attempt gate (blobState) before it is charged against the error
+    // budget. blobState is marked 'tried' SYNCHRONOUSLY on the first error, so
+    // every subsequent synchronous trigger charges the budget directly; fetch
+    // is mocked to reject so the one async blob attempt itself also resolves
+    // to a charge, and flushPromises() after each trigger drains it before it
+    // can land at an unpredictable time relative to the assertions below.
+    const singleManifest = {
+      playlistId: 3,
+      playlistName: 'X',
+      version: 1,
+      items: [{ id: 1, type: 'video' as const, sha256: 'solo', durationMs: 30_000 }]
+    }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network'))
+    const setSpy = vi.spyOn(window, 'setTimeout')
+    const clearSpy = vi.spyOn(window, 'clearTimeout')
+
+    const scheduler = createPlayerScheduler(singleManifest.items, {
+      now: () => Date.now(),
+      setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+      clearTimeout: (h) => window.clearTimeout(h as number)
+    })
+    const w = mount(PlayerStage, {
+      props: { manifest: singleManifest, scheduler, env, suspended: false } as any
+    })
+
+    for (let i = 0; i < 10 && !w.find('.stalled-banner').exists(); i++) {
+      await w.find('video').trigger('error')
+      await flushPromises()
+    }
+    await flushPromises() // drain the one outstanding blob-fetch rejection
+    expect(w.find('.stalled-banner').exists()).toBe(true) // sanity: genuinely stalled
+
+    const recoveryCallsBeforeSuspend = setSpy.mock.calls.length
+    expect(recoveryCallsBeforeSuspend).toBeGreaterThan(0)
+    const recoveryHandle = setSpy.mock.results[recoveryCallsBeforeSuspend - 1]!.value
+
+    await w.setProps({ suspended: true })
+
+    // The pending 15s recovery timeout is cancelled, not merely ignored —
+    // left running it fires mountInitial() DURING the observance regardless
+    // of suspension: src re-assigned on the paused front (re-priming the
+    // decoder) and on the back slot (a third live decoder next to the
+    // overlay).
+    expect(clearSpy).toHaveBeenCalledWith(recoveryHandle)
+
+    await w.setProps({ suspended: false })
+
+    // Nothing healed the underlying fault, so standing up must re-arm the
+    // backoff — cancelling without re-arming would strand the stage stalled
+    // forever with no timer left to retry it.
+    expect(setSpy.mock.calls.length).toBeGreaterThan(recoveryCallsBeforeSuspend)
+
+    globalThis.fetch = originalFetch
+    setSpy.mockRestore()
+    clearSpy.mockRestore()
   })
 })
