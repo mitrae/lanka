@@ -78,7 +78,11 @@ export const devices = sqliteTable('devices', {
   commandSecret: text('command_secret'),
   commandSecretActive: integer('command_secret_active', { mode: 'boolean' })
     .notNull()
-    .default(false)
+    .default(false),
+  // The interrupt window `startsAt` this device last reported observing.
+  // Absent = never observed. Compared against today's window to tell an
+  // operator, at 09:05, which screens actually played the clip.
+  lastInterruptAt: integer('last_interrupt_at', { mode: 'timestamp_ms' })
 })
 
 export const media = sqliteTable(
@@ -420,3 +424,29 @@ export const mediaRelations = relations(media, ({ one }) => ({
 export const mediaUploadsRelations = relations(mediaUploads, ({ one }) => ({
   media: one(media, { fields: [mediaUploads.mediaId], references: [media.id] })
 }))
+
+/**
+ * The one fleet-wide daily interrupt (Ukraine's 09:00 minute of silence).
+ *
+ * Exactly one row, id = INTERRUPT_ID, enforced by the service rather than the
+ * schema — a second row would be silently ignored by the manifest, so the
+ * constraint lives where it can produce an error.
+ *
+ * The window LENGTH is deliberately not stored: it comes from
+ * media.duration_ms, so it can never disagree with the bytes on the box.
+ */
+export const interrupts = sqliteTable('interrupts', {
+  id: integer('id').primaryKey(),
+  mediaId: integer('media_id')
+    .notNull()
+    .references(() => media.id),
+  // Minutes since local midnight. 540 = 09:00.
+  atMinutes: integer('at_minutes').notNull(),
+  // Stored explicitly, never inferred from the box or the server host.
+  timezone: text('timezone').notNull().default('Europe/Kyiv'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  label: text('label'),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .default(sql`(unixepoch() * 1000)`)
+})
