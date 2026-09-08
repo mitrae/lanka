@@ -124,7 +124,11 @@ describe('usePlayerBoot interrupt state machine (reachable surface)', () => {
 
     expect(api.postTelemetry).toHaveBeenCalledTimes(1)
     const [, body] = api.postTelemetry.mock.calls[0]
-    expect(body.currentItemId).toBeNull()
+    // No currentItemId at all — not even null. The playlist item on screen
+    // never changed, and null means "clear the current item": on a
+    // single-video playlist nothing would set it again for hours, so one
+    // failed observance would leave the device page reading "nothing playing".
+    expect('currentItemId' in body).toBe(false)
     expect(body.error).toEqual({ sha256: 'deadbeef', message: 'interrupt: decode error' })
   })
 

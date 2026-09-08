@@ -73,6 +73,10 @@ function onLoadedMetadata(): void {
 }
 
 function onPlaying(): void {
+  // Any pause/resume of the overlay element re-fires `playing`; without this
+  // the observance is re-emitted and interruptAt re-posted. Idempotent
+  // server-side, but there is no reason to send it twice.
+  if (playing) return
   playing = true
   clearStartupTimer()
   emit('started')

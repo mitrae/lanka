@@ -321,7 +321,7 @@ class NativeSurface(
             addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     // Loud, never blank: give the screen back and record it.
-                    telemetry.itemFailed(deviceId, null, sha, "interrupt: ${error.errorCodeName}")
+                    telemetry.interruptFailed(deviceId, sha, "interrupt: ${error.errorCodeName}")
                     onUi { endInterrupt() }
                 }
 
@@ -364,7 +364,7 @@ class NativeSurface(
         // for the whole window without ever reporting an error.
         val guard = Runnable {
             interruptStartupGuard = null
-            telemetry.itemFailed(deviceId, null, sha, "interrupt: clip never started")
+            telemetry.interruptFailed(deviceId, sha, "interrupt: clip never started")
             endInterrupt()
         }
         interruptStartupGuard = guard

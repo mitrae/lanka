@@ -78,7 +78,10 @@ describe('upload job routes stay session-gated', () => {
     '/api/media/uploads',
     '/api/media/uploads/11111111-1111-4111-8111-111111111111',
     '/api/media/uploads/11111111-1111-4111-8111-111111111111/file',
-    '/api/media/uploads/11111111-1111-4111-8111-111111111111/complete'
+    '/api/media/uploads/11111111-1111-4111-8111-111111111111/complete',
+    // Correct today via decideAccess's default branch; the spec's Testing
+    // section claims this is covered, so make the claim true.
+    '/api/interrupt'
   ]
   it.each(paths)('%s is not public, 401 anonymous, 403 client, ok admin', (p) => {
     expect(isPublicRoute(p)).toBe(false)

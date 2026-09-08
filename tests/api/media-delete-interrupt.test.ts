@@ -37,7 +37,7 @@ describe('deleting the interrupt clip', () => {
     expect(still).toHaveLength(1)
   })
 
-  it('force disables the interrupt in the same transaction', async () => {
+  it('force deletes the interrupt row in the same transaction', async () => {
     const clip = await seedMedia(db, { sha256: 'silence', kind: 'video', durationMs: 60000 })
     await configure(clip.id)
     await handleDeleteMedia(db, noopStore, clip.id, { force: true })

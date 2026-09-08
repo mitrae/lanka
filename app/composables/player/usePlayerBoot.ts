@@ -129,9 +129,13 @@ export function usePlayerBoot(
     // that posts a device_errors row for a window that ended normally.
     if (interruptPhase.value === 'idle') return
     // Loud, never blank: the playlist comes back and the failure is on record.
-    telemetry.itemFailed(
+    // interruptFailed, not itemFailed: the playlist item on screen never
+    // changed, and itemFailed's `null` currentItemId would CLEAR the device's
+    // current item — on a single-video playlist nothing sets it again for
+    // hours, so the device page would read "nothing playing" after one failed
+    // observance.
+    telemetry.interruptFailed(
       deviceId.value,
-      null,
       interruptSha.value ?? undefined,
       `interrupt: ${message}`
     )

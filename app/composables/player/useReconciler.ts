@@ -228,8 +228,12 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
       // download() blocks the JS thread.
       if (deps.nativeFS && deps.cdnUrl && interrupt && !deps.nativeFS.exists(interrupt.sha256)) {
         emitSyncing(true)
-        deps.nativeFS.download(interrupt.sha256, deps.cdnUrl(interrupt.sha256))
-        emitSyncing(false)
+        try {
+          deps.nativeFS.download(interrupt.sha256, deps.cdnUrl(interrupt.sha256))
+        } finally {
+          // A throwing download must not leave the syncing flag stuck on.
+          emitSyncing(false)
+        }
       }
 
       const key = { playlistId: m.playlistId, version: m.version }
