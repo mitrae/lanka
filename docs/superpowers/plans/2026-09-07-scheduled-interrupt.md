@@ -3176,6 +3176,39 @@ onMounted(async () => {
 
 If a Nuxt UI v3 prop name differs in this project's version, follow whatever `app/pages/playlists/index.vue` and `app/pages/devices/index.vue` already use — they are the authority, not this snippet.
 
+**Extract the status derivation.** `deviceState`'s "missed vs not yet due"
+judgment must stay in lockstep with the server's `todaysWindow` /
+`observedToday` semantics, and it is the single piece of reasoning this plan
+has gotten wrong more than once. It does not belong inside a component where
+no test can reach it. Put the decision in `app/utils/interruptStatus.ts` as a
+plain function over plain data — the clock read and all `Intl` work stay at the
+call site, so the module never knows about timezones:
+
+```ts
+export type InterruptOutcome = 'observed' | 'missed' | 'notYet' | 'notScheduled'
+
+export function deviceInterruptOutcome(
+  device: Pick<InterruptDeviceStatus, 'observedToday' | 'lastInterruptAt'>,
+  config: Pick<InterruptConfig, 'enabled' | 'atMinutes'> | null,
+  nowMinutes: number
+): InterruptOutcome {
+  if (device.observedToday && device.lastInterruptAt !== null) return 'observed'
+  if (!config || !config.enabled) return 'notScheduled'
+  return nowMinutes >= config.atMinutes ? 'missed' : 'notYet'
+}
+```
+
+`tests/utils/interruptStatus.test.ts` pins the boundary explicitly: `atMinutes:
+540` with `nowMinutes: 540` → `'missed'`, `539` → `'notYet'`, plus the observed
+and disabled/unconfigured branches.
+
+**Both load paths must surface failure.** `onMounted` and the manual refresh
+each need a `catch` that toasts via the codebase's `err.data?.message ??
+err.message` idiom, and the 30 s poll must be armed whether or not the first
+load succeeded. Without that, a failed load renders identically to a fresh
+unconfigured install — on the page whose whole job is proving the fleet
+observed, that is the worst available failure mode.
+
 - [ ] **Step 5: Badge the clip on the media page**
 
 The 409 from Task 4 stops an accidental deletion, but only after the operator has tried. Surface it before they do: in `app/pages/media.vue` (and `MediaDetailDrawer` if the delete button lives there), fetch `api.getInterrupt()` once and render a `UBadge` on the row whose `id === config.mediaId`, labelled `t('schedule.title')`.
