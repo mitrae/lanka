@@ -59,10 +59,25 @@ const durationSeconds = computed(() => {
   return clip?.durationMs ? Math.round(clip.durationMs / 1000) : null
 })
 
+/** Kyiv-pinned, like every other judgment on this page. The browser's own
+ *  zone would disagree with the read-only Europe/Kyiv time field above it. */
 const nextWindowLabel = computed(() => {
   const w = status.value?.window
-  return w ? t('schedule.nextWindow', { time: new Date(w.startsAt).toLocaleString() }) : t('schedule.notScheduled')
+  if (!w) return t('schedule.notScheduled')
+  return t('schedule.nextWindow', {
+    time: new Date(w.startsAt).toLocaleString(undefined, { timeZone: 'Europe/Kyiv' })
+  })
 })
+
+/**
+ * Enabled, but the server could not derive a window. Today the only cause is a
+ * clip with no known duration (handlePutInterrupt now refuses one, so this is
+ * a legacy row). NOTHING was sent to any device, so no screen can have missed
+ * anything -- say so instead of painting the whole fleet red.
+ */
+const noWindow = computed(
+  () => !!status.value?.config?.enabled && status.value?.window == null
+)
 
 const deviceRows = computed(() => status.value?.devices ?? [])
 
@@ -112,6 +127,7 @@ function outcomeFor(d: InterruptDeviceStatus): InterruptOutcome {
 }
 
 function deviceState(d: InterruptDeviceStatus): string {
+  if (noWindow.value) return t('schedule.noWindow')
   switch (outcomeFor(d)) {
     case 'observed':
       return t('schedule.observedAt', { time: new Date(d.lastInterruptAt!).toLocaleTimeString() })
@@ -121,13 +137,19 @@ function deviceState(d: InterruptDeviceStatus): string {
       return t('schedule.notYet')
     case 'notScheduled':
       return t('schedule.notScheduled')
+    case 'cannotObserve':
+      return t('schedule.noPlaylistWarning')
   }
 }
 
-function deviceStateColor(d: InterruptDeviceStatus): 'success' | 'error' | 'neutral' {
+function deviceStateColor(d: InterruptDeviceStatus): 'success' | 'error' | 'warning' | 'neutral' {
+  if (noWindow.value) return 'warning'
   const outcome = outcomeFor(d)
   if (outcome === 'observed') return 'success'
   if (outcome === 'missed') return 'error'
+  // A device that by design cannot observe is a configuration warning, never
+  // a failed observance.
+  if (outcome === 'cannotObserve') return 'warning'
   return 'neutral'
 }
 
@@ -155,6 +177,10 @@ async function save(): Promise<void> {
         mediaId: mediaId.value,
         atMinutes: atMinutes.value,
         enabled: enabled.value,
+        // Sent rather than leaning on handlePutInterrupt's default, or the
+        // stored column is silently non-authoritative: a value written by any
+        // other client would be reset by the next dashboard save.
+        timezone: status.value?.config?.timezone ?? 'Europe/Kyiv',
         label: label.value.trim() || null
       })
     )
@@ -281,6 +307,15 @@ onUnmounted(() => {
         />
 
         <template v-else>
+          <UAlert
+            v-if="noWindow"
+            color="warning"
+            variant="soft"
+            icon="i-lucide-triangle-alert"
+            class="mb-4"
+            :title="$t('schedule.noWindowWarning')"
+          />
+
           <UAlert
             v-if="withoutPlaylist.length > 0"
             color="warning"

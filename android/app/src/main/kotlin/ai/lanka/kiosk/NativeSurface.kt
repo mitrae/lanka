@@ -108,6 +108,14 @@ class NativeSurface(
     // Latches telemetry.interruptStarted to one post per window. Reset at the
     // top of beginInterrupt() so the next window reports independently.
     private var interruptReported = false
+    // Failure is loud, never blank. Media3 on Amlogic can sit in
+    // STATE_BUFFERING, or in STATE_READY with a hung MediaCodec, indefinitely
+    // with no onPlayerError — which would be a full window of black on a venue
+    // screen with nothing in device_errors. Mirrors the web overlay's
+    // STARTUP_BUDGET_MS.
+    private var interruptStartupGuard: Runnable? = null
+    /** No decoded frame by then and the playlist gets the screen back. */
+    private val interruptStartupBudgetMs = 5_000L
     private val interruptExec = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "interrupt-tick").apply { isDaemon = true }
     }
@@ -217,7 +225,11 @@ class NativeSurface(
             runCatching {
                 if (stopped) return@runCatching
                 val state = interruptTimer.observe(System.currentTimeMillis())
-                onUi { applyInterrupt(state) }
+                // onUi POSTS, so applyInterrupt runs outside the runCatching
+                // above: without its own guard, a throw inside beginInterrupt
+                // (ExoPlayer construction, PlayerView inflation, addView)
+                // crashes the process instead of skipping a window.
+                onUi { runCatching { applyInterrupt(state) } }
             }
         }, 500, 500, TimeUnit.MILLISECONDS)
     }
@@ -324,6 +336,8 @@ class NativeSurface(
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     if (isPlaying && !interruptReported) {
                         interruptReported = true
+                        // Real frames are on the glass: the budget has been met.
+                        clearInterruptStartupGuard()
                         telemetry.interruptStarted(deviceId, startsAt)
                     }
                 }
@@ -344,6 +358,23 @@ class NativeSurface(
         interruptStartsAt = startsAt
         root.addView(view, matchParent())
         view.bringToFront()
+
+        // Loud, never blank. onPlayerError alone is not enough: Media3 can sit
+        // in STATE_BUFFERING, or STATE_READY behind a hung Amlogic MediaCodec,
+        // for the whole window without ever reporting an error.
+        val guard = Runnable {
+            interruptStartupGuard = null
+            telemetry.itemFailed(deviceId, null, sha, "interrupt: clip never started")
+            endInterrupt()
+        }
+        interruptStartupGuard = guard
+        handler.postDelayed(guard, interruptStartupBudgetMs)
+    }
+
+    /** Ownership rule: the posted guard is removed on every exit from a window. */
+    private fun clearInterruptStartupGuard() {
+        interruptStartupGuard?.let { handler.removeCallbacks(it) }
+        interruptStartupGuard = null
     }
 
     /**
@@ -355,6 +386,7 @@ class NativeSurface(
         // latching when the phase is already idle: without this, stop()'s
         // unconditional call marks a schedule "done" that never actually ran.
         if (interruptPlayer == null) return
+        clearInterruptStartupGuard()
         interruptView?.let { v -> v.player = null; root.removeView(v) }
         interruptView = null
         interruptPlayer?.let { runCatching { it.release() } }
@@ -484,6 +516,9 @@ class NativeSurface(
         // Ownership rule: the overlay player + view this surface created must
         // be released here too, on every path including mid-window.
         endInterrupt()
+        // endInterrupt() returns early when there is no overlay, so clear the
+        // startup guard unconditionally too — the ownership rule is strict.
+        clearInterruptStartupGuard()
         interruptExec.shutdownNow()
         // Release the shared OkHttp client (dispatcher threads + connection pool).
         // Graceful shutdown: manifest/command clients above are already closed.

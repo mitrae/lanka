@@ -276,6 +276,18 @@ export async function handlePutInterrupt(
   if (clip.kind !== 'video') {
     throw createError({ statusCode: 400, message: 'The interrupt clip must be a video' })
   }
+  // The window's LENGTH is the clip's own duration and is never stored, so a
+  // clip whose ffprobe failed (`duration_ms` is nullable) gives durationMs = 0
+  // -> nextWindow() returns null -> the manifest publishes NO interrupt at
+  // all, while the dashboard renders every device red "Missed" from 09:00
+  // onwards. Refuse it here: an operator reading "the whole fleet failed" when
+  // nothing was ever sent is the worst failure this page can produce.
+  if (!clip.durationMs || clip.durationMs <= 0) {
+    throw createError({
+      statusCode: 400,
+      message: 'A clip with no known duration cannot define an interrupt window'
+    })
+  }
 
   const values = {
     id: INTERRUPT_ID,

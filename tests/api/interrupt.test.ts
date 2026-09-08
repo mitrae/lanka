@@ -61,6 +61,18 @@ describe('interrupt config API', () => {
     ).rejects.toMatchObject({ statusCode: 400 })
   })
 
+  it('rejects a clip with no known duration — it cannot define a window', async () => {
+    // media.duration_ms is nullable: a clip whose ffprobe failed would give
+    // durationMs = 0 -> nextWindow() null -> the manifest publishes NO
+    // interrupt, while /schedule renders every device red "Missed" from the
+    // scheduled minute onwards. The operator reads "the whole fleet failed"
+    // when nothing was ever sent.
+    const m = await seedMedia(db, { sha256: 'noduration', kind: 'video', durationMs: null })
+    await expect(
+      handlePutInterrupt(db, { mediaId: m.id, atMinutes: AT_9AM, enabled: true }, Date.now())
+    ).rejects.toMatchObject({ statusCode: 400 })
+  })
+
   it('rejects media that does not exist', async () => {
     await expect(
       handlePutInterrupt(db, { mediaId: 999, atMinutes: AT_9AM, enabled: true }, Date.now())
