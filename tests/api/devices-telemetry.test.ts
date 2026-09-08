@@ -287,4 +287,24 @@ describe('POST /api/devices/:id/telemetry handler', () => {
       handleTelemetry(db, 'dev-1', { visibility: 'sideways' })
     ).rejects.toThrow()
   })
+
+  it('records interruptAt without touching the current item or play counts', async () => {
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: grp.id })
+    const m = await seedMedia(db, { sha256: 'aaa', kind: 'video', durationMs: 1000 })
+    const pl = await seedPlaylist(db, { name: 'P', items: [{ mediaId: m.id }] })
+    const [item] = await db.select().from(schema.playlistItems)
+
+    await handleTelemetry(db, 'dev-1', { currentItemId: item.id })
+    const startsAt = new Date('2026-07-01T09:00:00+03:00').getTime()
+    await handleTelemetry(db, 'dev-1', { interruptAt: startsAt })
+
+    const [dev] = await db.select().from(schema.devices).where(eq(schema.devices.id, 'dev-1'))
+    expect(dev.lastInterruptAt?.getTime()).toBe(startsAt)
+    // The playlist item survives: an interrupt is not a playlist play.
+    expect(dev.currentItemId).toBe(item.id)
+    const [media] = await db.select().from(schema.media).where(eq(schema.media.id, m.id))
+    expect(media.playCount).toBe(1)
+  })
 })

@@ -17,6 +17,10 @@ const BodySchema = z.object({
   snapBacks: z.number().int().min(0).optional(),
   focusLosses: z.number().int().min(0).optional(),
   hiddenMs: z.number().int().min(0).optional(),
+  // The `startsAt` of the interrupt window the player just began showing.
+  // Deliberately separate from currentItemId: the interrupt is not a playlist
+  // item and must not touch the current item or media.play_count.
+  interruptAt: z.number().int().positive().optional(),
   error: z
     .object({ sha256: z.string().optional(), message: z.string().max(500) })
     .optional()
@@ -87,7 +91,10 @@ export async function handleTelemetry(
           : {}),
       ...(body.snapBacks !== undefined ? { snapBacks: body.snapBacks } : {}),
       ...(body.focusLosses !== undefined ? { focusLosses: body.focusLosses } : {}),
-      ...(body.hiddenMs !== undefined ? { hiddenMs: body.hiddenMs } : {})
+      ...(body.hiddenMs !== undefined ? { hiddenMs: body.hiddenMs } : {}),
+      ...(body.interruptAt !== undefined
+        ? { lastInterruptAt: new Date(body.interruptAt) }
+        : {})
     })
     .where(eq(schema.devices.id, deviceId))
 
