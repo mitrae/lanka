@@ -108,6 +108,45 @@ describe('InterruptOverlay', () => {
     globalThis.fetch = originalFetch
   })
 
+  it('does not re-arm the element, leak the blob, or emit after unmount', async () => {
+    // jsdom implements neither createObjectURL nor revokeObjectURL at all —
+    // unlike the `fetch` rejection used above, this test needs the blob
+    // fetch to actually SUCCEED (to reach the post-await disposed check), so
+    // both must be stubbed directly rather than spied on.
+    let resolveBlob: (b: Blob) => void = () => {}
+    const originalCreate = URL.createObjectURL
+    const originalRevoke = URL.revokeObjectURL
+    const revoke = vi.fn()
+    URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url')
+    URL.revokeObjectURL = revoke
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockReturnValue(
+      Promise.resolve({
+        ok: true,
+        blob: () => new Promise<Blob>((resolve) => { resolveBlob = resolve })
+      })
+    )
+
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+    })
+    const video = w.find('video').element as HTMLVideoElement
+
+    await w.find('video').trigger('error') // starts the one blob retry
+    await flushPromises() // let it reach the pending `res.blob()` await
+    w.unmount() // the parent tearing down at the window's wall-clock end
+    resolveBlob(new Blob(['x'])) // ...then the fetch finally resolves
+    await flushPromises()
+
+    expect(video.getAttribute('src')).toBeNull()
+    expect(revoke).toHaveBeenCalledWith('blob:mock-url')
+    expect(w.emitted('failed')).toBeFalsy()
+
+    globalThis.fetch = originalFetch
+    URL.createObjectURL = originalCreate
+    URL.revokeObjectURL = originalRevoke
+  })
+
   it('is muted — a second decoder is exactly what must not exist here', () => {
     const w = mount(InterruptOverlay, {
       props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }

@@ -37,6 +37,9 @@ let playing = false
 let failed = false
 let blobUrl: string | null = null
 let triedBlob = false
+/** Set on unmount. The parent tears this component down on the window's
+ *  wall-clock end, which can land while a blob retry is still in flight. */
+let disposed = false
 
 function clearStartupTimer(): void {
   if (startupTimer !== null) {
@@ -46,12 +49,13 @@ function clearStartupTimer(): void {
 }
 
 function fail(message: string): void {
-  // Guards both directions: never after playback has started, and never
-  // twice. Without the `failed` half, the startup timer firing first and a
-  // late `error` from the same in-flight load arriving after it (e.g. the
-  // eventual blob retry also failing) would each pass the `playing` check
-  // and double-emit.
-  if (playing || failed) return
+  // `failed` is emitted at most once, and never after teardown: a late error
+  // from a still-in-flight load would otherwise fire into a parent that has
+  // already resumed the playlist. Never after playback has started either —
+  // the startup timer firing first and a late `error` arriving after it
+  // (e.g. the eventual blob retry also failing) would each pass a
+  // `playing`-only check and double-emit.
+  if (playing || failed || disposed) return
   failed = true
   clearStartupTimer()
   emit('failed', message)
@@ -89,7 +93,18 @@ async function onError(): Promise<void> {
   if (!triedBlob && el) {
     triedBlob = true
     try {
-      blobUrl = await fetchBlobUrl(props.sha256)
+      const url = await fetchBlobUrl(props.sha256)
+      // The parent may have torn us down at the window's wall-clock end while
+      // this fetch was in flight. Re-arming `src` here would put a decoder
+      // back on an element onBeforeUnmount deliberately released — on
+      // hardware with a handful of decoder instances — and the URL would
+      // never be revoked, since the one revoke on the unmount path already
+      // ran.
+      if (disposed) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrl = url
       el.src = blobUrl
       el.load()
       return
@@ -114,6 +129,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   clearStartupTimer()
   const el = video.value
   if (el) {
