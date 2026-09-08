@@ -78,6 +78,7 @@
   - `export const INTERRUPT_ID = 1`
   - `export interface InterruptWindow { startsAt: number; endsAt: number }`
   - `export function nextWindow(nowMs: number, atMinutes: number, timezone: string, durationMs: number): InterruptWindow | null`
+  - `export function todaysWindow(nowMs: number, atMinutes: number, timezone: string, durationMs: number): InterruptWindow | null`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -85,7 +86,7 @@ Create `tests/services/interrupt.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { nextWindow } from '~/server/services/interrupt'
+import { nextWindow, todaysWindow } from '~/server/services/interrupt'
 
 const KYIV = 'Europe/Kyiv'
 const MIN = 60_000
@@ -140,6 +141,42 @@ describe('nextWindow', () => {
   it('returns null for a zero or negative duration — a window with no length is not a window', () => {
     expect(nextWindow(Date.now(), AT_9AM, KYIV, 0)).toBeNull()
     expect(nextWindow(Date.now(), AT_9AM, KYIV, -1)).toBeNull()
+  })
+})
+
+describe('todaysWindow', () => {
+  // Distinct from nextWindow on purpose. nextWindow answers "what should the box
+  // be told to wait for", so it rolls to tomorrow the moment today's ends.
+  // todaysWindow answers "which occurrence was today", which is what the
+  // dashboard compares each device's report against — and it must NOT roll over,
+  // or from 09:01 onwards every screen would read as "not yet due".
+  it('returns today\'s occurrence before it has happened', () => {
+    const now = at('2026-07-01T06:00:00+03:00')
+    expect(todaysWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-01T09:00:00+03:00')
+    )
+  })
+
+  it('returns today\'s occurrence AFTER it has ended — where nextWindow rolls over', () => {
+    const now = at('2026-07-01T10:00:00+03:00')
+    expect(todaysWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-01T09:00:00+03:00')
+    )
+    expect(nextWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-02T09:00:00+03:00')
+    )
+  })
+
+  it('uses the LOCAL calendar date, not the server\'s', () => {
+    // 23:30 UTC on 30 June is already 02:30 on 1 July in Kyiv.
+    const now = at('2026-06-30T23:30:00Z')
+    expect(todaysWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-01T09:00:00+03:00')
+    )
+  })
+
+  it('returns null for a zero duration', () => {
+    expect(todaysWindow(Date.now(), AT_9AM, KYIV, 0)).toBeNull()
   })
 })
 ```
@@ -310,6 +347,30 @@ export function nextWindow(
   return null
 }
 
+/**
+ * The occurrence on the local calendar date of `nowMs`, whether or not it has
+ * already passed.
+ *
+ * Deliberately NOT nextWindow: that one rolls to tomorrow the instant today's
+ * window ends, because its job is to tell a box what to wait for. The dashboard
+ * needs the opposite — "which occurrence was today" — to compare each device's
+ * reported observance against. Deriving the status from nextWindow would make
+ * every screen read "not yet due" from 09:01 onwards.
+ */
+export function todaysWindow(
+  nowMs: number,
+  atMinutes: number,
+  timezone: string,
+  durationMs: number
+): InterruptWindow | null {
+  if (durationMs <= 0) return null
+  const hh = Math.floor(atMinutes / 60)
+  const mm = atMinutes % 60
+  const { y, m, d } = localDate(nowMs, timezone)
+  const startsAt = zonedTimeToEpoch(y, m, d, hh, mm, timezone)
+  return { startsAt, endsAt: startsAt + durationMs }
+}
+
 export type InterruptRow = typeof schema.interrupts.$inferSelect
 
 export async function getInterrupt(
@@ -326,7 +387,7 @@ export async function getInterrupt(
 - [ ] **Step 6: Run the tests**
 
 Run: `pnpm vitest run tests/services/interrupt.test.ts`
-Expected: PASS (7 tests)
+Expected: PASS (11 tests)
 
 - [ ] **Step 7: Run the full suite so the new migration is proven against every existing test**
 
@@ -350,7 +411,7 @@ git commit -m "feat(interrupt): interrupts table and the pure nextWindow occurre
 - Create: `tests/api/interrupt.test.ts`
 
 **Interfaces:**
-- Consumes: `INTERRUPT_ID`, `getInterrupt`, `nextWindow` (Task 1).
+- Consumes: `INTERRUPT_ID`, `getInterrupt`, `nextWindow`, `todaysWindow` (Task 1).
 - Produces:
   - `handleGetInterrupt(db, nowMs): Promise<InterruptStatus>`
   - `handlePutInterrupt(db, body, nowMs): Promise<InterruptStatus>`
@@ -505,8 +566,10 @@ Append to `server/services/interrupt.ts`:
 
 ```ts
 import { z } from 'zod'
-import { asc } from 'drizzle-orm'
 import { resolvePlaylistForDevice } from './resolver'
+// NOTE: merge `asc` into the existing `import { eq } from 'drizzle-orm'` at the
+// top of this file rather than adding a second import statement from it.
+import { asc } from 'drizzle-orm'
 
 export interface InterruptConfig {
   mediaId: number
@@ -575,11 +638,15 @@ async function buildStatus(
     ? nextWindow(nowMs, row.atMinutes, row.timezone, durationMs)
     : null
 
-  // "Today's" window for the observance check is the one currently published:
-  // before 09:00 that is today's (nothing has observed yet, everything reads
-  // "missed", which is correct — it has not happened); after it, the same
-  // startsAt every device should have reported.
-  const todayStart = window && nowMs >= window.startsAt ? window.startsAt : null
+  // Deliberately todaysWindow, NOT `window`. `window` is what the box is told to
+  // wait for and rolls to tomorrow the instant today's ends — using it here
+  // would make every screen read "not yet due" from 09:01 onwards, which is
+  // exactly when an operator looks at this page. Before today's start there is
+  // nothing to have observed yet, so todayStart stays null.
+  const todays = row.enabled
+    ? todaysWindow(nowMs, row.atMinutes, row.timezone, durationMs)
+    : null
+  const todayStart = todays && nowMs >= todays.startsAt ? todays.startsAt : null
 
   const deviceRows = await db
     .select({
@@ -2639,8 +2706,7 @@ In `i18n/locales/en.json`:
     "observedAt": "Observed at {time}",
     "missed": "Missed",
     "notYet": "Not yet due",
-    "noPlaylistWarning": "These devices have no playlist assigned. They receive no manifest and will not observe.",
-    "deviceCount": "no devices | {count} device | {count} devices"
+    "noPlaylistWarning": "These devices have no playlist assigned. They receive no manifest and will not observe."
   }
 ```
 
@@ -2667,8 +2733,7 @@ Add the identical key set to `i18n/locales/uk.json`. **Mind the plural order** �
     "observedAt": "Відтворено о {time}",
     "missed": "Пропущено",
     "notYet": "Ще не час",
-    "noPlaylistWarning": "Цим пристроям не призначено плейлист. Вони не отримують маніфест і не відтворять ролик.",
-    "deviceCount": "{count} пристрій | {count} пристрої | {count} пристроїв"
+    "noPlaylistWarning": "Цим пристроям не призначено плейлист. Вони не отримують маніфест і не відтворять ролик."
   }
 ```
 
