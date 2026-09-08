@@ -332,6 +332,10 @@ class NativeSurface(
      * clip's own end — so a hung clip cannot hold the screen.
      */
     private fun endInterrupt() {
+        // Mirrors usePlayerBoot.ts's endInterrupt(), which returns before
+        // latching when the phase is already idle: without this, stop()'s
+        // unconditional call marks a schedule "done" that never actually ran.
+        if (interruptPlayer == null) return
         interruptView?.let { v -> v.player = null; root.removeView(v) }
         interruptView = null
         interruptPlayer?.let { runCatching { it.release() } }
@@ -344,13 +348,21 @@ class NativeSurface(
         if (!hasPlayed) showOnly(standbyView)
     }
 
-    /** Make [view] the sole visible child of [root]. */
+    /** Make [view] the sole visible child of [root], except the interrupt overlay. */
     private fun showOnly(view: View) {
         if (view.parent == null) root.addView(view, matchParent())
         for (i in 0 until root.childCount) {
             val child = root.getChildAt(i)
+            // The interrupt overlay is not one of the mutually exclusive screens:
+            // it sits ABOVE whichever one is showing and owns the display for the
+            // whole wall-clock window. Hiding it here would leave its player
+            // decoding invisibly behind the playlist.
+            if (child === interruptView) continue
             child.visibility = if (child === view) View.VISIBLE else View.GONE
         }
+        // addView appends, so a freshly added screen would otherwise sit above
+        // the overlay in z-order.
+        interruptView?.bringToFront()
     }
 
     private fun makeBanner(text: String): View = TextView(activity).apply {
