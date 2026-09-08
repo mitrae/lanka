@@ -2560,9 +2560,19 @@ function standUp(): void {
 }
 ```
 
-Inside `onMounted`, after the timer is started, add the watcher:
+Inside `onMounted`, after the timer is started, add the watcher — **and a
+mount-time catch-up**:
 
 ```ts
+  // This component is keyed on playlistId:version, so a manifest change during
+  // an interrupt REMOUNTS it with `suspended` already true. The watch below is
+  // not immediate, so without this the fresh stage would preload the back slot
+  // and play the playlist underneath a live overlay: three decoders on a box
+  // with a handful, and the watchdog reloading the page ~8 s in.
+  // The emit is harmless here — the parent is already past `arming`, so its
+  // handler is a no-op.
+  if (props.suspended) standDown()
+
   const stopSuspendWatch = watch(
     () => props.suspended === true,
     (on) => (on ? standDown() : standUp())
@@ -2742,6 +2752,14 @@ Inside `usePlayerBoot`, near the other refs:
       armTimer = window.setTimeout(onStageStoodDown, ARM_TIMEOUT_MS)
       return
     }
+    // NOTE on the `screen.value !== 'playing'` branch above: with today's
+    // contract it is defensive rather than live. A device with no playlist gets
+    // a bare 204, and the reconciler's 204 path zeroes the schedule too, so
+    // screen and clock cannot diverge. It is kept deliberately: the 204
+    // behaviour is a decision that was taken explicitly and may be revisited
+    // (delivering the observance to unassigned screens was considered and
+    // deferred), and without this branch that change would deadlock the
+    // handshake on a stage that will never acknowledge.
     // The window closed — on the wall clock, whatever the clip was doing.
     if (interruptPhase.value !== 'idle') endInterrupt()
   }
