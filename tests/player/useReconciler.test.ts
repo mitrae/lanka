@@ -493,8 +493,16 @@ describe('clock channel', () => {
     version: 1,
     items: [{ id: 1, type: 'video', sha256: 'a', durationMs: 1000 }]
   }
+  // What the server sends on the manifest…
   const interrupt = {
     mediaId: 9, sha256: 'silence', durationMs: 60_000,
+    startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000
+  }
+  // …and what the clock channel emits. `mediaId` is deliberately dropped: the
+  // player addresses media by sha256 and never needs the row id, so
+  // InterruptSchedule stays the narrow thing createInterruptTimer consumes.
+  const schedule = {
+    sha256: 'silence', durationMs: 60_000,
     startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000
   }
 
@@ -511,7 +519,7 @@ describe('clock channel', () => {
     await r.reconcile()
 
     expect(clocks).toHaveLength(3)
-    expect(clocks[2]).toEqual({ serverNow: 123, interrupt })
+    expect(clocks[2]).toEqual({ serverNow: 123, interrupt: schedule })
     // The stage must NOT be remounted by an unchanged manifest.
     expect(manifests).toHaveLength(1)
   })

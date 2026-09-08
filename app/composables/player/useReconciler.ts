@@ -209,11 +209,18 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
         return
       }
 
-      // m.interrupt carries mediaId too (server-side identification); it is a
-      // superset of InterruptSchedule and passed through as-is so
-      // onClock consumers keep it (e.g. for telemetry/logging) without a
-      // separate field-by-field reconstruction here.
-      const interrupt: InterruptSchedule | null = m.interrupt ?? null
+      // m.interrupt carries mediaId too (server-side row id); deliberately
+      // stripped here — the player addresses media by sha256 and never needs
+      // the row id, so InterruptSchedule stays the narrow thing
+      // createInterruptTimer (and its Kotlin mirror) consumes.
+      const interrupt: InterruptSchedule | null = m.interrupt
+        ? {
+            sha256: m.interrupt.sha256,
+            durationMs: m.interrupt.durationMs,
+            startsAt: m.interrupt.startsAt,
+            endsAt: m.interrupt.endsAt
+          }
+        : null
       emitClock({ serverNow: m.serverNow ?? null, interrupt })
 
       // The clip must be on disk long before the window opens; a cache miss at
