@@ -96,4 +96,36 @@ describe('createInterruptTimer', () => {
     t.setSchedule(null, null, START)
     expect(t.observe(START).active).toBe(false)
   })
+
+  it('keeps the latch across a WITHDRAWAL and republish of the same window', () => {
+    // The reachable replay path: a device 204s (unassigned), or an admin
+    // toggles `enabled` off and on again, inside a window that already played.
+    // The server recomputes the interrupt deterministically, so the republished
+    // window has the identical startsAt — and must not fire a second time.
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START)
+    t.markDone()
+    t.setSchedule(null, null, START + 5_000)
+    t.setSchedule(sched, START + 10_000, START + 10_000)
+    expect(t.observe(START + 10_000).active).toBe(false)
+  })
+
+  it('stops at endsAt even when the clip is LONGER than the window', () => {
+    // Discriminating for the endsAt cutoff specifically: with durationMs equal
+    // to the window length, the duration guard masks the endsAt guard, so
+    // neither test proves the other.
+    const t = createInterruptTimer()
+    const longClip: InterruptSchedule = { ...sched, durationMs: 600_000 }
+    t.setSchedule(longClip, START, START)
+    expect(t.observe(START + 59_999).active).toBe(true)
+    expect(t.observe(START + 60_000).active).toBe(false)
+  })
+
+  it('keeps a previously derived offset when serverNow is null', () => {
+    const t = createInterruptTimer()
+    const clientNow = START - 3_600_000
+    t.setSchedule(sched, START, clientNow) // offset = +1h
+    t.setSchedule(sched, null, clientNow)  // no clock sample: keep the offset
+    expect(t.observe(clientNow).active).toBe(true)
+  })
 })

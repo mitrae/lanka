@@ -28,8 +28,8 @@ export interface InterruptTimerHandle {
   /**
    * Publish the current schedule and re-derive the clock offset.
    * `serverNow` is the server's epoch at response time; `clientNow` is
-   * `Date.now()` when it was received. A schedule with a new `startsAt`
-   * clears the done latch.
+   * `Date.now()` when it was received. Passing `null` withdraws the schedule
+   * without disturbing the done latch.
    */
   setSchedule(
     schedule: InterruptSchedule | null,
@@ -51,11 +51,12 @@ export function createInterruptTimer(): InterruptTimerHandle {
   return {
     setSchedule(next, serverNow, clientNow) {
       if (serverNow !== null) offsetMs = serverNow - clientNow
-      if (next === null) {
-        schedule = null
-        return
-      }
-      if (!schedule || schedule.startsAt !== next.startsAt) doneFor = null
+      // `doneFor` is deliberately never cleared here. observe() compares it
+      // against the CURRENT schedule's startsAt, so a latch left over from an
+      // earlier window is already inert — and clearing it on "we didn't have a
+      // schedule a moment ago" would reopen the exact replay this latch exists
+      // to prevent: a withdrawal (a 204, or the admin toggling `enabled` off)
+      // followed by a republish of the same window inside that window.
       schedule = next
     },
 
