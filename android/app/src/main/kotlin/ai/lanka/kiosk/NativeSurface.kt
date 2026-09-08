@@ -359,7 +359,9 @@ class NativeSurface(
         interruptView = null
         interruptPlayer?.let { runCatching { it.release() } }
         interruptPlayer = null
-        interruptTimer.markDone()
+        // The window that PLAYED, not whatever schedule is loaded now — see
+        // InterruptTimer.markDone's own comment.
+        interruptTimer.markDone(interruptStartsAt)
         playbackView?.standUp()
     }
 

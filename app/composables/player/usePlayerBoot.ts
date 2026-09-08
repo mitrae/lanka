@@ -113,7 +113,10 @@ export function usePlayerBoot(
   function endInterrupt(): void {
     clearArmTimer()
     if (interruptPhase.value === 'idle') return
-    interruptTimer.markDone()
+    // The window that PLAYED, not whatever schedule is loaded now: a poll
+    // landing after the server rolled nextWindow over would otherwise latch
+    // tomorrow's window and skip tomorrow's observance.
+    interruptTimer.markDone(interruptStartsAt)
     interruptPhase.value = 'idle'
     interruptSrc.value = null
     interruptSha.value = null

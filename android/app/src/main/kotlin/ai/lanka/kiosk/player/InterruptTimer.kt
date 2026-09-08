@@ -59,9 +59,18 @@ class InterruptTimer {
         return InterruptState.Active(s, offset)
     }
 
-    /** Mark the current window consumed. */
+    /**
+     * Mark a window consumed. Takes the `startsAt` of the window that ACTUALLY
+     * played, never the currently loaded schedule's: the server rolls
+     * `nextWindow` over the instant today's window ends, so a manifest poll
+     * landing in the gap between that rollover and the next 500 ms tick
+     * publishes TOMORROW's window — latching that on teardown would silently
+     * skip tomorrow's observance on this screen. The same argument covers a
+     * withdrawal mid-window (`enabled` toggled off), which leaves no schedule
+     * to read a `startsAt` off at all.
+     */
     @Synchronized
-    fun markDone() {
-        schedule?.let { doneFor = it.startsAt }
+    fun markDone(startsAt: Long) {
+        doneFor = startsAt
     }
 }

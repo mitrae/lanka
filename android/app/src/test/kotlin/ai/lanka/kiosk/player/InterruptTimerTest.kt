@@ -59,7 +59,7 @@ class InterruptTimerTest {
         val t = InterruptTimer()
         t.setSchedule(sched, start + 30_000, start + 30_000)
         assertTrue(isActive(t.observe(start + 30_000)))
-        t.markDone()
+        t.markDone(start)
         assertTrue(!isActive(t.observe(start + 30_000)))
         assertTrue(!isActive(t.observe(start + 1_000)))
     }
@@ -67,7 +67,7 @@ class InterruptTimerTest {
     @Test fun `clears the latch on a new window`() {
         val t = InterruptTimer()
         t.setSchedule(sched, start, start)
-        t.markDone()
+        t.markDone(start)
         val tomorrow = sched.copy(startsAt = start + 86_400_000, endsAt = start + 86_400_000 + 60_000)
         t.setSchedule(tomorrow, start + 86_400_000, start + 86_400_000)
         assertTrue(isActive(t.observe(start + 86_400_000)))
@@ -76,7 +76,7 @@ class InterruptTimerTest {
     @Test fun `keeps the latch when the same window is republished`() {
         val t = InterruptTimer()
         t.setSchedule(sched, start, start)
-        t.markDone()
+        t.markDone(start)
         t.setSchedule(sched, start + 5_000, start + 5_000)
         assertTrue(!isActive(t.observe(start + 5_000)))
     }
@@ -84,7 +84,7 @@ class InterruptTimerTest {
     @Test fun `keeps the latch across a withdrawal and republish`() {
         val t = InterruptTimer()
         t.setSchedule(sched, start, start)
-        t.markDone()
+        t.markDone(start)
         t.setSchedule(null, null, start + 5_000)
         t.setSchedule(sched, start + 10_000, start + 10_000)
         assertTrue(!isActive(t.observe(start + 10_000)))
@@ -95,6 +95,32 @@ class InterruptTimerTest {
         t.setSchedule(sched.copy(durationMs = 600_000), start, start)
         assertTrue(isActive(t.observe(start + 59_999)))
         assertTrue(!isActive(t.observe(start + 60_000)))
+    }
+
+    @Test fun `latches the window that played not a newer schedule that arrived first`() {
+        // The server rolls nextWindow over to tomorrow at exactly endsAt and the
+        // tick observes up to 500 ms later, so a poll landing in that gap loads
+        // TOMORROW's window while today's teardown is still pending. Latching the
+        // loaded schedule there would silently skip tomorrow.
+        val t = InterruptTimer()
+        t.setSchedule(sched, start, start)
+        assertTrue(isActive(t.observe(start + 30_000)))
+        val tomorrow = sched.copy(startsAt = start + 86_400_000, endsAt = start + 86_400_000 + 60_000)
+        t.setSchedule(tomorrow, start + 60_000, start + 60_000)
+        t.markDone(start)
+        assertTrue(isActive(t.observe(start + 86_400_000)))
+    }
+
+    @Test fun `a withdrawal during the window still latches the window that played`() {
+        // `enabled` toggled off mid-window leaves no schedule loaded at teardown;
+        // with nothing to latch, the republish that follows would replay it.
+        val t = InterruptTimer()
+        t.setSchedule(sched, start, start)
+        assertTrue(isActive(t.observe(start + 10_000)))
+        t.setSchedule(null, null, start + 20_000)
+        t.markDone(start)
+        t.setSchedule(sched, start + 30_000, start + 30_000)
+        assertTrue(!isActive(t.observe(start + 30_000)))
     }
 
     @Test fun `keeps a previously derived offset when serverNow is null`() {

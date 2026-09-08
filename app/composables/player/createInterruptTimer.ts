@@ -37,8 +37,17 @@ export interface InterruptTimerHandle {
     clientNow: number
   ): void
   observe(clientNow: number): InterruptState
-  /** Mark the current window consumed. */
-  markDone(): void
+  /**
+   * Mark a window consumed. Takes the `startsAt` of the window that ACTUALLY
+   * played, never the currently loaded schedule's: the server rolls
+   * `nextWindow` over the instant today's window ends, so a manifest poll
+   * landing in the gap between that rollover and the player's next 500 ms tick
+   * publishes TOMORROW's window — and latching that on teardown would silently
+   * skip tomorrow's observance on that screen. The same argument covers a
+   * withdrawal mid-window (`enabled` toggled off), which leaves no schedule to
+   * read a `startsAt` off at all.
+   */
+  markDone(startsAt: number): void
 }
 
 const INACTIVE: InterruptState = { active: false }
@@ -72,8 +81,8 @@ export function createInterruptTimer(): InterruptTimerHandle {
       return { active: true, schedule, offsetMs: offset }
     },
 
-    markDone() {
-      if (schedule) doneFor = schedule.startsAt
+    markDone(startsAt) {
+      doneFor = startsAt
     }
   }
 }

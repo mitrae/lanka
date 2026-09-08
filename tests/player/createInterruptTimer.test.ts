@@ -63,7 +63,7 @@ describe('createInterruptTimer', () => {
     const t = createInterruptTimer()
     t.setSchedule(sched, START + 30_000, START + 30_000)
     expect(t.observe(START + 30_000).active).toBe(true)
-    t.markDone()
+    t.markDone(START)
     expect(t.observe(START + 30_000).active).toBe(false)
     expect(t.observe(START + 1_000).active).toBe(false)
   })
@@ -71,7 +71,7 @@ describe('createInterruptTimer', () => {
   it('clears the done latch when a NEW window arrives', () => {
     const t = createInterruptTimer()
     t.setSchedule(sched, START, START)
-    t.markDone()
+    t.markDone(START)
     const tomorrow: InterruptSchedule = {
       ...sched,
       startsAt: START + 86_400_000,
@@ -84,7 +84,7 @@ describe('createInterruptTimer', () => {
   it('keeps the latch when the SAME window is re-published by a later poll', () => {
     const t = createInterruptTimer()
     t.setSchedule(sched, START, START)
-    t.markDone()
+    t.markDone(START)
     t.setSchedule(sched, START + 5_000, START + 5_000)
     expect(t.observe(START + 5_000).active).toBe(false)
   })
@@ -104,7 +104,7 @@ describe('createInterruptTimer', () => {
     // window has the identical startsAt — and must not fire a second time.
     const t = createInterruptTimer()
     t.setSchedule(sched, START, START)
-    t.markDone()
+    t.markDone(START)
     t.setSchedule(null, null, START + 5_000)
     t.setSchedule(sched, START + 10_000, START + 10_000)
     expect(t.observe(START + 10_000).active).toBe(false)
@@ -119,6 +119,36 @@ describe('createInterruptTimer', () => {
     t.setSchedule(longClip, START, START)
     expect(t.observe(START + 59_999).active).toBe(true)
     expect(t.observe(START + 60_000).active).toBe(false)
+  })
+
+  it('latches the window that PLAYED, not a newer schedule that arrived first', () => {
+    // The server rolls nextWindow over to tomorrow at exactly endsAt, and the
+    // player's tick observes up to 500 ms later — so a manifest poll landing in
+    // that gap loads TOMORROW's window while today's teardown is still pending.
+    // Latching the loaded schedule there would silently skip tomorrow.
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START)
+    expect(t.observe(START + 30_000).active).toBe(true)
+    const tomorrow: InterruptSchedule = {
+      ...sched,
+      startsAt: START + 86_400_000,
+      endsAt: START + 86_400_000 + 60_000
+    }
+    t.setSchedule(tomorrow, START + 60_000, START + 60_000)
+    t.markDone(START)
+    expect(t.observe(START + 86_400_000).active).toBe(true)
+  })
+
+  it('a withdrawal during the window still latches the window that played', () => {
+    // `enabled` toggled off mid-window leaves no schedule loaded at teardown.
+    // With nothing to latch, the republish that follows would replay it.
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START)
+    expect(t.observe(START + 10_000).active).toBe(true)
+    t.setSchedule(null, null, START + 20_000)
+    t.markDone(START)
+    t.setSchedule(sched, START + 30_000, START + 30_000)
+    expect(t.observe(START + 30_000).active).toBe(false)
   })
 
   it('keeps a previously derived offset when serverNow is null', () => {
