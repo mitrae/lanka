@@ -1,6 +1,7 @@
 package ai.lanka.kiosk.player
 
 import android.os.Handler
+import android.os.SystemClock
 
 /**
  * [SchedulerDeps] backed by an Android main-thread [Handler], so the pure-Kotlin
@@ -18,4 +19,6 @@ class AndroidSchedulerDeps(private val handler: Handler) : SchedulerDeps {
     override fun clearTimeout(handle: Any) {
         handler.removeCallbacks(handle as Runnable)
     }
+
+    override fun now(): Long = SystemClock.uptimeMillis()
 }

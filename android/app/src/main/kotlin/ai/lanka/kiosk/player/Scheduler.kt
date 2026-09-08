@@ -7,6 +7,8 @@ data class TransitionEvent(val from: Int, val to: Int, val nextPreload: Int)
 interface SchedulerDeps {
     fun setTimeout(cb: () -> Unit, ms: Long): Any
     fun clearTimeout(handle: Any)
+    /** Virtualised in tests; SystemClock.uptimeMillis() in production. */
+    fun now(): Long
 }
 
 class Scheduler(private val items: List<ManifestItem>, private val deps: SchedulerDeps) {
@@ -21,6 +23,11 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     private var back = if (items.size > 1) 1 % items.size else 0
     private var stopped = false
     private var imageTimer: Any? = null
+    private var imageTimerIndex = -1
+    private var imageTimerArmedAt = 0L
+    private var imageTimerMs = 0L
+    private var paused = false
+    private var pausedRemainingMs: Long? = null
 
     private val itemStartHandlers = mutableSetOf<(Int) -> Unit>()
     private val transitionHandlers = mutableSetOf<(TransitionEvent) -> Unit>()
@@ -30,18 +37,27 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     private fun emitTransition(e: TransitionEvent) = transitionHandlers.toList().forEach { it(e) }
     private fun emitError(i: Int, msg: String) = errorHandlers.toList().forEach { it(i, msg) }
 
+    private fun nowMs() = deps.now()
+
     private fun clearImageTimer() { imageTimer?.let { deps.clearTimeout(it) }; imageTimer = null }
 
     private fun armImageTimerIfNeeded(index: Int) {
         val item = items.getOrNull(index) ?: return
         if (item.type != "image") return
-        val durationMs = maxOf(0, item.durationMs).toLong()
+        armImageTimer(index, maxOf(0, item.durationMs).toLong())
+    }
+
+    private fun armImageTimer(index: Int, ms: Long) {
+        clearImageTimer() // never overwrite a live handle — that leaks it
+        imageTimerIndex = index
+        imageTimerArmedAt = nowMs()
+        imageTimerMs = ms
         imageTimer = deps.setTimeout({
             imageTimer = null
             if (stopped) return@setTimeout
             if (mode == SchedulerMode.SINGLE_IMAGE) { emitItemStart(0); armImageTimerIfNeeded(0); return@setTimeout }
             advance()
-        }, durationMs)
+        }, ms)
     }
 
     private fun advance() {
@@ -56,12 +72,14 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     }
 
     fun start() {
-        if (stopped || mode == SchedulerMode.EMPTY) return
+        if (stopped || paused || mode == SchedulerMode.EMPTY) return
         emitItemStart(0); armImageTimerIfNeeded(0)
     }
 
     fun itemEnded(index: Int) {
-        if (stopped || mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
+        // Dropped while paused — see the TS twin.
+        if (stopped || paused) return
+        if (mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
         if (index != front) return
         advance()
     }
@@ -82,14 +100,38 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     fun itemErrored(index: Int, message: String) {
         if (stopped) return
         emitError(index, message)
+        if (paused) return // report, never advance
         if (mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
         if (index != front) return
         advance()
     }
 
     fun stop() {
-        stopped = true; clearImageTimer()
+        stopped = true; paused = false; pausedRemainingMs = null; clearImageTimer()
         itemStartHandlers.clear(); transitionHandlers.clear(); errorHandlers.clear()
+    }
+
+    /**
+     * Freeze the playlist for a scheduled interrupt: cancel the slide timer,
+     * remembering how much of it was left. While paused the scheduler refuses
+     * to advance. Idempotent.
+     */
+    fun pause() {
+        if (stopped || paused) return
+        paused = true
+        if (imageTimer == null) { pausedRemainingMs = null; return }
+        val elapsed = nowMs() - imageTimerArmedAt
+        pausedRemainingMs = maxOf(0L, imageTimerMs - elapsed)
+        clearImageTimer()
+    }
+
+    /** Re-arm the slide timer with its REMAINING time. Idempotent. */
+    fun resume() {
+        if (stopped || !paused) return
+        paused = false
+        val remaining = pausedRemainingMs ?: return
+        pausedRemainingMs = null
+        armImageTimer(imageTimerIndex, remaining)
     }
 
     fun getFrontIndex() = front

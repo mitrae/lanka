@@ -6,11 +6,23 @@ import kotlinx.serialization.Serializable
 data class ManifestItem(val id: Int, val type: String, val sha256: String, val durationMs: Int)
 
 @Serializable
+data class ManifestInterrupt(
+    val mediaId: Int,
+    val sha256: String,
+    val durationMs: Int,
+    val startsAt: Long,
+    val endsAt: Long
+)
+
+@Serializable
 data class Manifest(
     val playlistId: Int,
     val playlistName: String,
     val version: Int,
-    val items: List<ManifestItem>
+    val items: List<ManifestItem>,
+    // Null-defaulted so an older server (or a 204) still parses.
+    val serverNow: Long? = null,
+    val interrupt: ManifestInterrupt? = null
 )
 
 @Serializable
