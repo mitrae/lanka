@@ -387,7 +387,7 @@ export async function getInterrupt(
 - [ ] **Step 6: Run the tests**
 
 Run: `pnpm vitest run tests/services/interrupt.test.ts`
-Expected: PASS (11 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 7: Run the full suite so the new migration is proven against every existing test**
 
@@ -1263,6 +1263,38 @@ describe('createInterruptTimer', () => {
     expect(t.observe(START + 5_000).active).toBe(false)
   })
 
+  it('keeps the latch across a WITHDRAWAL and republish of the same window', () => {
+    // The reachable replay path: a device 204s (unassigned), or an admin
+    // toggles `enabled` off and on again, inside a window that already played.
+    // The server recomputes the interrupt deterministically, so the republished
+    // window has the identical startsAt — and must not fire a second time.
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START)
+    t.markDone()
+    t.setSchedule(null, null, START + 5_000)
+    t.setSchedule(sched, START + 10_000, START + 10_000)
+    expect(t.observe(START + 10_000).active).toBe(false)
+  })
+
+  it('stops at endsAt even when the clip is LONGER than the window', () => {
+    // Discriminating for the endsAt cutoff specifically: with durationMs equal
+    // to the window length, the duration guard masks the endsAt guard, so
+    // neither test proves the other.
+    const t = createInterruptTimer()
+    const longClip: InterruptSchedule = { ...sched, durationMs: 600_000 }
+    t.setSchedule(longClip, START, START)
+    expect(t.observe(START + 59_999).active).toBe(true)
+    expect(t.observe(START + 60_000).active).toBe(false)
+  })
+
+  it('keeps a previously derived offset when serverNow is null', () => {
+    const t = createInterruptTimer()
+    const clientNow = START - 3_600_000
+    t.setSchedule(sched, START, clientNow) // offset = +1h
+    t.setSchedule(sched, null, clientNow)  // no clock sample: keep the offset
+    expect(t.observe(clientNow).active).toBe(true)
+  })
+
   it('goes inactive when the schedule is withdrawn', () => {
     const t = createInterruptTimer()
     t.setSchedule(sched, START, START)
@@ -1313,8 +1345,8 @@ export interface InterruptTimerHandle {
   /**
    * Publish the current schedule and re-derive the clock offset.
    * `serverNow` is the server's epoch at response time; `clientNow` is
-   * `Date.now()` when it was received. A schedule with a new `startsAt`
-   * clears the done latch.
+   * `Date.now()` when it was received. Passing `null` withdraws the schedule
+   * without disturbing the done latch.
    */
   setSchedule(
     schedule: InterruptSchedule | null,
@@ -1336,11 +1368,12 @@ export function createInterruptTimer(): InterruptTimerHandle {
   return {
     setSchedule(next, serverNow, clientNow) {
       if (serverNow !== null) offsetMs = serverNow - clientNow
-      if (next === null) {
-        schedule = null
-        return
-      }
-      if (!schedule || schedule.startsAt !== next.startsAt) doneFor = null
+      // `doneFor` is deliberately never cleared here. observe() compares it
+      // against the CURRENT schedule's startsAt, so a latch left over from an
+      // earlier window is already inert — and clearing it on "we didn't have a
+      // schedule a moment ago" would reopen the exact replay this latch exists
+      // to prevent: a withdrawal (a 204, or the admin toggling `enabled` off)
+      // followed by a republish of the same window inside that window.
       schedule = next
     },
 
@@ -1366,7 +1399,7 @@ export function createInterruptTimer(): InterruptTimerHandle {
 - [ ] **Step 4: Run the tests**
 
 Run: `pnpm vitest run tests/player/createInterruptTimer.test.ts`
-Expected: PASS (11 tests)
+Expected: PASS (15 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -3064,6 +3097,30 @@ class InterruptTimerTest {
         assertTrue(!isActive(t.observe(start + 5_000)))
     }
 
+    @Test fun `keeps the latch across a withdrawal and republish`() {
+        val t = InterruptTimer()
+        t.setSchedule(sched, start, start)
+        t.markDone()
+        t.setSchedule(null, null, start + 5_000)
+        t.setSchedule(sched, start + 10_000, start + 10_000)
+        assertTrue(!isActive(t.observe(start + 10_000)))
+    }
+
+    @Test fun `stops at endsAt even when the clip is longer than the window`() {
+        val t = InterruptTimer()
+        t.setSchedule(sched.copy(durationMs = 600_000), start, start)
+        assertTrue(isActive(t.observe(start + 59_999)))
+        assertTrue(!isActive(t.observe(start + 60_000)))
+    }
+
+    @Test fun `keeps a previously derived offset when serverNow is null`() {
+        val t = InterruptTimer()
+        val clientNow = start - 3_600_000
+        t.setSchedule(sched, start, clientNow)
+        t.setSchedule(sched, null, clientNow)
+        assertTrue(isActive(t.observe(clientNow)))
+    }
+
     @Test fun `goes inactive when the schedule is withdrawn`() {
         val t = InterruptTimer()
         t.setSchedule(sched, start, start)
@@ -3218,14 +3275,15 @@ class InterruptTimer {
     private var doneFor: Long? = null
 
     /**
-     * Publish the current schedule and re-derive the clock offset. A schedule
-     * with a new startsAt clears the done latch.
+     * Publish the current schedule and re-derive the clock offset. Passing null
+     * withdraws the schedule without disturbing the done latch.
      */
     fun setSchedule(next: ManifestInterrupt?, serverNow: Long?, clientNow: Long) {
         if (serverNow != null) offsetMs = serverNow - clientNow
-        if (next == null) { schedule = null; return }
-        val current = schedule
-        if (current == null || current.startsAt != next.startsAt) doneFor = null
+        // doneFor is deliberately never cleared here — see the TS twin. observe()
+        // compares it against the CURRENT schedule's startsAt, so a stale latch is
+        // already inert, and clearing it on a withdrawal would reopen the replay
+        // this latch exists to prevent.
         schedule = next
     }
 
