@@ -34,6 +34,21 @@ export async function handleDeleteMedia(
     })
   }
 
+  const interruptRows = await db
+    .select({ id: schema.interrupts.id })
+    .from(schema.interrupts)
+    .where(eq(schema.interrupts.mediaId, id))
+
+  if (interruptRows.length > 0 && !opts.force) {
+    throw createError({
+      statusCode: 409,
+      message:
+        `Media ${id} is the scheduled interrupt clip. Deleting it would leave a ` +
+        `schedule that silently never plays. Pass force=true to delete it and ` +
+        `clear the schedule.`
+    })
+  }
+
   const affectedPlaylists = new Set(referencingItems.map((r) => r.playlistId))
 
   db.transaction((tx) => {
@@ -73,6 +88,13 @@ export async function handleDeleteMedia(
         }
       }
     }
+
+    if (interruptRows.length > 0) {
+      // Same transaction as the media delete: a configured interrupt must never
+      // outlive its clip, not even for the width of a failed statement.
+      tx.delete(schema.interrupts).where(eq(schema.interrupts.mediaId, id)).run()
+    }
+
     tx.delete(schema.media).where(eq(schema.media.id, id)).run()
   })
 
