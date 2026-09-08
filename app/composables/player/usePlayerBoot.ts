@@ -6,6 +6,7 @@
 import { onBeforeUnmount, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import { useApiClient, type ApiClient } from '~/app/composables/useApiClient'
 import type { Manifest } from '~/app/types/api'
+import { createInterruptTimer, type InterruptTimerHandle } from './createInterruptTimer'
 import { useNativeDevice, PLAYER_VERSION, PLAYER_SURFACE } from './useNativeDevice'
 import { usePlayerEnv, type PlayerEnv } from './usePlayerEnv'
 import { useTelemetry } from './useTelemetry'
@@ -28,6 +29,7 @@ declare const __LANKA_BUILD__: string | undefined
 const RELOAD_GUARD_KEY = 'lanka.reloadedForBuild'
 
 export type PlayerScreen = 'booting' | 'standby' | 'no-content' | 'playing'
+export type InterruptPhase = 'idle' | 'arming' | 'playing'
 
 export interface PlayerBootState {
   screen: Ref<PlayerScreen>
@@ -39,6 +41,12 @@ export interface PlayerBootState {
   lastError: Ref<string | null>
   /** True while the NativeFS bridge is pre-downloading media for a new playlist. */
   syncing: Ref<boolean>
+  interruptPhase: Ref<InterruptPhase>
+  interruptSrc: Ref<string | null>
+  interruptSha: Ref<string | null>
+  interruptOffsetMs: Ref<number>
+  onStageStoodDown: () => void
+  onInterruptFailed: (message: string) => void
 }
 
 export function usePlayerBoot(
@@ -61,6 +69,76 @@ export function usePlayerBoot(
   const scheduler = shallowRef<SchedulerHandle | null>(null)
   const lastError = ref<string | null>(null)
   const syncing = ref(false)
+
+  const interruptPhase = ref<InterruptPhase>('idle')
+  const interruptSrc = ref<string | null>(null)
+  const interruptSha = ref<string | null>(null)
+  const interruptOffsetMs = ref(0)
+  const interruptTimer: InterruptTimerHandle = createInterruptTimer()
+  let interruptStartsAt = 0
+  let armTimer: number | null = null
+  let interruptTick: number | null = null
+
+  /** How often the corrected clock is compared against the window. */
+  const INTERRUPT_SAMPLE_MS = 500
+  /** A stage that never acknowledges must not be able to block the observance. */
+  const ARM_TIMEOUT_MS = 500
+
+  function clearArmTimer(): void {
+    if (armTimer !== null) {
+      window.clearTimeout(armTimer)
+      armTimer = null
+    }
+  }
+
+  function onStageStoodDown(): void {
+    clearArmTimer()
+    if (interruptPhase.value !== 'arming') return
+    interruptPhase.value = 'playing'
+    telemetry.interruptStarted(deviceId.value, interruptStartsAt)
+  }
+
+  function endInterrupt(): void {
+    clearArmTimer()
+    if (interruptPhase.value === 'idle') return
+    interruptTimer.markDone()
+    interruptPhase.value = 'idle'
+    interruptSrc.value = null
+    interruptSha.value = null
+    interruptOffsetMs.value = 0
+  }
+
+  function onInterruptFailed(message: string): void {
+    // Loud, never blank: the playlist comes back and the failure is on record.
+    telemetry.itemFailed(
+      deviceId.value,
+      null,
+      interruptSha.value ?? undefined,
+      `interrupt: ${message}`
+    )
+    endInterrupt()
+  }
+
+  function sampleInterrupt(): void {
+    const state = interruptTimer.observe(Date.now())
+    if (state.active) {
+      if (interruptPhase.value !== 'idle') return
+      interruptStartsAt = state.schedule.startsAt
+      interruptSha.value = state.schedule.sha256
+      interruptSrc.value = env.fileUrl(state.schedule.sha256)
+      interruptOffsetMs.value = state.offsetMs
+      interruptPhase.value = 'arming'
+      // No stage on screen (standby / no-content): nobody will acknowledge.
+      if (screen.value !== 'playing') {
+        onStageStoodDown()
+        return
+      }
+      armTimer = window.setTimeout(onStageStoodDown, ARM_TIMEOUT_MS)
+      return
+    }
+    // The window closed — on the wall clock, whatever the clip was doing.
+    if (interruptPhase.value !== 'idle') endInterrupt()
+  }
 
   let reconciler: ReconcilerHandle | null = null
   let channel: CommandChannelHandle | null = null
@@ -171,6 +249,9 @@ export function usePlayerBoot(
     reconciler.onSyncing((s) => {
       syncing.value = s
     })
+    reconciler.onClock((c) => {
+      interruptTimer.setSchedule(c.interrupt, c.serverNow, Date.now())
+    })
     reconciler.onError((e) => {
       lastError.value = e instanceof Error ? e.message : String(e)
       // Only fall back to standby if we've never played anything yet.
@@ -220,6 +301,8 @@ export function usePlayerBoot(
       lastPostAt = Date.now()
       telemetry.heartbeat(deviceId.value)
     }, 2_000)
+
+    interruptTick = window.setInterval(sampleInterrupt, INTERRUPT_SAMPLE_MS)
   }
 
   void boot()
@@ -237,6 +320,11 @@ export function usePlayerBoot(
       sampleTimer = null
     }
     visibility.stop()
+    clearArmTimer()
+    if (interruptTick !== null) {
+      window.clearInterval(interruptTick)
+      interruptTick = null
+    }
   })
 
   return {
@@ -247,6 +335,12 @@ export function usePlayerBoot(
     env,
     deviceId,
     lastError,
-    syncing
+    syncing,
+    interruptPhase,
+    interruptSrc,
+    interruptSha,
+    interruptOffsetMs,
+    onStageStoodDown,
+    onInterruptFailed
   }
 }

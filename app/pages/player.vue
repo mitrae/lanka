@@ -11,13 +11,18 @@
 import PlayerStage from '~/app/components/player/PlayerStage.vue'
 import NoContentScreen from '~/app/components/player/NoContentScreen.vue'
 import StandbyScreen from '~/app/components/player/StandbyScreen.vue'
+import InterruptOverlay from '~/app/components/player/InterruptOverlay.vue'
 import { usePlayerBoot } from '~/app/composables/player/usePlayerBoot'
 
 definePageMeta({
   layout: false
 })
 
-const { screen, manifest, scheduler, env, deviceId, lastError } = usePlayerBoot()
+const {
+  screen, manifest, scheduler, env, deviceId, lastError,
+  interruptPhase, interruptSrc, interruptSha, interruptOffsetMs,
+  onStageStoodDown, onInterruptFailed
+} = usePlayerBoot()
 
 useHead({
   title: 'Lanka Player',
@@ -39,6 +44,18 @@ useHead({
       :manifest="manifest"
       :scheduler="scheduler"
       :env="env"
+      :suspended="interruptPhase !== 'idle'"
+      @stood-down="onStageStoodDown"
+    />
+    <!-- Sibling of the screen switch, not a child of the stage: the observance
+         must also cover the standby and no-content screens, and no manifest
+         change may remount it mid-window. -->
+    <InterruptOverlay
+      v-if="interruptPhase === 'playing' && interruptSrc && interruptSha"
+      :sha256="interruptSha"
+      :src="interruptSrc"
+      :start-offset-ms="interruptOffsetMs"
+      @failed="onInterruptFailed"
     />
   </div>
 </template>

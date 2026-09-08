@@ -77,10 +77,12 @@ export interface ApiClient {
   postTelemetry(
     deviceId: string,
     body: {
-      currentItemId: number | null
+      currentItemId?: number | null
       apkVersion?: string
       surface?: 'webview' | 'native'
+      interruptAt?: number
       error?: { sha256?: string; message: string }
+      [k: string]: unknown
     }
   ): Promise<void>
 
