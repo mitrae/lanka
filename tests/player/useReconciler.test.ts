@@ -485,3 +485,84 @@ describe('createReconciler — hung fetch', () => {
     })
   })
 })
+
+describe('clock channel', () => {
+  const base = {
+    playlistId: 1,
+    playlistName: 'P',
+    version: 1,
+    items: [{ id: 1, type: 'video', sha256: 'a', durationMs: 1000 }]
+  }
+  const interrupt = {
+    mediaId: 9, sha256: 'silence', durationMs: 60_000,
+    startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000
+  }
+
+  it('emits on EVERY successful fetch, even when the manifest key is unchanged', async () => {
+    const api = { getManifest: async () => ({ ...base, serverNow: 123, interrupt }) } as any
+    const r = createReconciler({ api, deviceId: 'd1' })
+    const clocks: any[] = []
+    const manifests: any[] = []
+    r.onClock((c) => clocks.push(c))
+    r.onManifest((m) => manifests.push(m))
+
+    await r.reconcile()
+    await r.reconcile()
+    await r.reconcile()
+
+    expect(clocks).toHaveLength(3)
+    expect(clocks[2]).toEqual({ serverNow: 123, interrupt })
+    // The stage must NOT be remounted by an unchanged manifest.
+    expect(manifests).toHaveLength(1)
+  })
+
+  it('clears the schedule on a 204 — an unassigned device does not observe', async () => {
+    let manifest: any = { ...base, serverNow: 1, interrupt }
+    const api = { getManifest: async () => manifest } as any
+    const r = createReconciler({ api, deviceId: 'd1' })
+    const clocks: any[] = []
+    r.onClock((c) => clocks.push(c))
+
+    await r.reconcile()
+    manifest = null
+    await r.reconcile()
+
+    expect(clocks[1]).toEqual({ serverNow: null, interrupt: null })
+  })
+
+  it('pre-downloads the interrupt clip and keeps it through an eviction', async () => {
+    const cached = new Set<string>()
+    const downloaded: string[] = []
+    let keptJson = ''
+    const nativeFS = {
+      exists: (s: string) => cached.has(s),
+      download: (s: string) => { cached.add(s); downloaded.push(s); return true },
+      evictExcept: (json: string) => { keptJson = json }
+    } as any
+    const api = { getManifest: async () => ({ ...base, serverNow: 1, interrupt }) } as any
+    const r = createReconciler({
+      api, deviceId: 'd1', nativeFS, cdnUrl: (s: string) => `/media/${s}`
+    })
+
+    await r.reconcile()
+
+    expect(downloaded).toContain('silence')
+    expect(JSON.parse(keptJson)).toContain('silence')
+  })
+
+  it('does not re-download an interrupt clip that is already cached', async () => {
+    const downloaded: string[] = []
+    const nativeFS = {
+      exists: () => true,
+      download: (s: string) => { downloaded.push(s); return true },
+      evictExcept: () => {}
+    } as any
+    const api = { getManifest: async () => ({ ...base, serverNow: 1, interrupt }) } as any
+    const r = createReconciler({
+      api, deviceId: 'd1', nativeFS, cdnUrl: (s: string) => `/media/${s}`
+    })
+    await r.reconcile()
+    await r.reconcile()
+    expect(downloaded).toEqual([])
+  })
+})

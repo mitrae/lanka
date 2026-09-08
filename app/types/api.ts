@@ -182,6 +182,16 @@ export interface Manifest {
   items: ManifestItem[]
   /** The server's build id; the player reloads when it differs from its own. */
   playerBuild?: string
+  /** Server clock at response time; the player derives its offset from it. */
+  serverNow?: number
+  /** Next interrupt occurrence that has not yet ended. */
+  interrupt?: {
+    mediaId: number
+    sha256: string
+    durationMs: number
+    startsAt: number
+    endsAt: number
+  }
 }
 
 export interface Assignment {

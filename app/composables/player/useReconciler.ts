@@ -1,10 +1,22 @@
 // app/composables/player/useReconciler.ts
 import type { ApiClient } from '~/app/composables/useApiClient'
 import type { Manifest } from '~/app/types/api'
+import type { InterruptSchedule } from './createInterruptTimer'
 import { shouldReconcile } from './shouldReconcile'
 import { backoff } from './backoff'
 
 export type StreamState = 'connecting' | 'connected' | 'disconnected'
+
+/**
+ * Emitted on EVERY successful manifest fetch, unlike onManifest which is gated
+ * by shouldReconcile. The interrupt window rolls to tomorrow after each fire
+ * and the clock offset must stay fresh, but neither may remount the stage —
+ * a remount would restart the playing video.
+ */
+export interface ClockSample {
+  serverNow: number | null
+  interrupt: InterruptSchedule | null
+}
 
 /**
  * Give up on a manifest fetch that never settles.
@@ -104,6 +116,8 @@ export interface ReconcilerHandle {
   onError(fn: (e: unknown) => void): () => void
   /** Fires true when a download sync starts, false when it ends. */
   onSyncing(fn: (syncing: boolean) => void): () => void
+  /** Fires on every successful fetch (including 204 and unchanged manifests). */
+  onClock(fn: (c: ClockSample) => void): () => void
   getStreamState(): StreamState
 }
 
@@ -142,6 +156,7 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   const manifestHandlers = new Set<(m: Manifest | null) => void>()
   const errorHandlers = new Set<(e: unknown) => void>()
   const syncingHandlers = new Set<(syncing: boolean) => void>()
+  const clockHandlers = new Set<(c: ClockSample) => void>()
 
   function emitManifest(m: Manifest | null): void {
     for (const fn of manifestHandlers) fn(m)
@@ -151,6 +166,9 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   }
   function emitSyncing(syncing: boolean): void {
     for (const fn of syncingHandlers) fn(syncing)
+  }
+  function emitClock(c: ClockSample): void {
+    for (const fn of clockHandlers) fn(c)
   }
 
   function clearRetryTimer(): void {
@@ -169,6 +187,8 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
       )
       attempt = 0
       if (m === null) {
+        // An unassigned device receives no manifest and therefore no schedule.
+        emitClock({ serverNow: null, interrupt: null })
         // Only emit on first fetch or on the transition from manifest → null.
         // Subsequent null-null polls stay silent so telemetry doesn't fire repeatedly.
         if (last !== null || !hasEmitted) {
@@ -188,6 +208,23 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
         }
         return
       }
+
+      // m.interrupt carries mediaId too (server-side identification); it is a
+      // superset of InterruptSchedule and passed through as-is so
+      // onClock consumers keep it (e.g. for telemetry/logging) without a
+      // separate field-by-field reconstruction here.
+      const interrupt: InterruptSchedule | null = m.interrupt ?? null
+      emitClock({ serverNow: m.serverNow ?? null, interrupt })
+
+      // The clip must be on disk long before the window opens; a cache miss at
+      // 09:00 means a CDN fetch over the venue uplink. Only when missing —
+      // download() blocks the JS thread.
+      if (deps.nativeFS && deps.cdnUrl && interrupt && !deps.nativeFS.exists(interrupt.sha256)) {
+        emitSyncing(true)
+        deps.nativeFS.download(interrupt.sha256, deps.cdnUrl(interrupt.sha256))
+        emitSyncing(false)
+      }
+
       const key = { playlistId: m.playlistId, version: m.version }
       if (!shouldReconcile(last, key)) return
       last = key
@@ -203,7 +240,10 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
           }
           emitSyncing(false)
         }
-        deps.nativeFS!.evictExcept(JSON.stringify(sha256s))
+        // The interrupt clip is not a playlist item — without this it would be
+        // evicted on the next playlist change and be missing at 09:00.
+        const keep = interrupt ? [...sha256s, interrupt.sha256] : sha256s
+        deps.nativeFS!.evictExcept(JSON.stringify(keep))
       }
       emitManifest(m)
     } catch (err) {
@@ -269,6 +309,7 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
     manifestHandlers.clear()
     errorHandlers.clear()
     syncingHandlers.clear()
+    clockHandlers.clear()
   }
 
   return {
@@ -287,6 +328,10 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
     onSyncing(fn) {
       syncingHandlers.add(fn)
       return () => syncingHandlers.delete(fn)
+    },
+    onClock(fn) {
+      clockHandlers.add(fn)
+      return () => clockHandlers.delete(fn)
     },
     getStreamState() {
       return streamState
