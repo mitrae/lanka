@@ -3918,6 +3918,20 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
             volume = 0f // no audio, ever
             repeatMode = Player.REPEAT_MODE_OFF
             addListener(object : Player.Listener {
+                /**
+                 * Proof of observance, posted only once the clip is genuinely
+                 * rendering — NOT at handover. A screen whose clip fails to
+                 * decode must read as missed, or devices.last_interrupt_at
+                 * reports an observance that never reached the glass, which is
+                 * the one thing that field exists to rule out. Mirrors the web
+                 * overlay's `started` emit.
+                 */
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying && !interruptReported) {
+                        interruptReported = true
+                        telemetry.interruptStarted(deviceId, interruptStartsAt)
+                    }
+                }
                 override fun onPlayerError(error: PlaybackException) {
                     // Loud, never blank: give the screen back and record it.
                     telemetry.itemFailed(deviceId, null, sha, "interrupt: ${error.errorCodeName}")
@@ -3940,7 +3954,6 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
         interruptStartsAt = state.schedule.startsAt
         root.addView(view, matchParent())
         view.bringToFront()
-        telemetry.interruptStarted(deviceId, interruptStartsAt)
     }
 
     /**
