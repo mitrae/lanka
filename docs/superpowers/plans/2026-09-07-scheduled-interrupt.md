@@ -2621,6 +2621,7 @@ git commit -m "feat(player): stage stands down for an interrupt — paused front
   interruptSha: Ref<string | null>
   interruptOffsetMs: Ref<number>
   onStageStoodDown(): void
+  onInterruptStarted(): void
   onInterruptFailed(message: string): void
   ```
   and `Telemetry.interruptStarted(deviceId: string, startsAt: number): void`
@@ -2680,6 +2681,7 @@ In `PlayerBootState`:
   interruptSha: Ref<string | null>
   interruptOffsetMs: Ref<number>
   onStageStoodDown: () => void
+  onInterruptStarted: () => void
   onInterruptFailed: (message: string) => void
 ```
 
@@ -2711,6 +2713,17 @@ Inside `usePlayerBoot`, near the other refs:
     clearArmTimer()
     if (interruptPhase.value !== 'arming') return
     interruptPhase.value = 'playing'
+  }
+
+  /**
+   * Proof of observance, posted only once the clip has genuinely decoded a
+   * frame — NOT at handover. A screen where the clip fails to play must read as
+   * missed, or `devices.last_interrupt_at` would report an observance that
+   * never appeared on the glass, which is the one thing this field exists to
+   * rule out.
+   */
+  function onInterruptStarted(): void {
+    if (interruptPhase.value !== 'playing') return
     telemetry.interruptStarted(deviceId.value, interruptStartsAt)
   }
 
@@ -2725,6 +2738,10 @@ Inside `usePlayerBoot`, near the other refs:
   }
 
   function onInterruptFailed(message: string): void {
+    // A late `error` can arrive in the same tick the wall-clock branch already
+    // closed the window, before Vue unmounts the overlay. Without this guard
+    // that posts a device_errors row for a window that ended normally.
+    if (interruptPhase.value === 'idle') return
     // Loud, never blank: the playlist comes back and the failure is on record.
     telemetry.itemFailed(
       deviceId.value,
@@ -2799,7 +2816,7 @@ In `app/pages/player.vue`, destructure the new members and update the template:
 const {
   screen, manifest, scheduler, env, deviceId, lastError,
   interruptPhase, interruptSrc, interruptSha, interruptOffsetMs,
-  onStageStoodDown, onInterruptFailed
+  onStageStoodDown, onInterruptStarted, onInterruptFailed
 } = usePlayerBoot()
 ```
 
@@ -2827,6 +2844,7 @@ import InterruptOverlay from '~/app/components/player/InterruptOverlay.vue'
       :sha256="interruptSha"
       :src="interruptSrc"
       :start-offset-ms="interruptOffsetMs"
+      @started="onInterruptStarted"
       @failed="onInterruptFailed"
     />
 ```
