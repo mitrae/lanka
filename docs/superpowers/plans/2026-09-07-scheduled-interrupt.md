@@ -2079,7 +2079,31 @@ describe('InterruptOverlay', () => {
     const w = mount(InterruptOverlay, {
       props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
     })
-    expect(w.find('video').attributes('muted')).toBeDefined()
+    // Vue sets `muted` as a DOM PROPERTY, not an attribute — asserting
+    // attributes('muted') can never pass, in jsdom or a real browser.
+    expect((w.find('video').element as HTMLVideoElement).muted).toBe(true)
+  })
+
+  it('does not re-arm the element, leak the blob, or emit after unmount', async () => {
+    // The parent tears this component down on the window's wall-clock end,
+    // which can land while a blob retry is still in flight.
+    let resolveFetch: (b: Blob) => void = () => {}
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(
+      Promise.resolve({ ok: true, blob: () => new Promise<Blob>((r) => { resolveFetch = r }) })
+    ))
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+    })
+    const video = w.find('video').element as HTMLVideoElement
+    await w.find('video').trigger('error') // starts the blob retry
+    w.unmount()
+    resolveFetch(new Blob(['x']))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(video.getAttribute('src')).toBeNull()
+    expect(revoke).toHaveBeenCalled()
+    expect(w.emitted('failed')).toBeFalsy()
   })
 })
 ```
@@ -2181,6 +2205,10 @@ let startupTimer: number | null = null
 let playing = false
 let blobUrl: string | null = null
 let triedBlob = false
+let failed = false
+/** Set on unmount. The parent tears this component down on the window's
+ *  wall-clock end, which can land while a blob retry is still in flight. */
+let disposed = false
 
 function clearStartupTimer(): void {
   if (startupTimer !== null) {
@@ -2190,7 +2218,11 @@ function clearStartupTimer(): void {
 }
 
 function fail(message: string): void {
-  if (playing) return
+  // `failed` is emitted at most once, and never after teardown: a late error
+  // from a still-in-flight load would otherwise fire into a parent that has
+  // already resumed the playlist.
+  if (playing || failed || disposed) return
+  failed = true
   clearStartupTimer()
   emit('failed', message)
 }
@@ -2227,7 +2259,17 @@ async function onError(): Promise<void> {
   if (!triedBlob && el) {
     triedBlob = true
     try {
-      blobUrl = await fetchBlobUrl(props.sha256)
+      const url = await fetchBlobUrl(props.sha256)
+      // The parent may have torn us down at the window's wall-clock end while
+      // this fetch was in flight. Re-arming `src` here would put a decoder back
+      // on an element onBeforeUnmount deliberately released — on hardware with
+      // a handful of decoder instances — and the URL would never be revoked,
+      // since the one revoke on the unmount path already ran.
+      if (disposed) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrl = url
       el.src = blobUrl
       el.load()
       return
@@ -2252,6 +2294,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   clearStartupTimer()
   const el = video.value
   if (el) {
