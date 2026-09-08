@@ -3534,6 +3534,14 @@ sealed class InterruptState {
     data class Active(val schedule: ManifestInterrupt, val offsetMs: Long) : InterruptState()
 }
 
+/**
+ * Unlike its single-threaded TypeScript twin, this instance is touched from
+ * three threads: `setSchedule` from the network thread, `observe` from the
+ * interrupt tick, `markDone` from the UI thread. All three methods are
+ * `@Synchronized` — not the fields `@Volatile`, because `observe` reads all
+ * three in combination and per-field visibility still permits a torn read.
+ * The object is tiny and contention is one 500 ms tick against one 30 s fetch.
+ */
 class InterruptTimer {
     private var schedule: ManifestInterrupt? = null
     private var offsetMs = 0L
@@ -3543,6 +3551,7 @@ class InterruptTimer {
      * Publish the current schedule and re-derive the clock offset. Passing null
      * withdraws the schedule without disturbing the done latch.
      */
+    @Synchronized
     fun setSchedule(next: ManifestInterrupt?, serverNow: Long?, clientNow: Long) {
         if (serverNow != null) offsetMs = serverNow - clientNow
         // doneFor is deliberately never cleared here — see the TS twin. observe()
@@ -3552,6 +3561,7 @@ class InterruptTimer {
         schedule = next
     }
 
+    @Synchronized
     fun observe(clientNow: Long): InterruptState {
         val s = schedule ?: return InterruptState.Inactive
         if (doneFor == s.startsAt) return InterruptState.Inactive
@@ -3565,6 +3575,7 @@ class InterruptTimer {
     }
 
     /** Mark the current window consumed. */
+    @Synchronized
     fun markDone() {
         schedule?.let { doneFor = it.startsAt }
     }
@@ -3880,6 +3891,19 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
         }
     }
 
+    /**
+     * `showOnly` must skip the overlay. It hides every root child that is not
+     * its argument, and `interruptView` is a sibling child — so a manifest
+     * change landing mid-window would hide the overlay while its player kept
+     * decoding invisibly. `addView` also appends, so a freshly added screen
+     * sits above the overlay in z-order and it must be re-raised:
+     *
+     *     if (child === interruptView) continue
+     *     ...
+     *     interruptView?.bringToFront()
+     *
+     * The decoder-budget guard is a different invariant and does not cover this.
+     */
     private fun beginInterrupt(state: InterruptState.Active) {
         val sha = state.schedule.sha256
         // Stand the stage down FIRST: the back slot must be released before a
@@ -3924,6 +3948,10 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
      * clip's own end — so a hung clip cannot hold the screen.
      */
     private fun endInterrupt() {
+        // Mirrors the web twin's idle guard. Without it, stop() latches
+        // markDone() on whatever schedule is loaded — so a stop at 08:59 marks
+        // today's window played on a timer that never ran it.
+        if (interruptPlayer == null) return
         interruptView?.let { v -> v.player = null; root.removeView(v) }
         interruptView = null
         interruptPlayer?.let { runCatching { it.release() } }
