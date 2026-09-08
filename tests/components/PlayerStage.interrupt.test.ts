@@ -26,6 +26,27 @@ function stubMedia() {
   })
 }
 
+/**
+ * A pause mock that sees ONE element and nothing else.
+ *
+ * The trap this exists for: stubMedia() installs a single vi.fn() on
+ * HTMLMediaElement.prototype, so every <video> in the component shares one
+ * mock — and standDown()'s next statement, setItemInSlot(backSlot(), null),
+ * pauses the BACK element through that same mock. A prototype-level assertion
+ * would therefore pass with the front pause() deleted.
+ *
+ * `vi.spyOn(el, 'pause')` does NOT fix that: the property descriptor lives on
+ * the prototype, so vitest patches the PROTOTYPE (verified — the spy ends up
+ * as `HTMLMediaElement.prototype.pause`, and `front.pause === back.pause`
+ * still holds). Only defining an own property on the element itself shadows
+ * the shared stub.
+ */
+function stubElementPause(el: HTMLMediaElement) {
+  const fn = vi.fn()
+  Object.defineProperty(el, 'pause', { configurable: true, value: fn })
+  return fn
+}
+
 function mountStage() {
   const scheduler = createPlayerScheduler(items, {
     now: () => Date.now(),
@@ -52,6 +73,16 @@ describe('PlayerStage suspension', () => {
     expect(w.emitted('stood-down')).toBeTruthy()
     // Back slot released: its src attribute is gone.
     expect(videos[1].attributes('src')).toBeUndefined()
+  })
+
+  it('pauses the FRONT element itself — the line the frame-exact resume rests on', async () => {
+    const { w } = mountStage()
+    const front = w.findAll('video')[0].element as HTMLVideoElement
+    const frontPause = stubElementPause(front)
+
+    await w.setProps({ suspended: true })
+
+    expect(frontPause).toHaveBeenCalledTimes(1)
   })
 
   it('stops watchdog sampling while suspended, and restarts it on stand-up', async () => {
@@ -90,11 +121,16 @@ describe('PlayerStage suspension', () => {
     const resumeSpy = vi.spyOn(scheduler, 'resume')
     const front = w.findAll('video')[0].element as HTMLVideoElement
     const srcBefore = front.src
+    // Per-element stub, not the shared prototype mock — see stubElementPause.
+    const frontPause = stubElementPause(front)
 
     await w.setProps({ suspended: true })
     await w.setProps({ suspended: false })
 
     expect(resumeSpy).toHaveBeenCalled()
+    // Paused AND never re-assigned is the conjunction that makes the resume
+    // frame-exact; either half alone asserts half the property.
+    expect(frontPause).toHaveBeenCalledTimes(1)
     expect(front.src).toBe(srcBefore) // never re-assigned → currentTime preserved
     expect(front.play).toHaveBeenCalled()
   })
@@ -197,6 +233,10 @@ describe('PlayerStage suspension', () => {
     // forever with no timer left to retry it.
     expect(setSpy.mock.calls.length).toBeGreaterThan(recoveryCallsBeforeSuspend)
 
+    // Real timers here: the stage is left mid-backoff with a live 15 s
+    // recovery timeout that would otherwise outlive the test in a shared
+    // vitest worker.
+    w.unmount()
     globalThis.fetch = originalFetch
     setSpy.mockRestore()
     clearSpy.mockRestore()
