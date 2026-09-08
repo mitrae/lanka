@@ -24,8 +24,7 @@ class InterruptTimerTest {
         val t = InterruptTimer()
         t.setSchedule(sched, start - 10_000, start - 10_000)
         val s = t.observe(start)
-        assertTrue(s is InterruptState.Active)
-        assertEquals(0L, (s as InterruptState.Active).offsetMs)
+        assertEquals(InterruptState.Active(sched, 0L), s)
     }
 
     @Test fun `joins in progress with the elapsed offset`() {

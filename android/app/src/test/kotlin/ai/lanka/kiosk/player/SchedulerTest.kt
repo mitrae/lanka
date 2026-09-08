@@ -199,4 +199,33 @@ class SchedulerPauseTest {
         s.resume()
         assertEquals(0, deps.pending())
     }
+
+    @Test fun `resume is a no-op when nothing was paused`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        s.resume()
+        deps.advanceTime(10_000)
+        assertEquals(1, s.getFrontIndex())
+    }
+
+    @Test fun `single-video mode has no timer to pause and survives both calls`() {
+        val deps = FakeDeps()
+        val s = Scheduler(listOf(video(1, 5_000)), deps)
+        s.start()
+        s.pause()
+        s.resume()
+        assertEquals(SchedulerMode.SINGLE_VIDEO, s.mode)
+    }
+
+    @Test fun `leaves exactly one timer after an itemEnded is dropped and the scheduler resumes`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        deps.advanceTime(4_000)
+        s.pause()
+        s.itemEnded(0) // dropped
+        s.resume()
+        assertEquals(1, deps.pending())
+    }
 }
