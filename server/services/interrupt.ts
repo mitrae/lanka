@@ -6,9 +6,11 @@
 // Ukraine's DST rules have been legislatively unsettled, and an Android TV's
 // tzdata is whatever its ROM shipped with. Resolving here means a Node package
 // update fixes the whole fleet.
-import { eq } from 'drizzle-orm'
+import { asc, eq } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
+import { z } from 'zod'
 import * as schema from '../db/schema'
+import { resolvePlaylistForDevice } from './resolver'
 
 /** The single row's primary key. */
 export const INTERRUPT_ID = 1
@@ -140,4 +142,154 @@ export async function getInterrupt(
     .from(schema.interrupts)
     .where(eq(schema.interrupts.id, INTERRUPT_ID))
   return row ?? null
+}
+
+export interface InterruptConfig {
+  mediaId: number
+  mediaFilename: string
+  sha256: string
+  durationMs: number
+  atMinutes: number
+  timezone: string
+  enabled: boolean
+  label: string | null
+}
+
+export interface InterruptDeviceStatus {
+  id: string
+  name: string | null
+  lastInterruptAt: number | null
+  observedToday: boolean
+  hasPlaylist: boolean
+  lastSeenAt: number | null
+}
+
+export interface InterruptStatus {
+  config: InterruptConfig | null
+  window: InterruptWindow | null
+  devices: InterruptDeviceStatus[]
+}
+
+export const InterruptPutSchema = z.object({
+  mediaId: z.number().int().positive(),
+  atMinutes: z.number().int().min(0).max(1439),
+  timezone: z.string().min(1).max(64).optional(),
+  enabled: z.boolean(),
+  label: z.string().max(200).nullable().optional()
+})
+export type InterruptPutBody = z.infer<typeof InterruptPutSchema>
+
+async function buildStatus(
+  db: BetterSQLite3Database<typeof schema>,
+  nowMs: number
+): Promise<InterruptStatus> {
+  const row = await getInterrupt(db)
+  if (!row) return { config: null, window: null, devices: [] }
+
+  const [clip] = await db
+    .select()
+    .from(schema.media)
+    .where(eq(schema.media.id, row.mediaId))
+
+  // A configured interrupt whose media vanished cannot be a window. The delete
+  // guard in media/[id].delete.ts should make this unreachable; treating it as
+  // "no config" rather than throwing keeps the dashboard loadable if it isn't.
+  if (!clip) return { config: null, window: null, devices: [] }
+
+  const durationMs = clip.durationMs ?? 0
+  const config: InterruptConfig = {
+    mediaId: clip.id,
+    mediaFilename: clip.filename,
+    sha256: clip.sha256,
+    durationMs,
+    atMinutes: row.atMinutes,
+    timezone: row.timezone,
+    enabled: row.enabled,
+    label: row.label
+  }
+  const window = row.enabled
+    ? nextWindow(nowMs, row.atMinutes, row.timezone, durationMs)
+    : null
+
+  // Deliberately todaysWindow, NOT `window`. `window` is what the box is told to
+  // wait for and rolls to tomorrow the instant today's ends — using it here
+  // would make every screen read "not yet due" from 09:01 onwards, which is
+  // exactly when an operator looks at this page. Before today's start there is
+  // nothing to have observed yet, so todayStart stays null.
+  const todays = row.enabled
+    ? todaysWindow(nowMs, row.atMinutes, row.timezone, durationMs)
+    : null
+  const todayStart = todays && nowMs >= todays.startsAt ? todays.startsAt : null
+
+  const deviceRows = await db
+    .select({
+      id: schema.devices.id,
+      name: schema.devices.name,
+      lastInterruptAt: schema.devices.lastInterruptAt,
+      lastSeenAt: schema.devices.lastSeenAt
+    })
+    .from(schema.devices)
+    .orderBy(asc(schema.devices.id))
+
+  const devices: InterruptDeviceStatus[] = []
+  for (const d of deviceRows) {
+    const resolved = await resolvePlaylistForDevice(db, d.id)
+    const reported = d.lastInterruptAt ? d.lastInterruptAt.getTime() : null
+    devices.push({
+      id: d.id,
+      name: d.name,
+      lastInterruptAt: reported,
+      observedToday: todayStart !== null && reported === todayStart,
+      hasPlaylist: resolved !== null,
+      lastSeenAt: d.lastSeenAt ? d.lastSeenAt.getTime() : null
+    })
+  }
+
+  return { config, window, devices }
+}
+
+export async function handleGetInterrupt(
+  db: BetterSQLite3Database<typeof schema>,
+  nowMs: number
+): Promise<InterruptStatus> {
+  return buildStatus(db, nowMs)
+}
+
+export async function handlePutInterrupt(
+  db: BetterSQLite3Database<typeof schema>,
+  rawBody: unknown,
+  nowMs: number
+): Promise<InterruptStatus> {
+  const parsed = InterruptPutSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    throw createError({ statusCode: 400, message: parsed.error.message })
+  }
+  const body = parsed.data
+
+  const [clip] = await db
+    .select()
+    .from(schema.media)
+    .where(eq(schema.media.id, body.mediaId))
+  if (!clip) {
+    throw createError({ statusCode: 400, message: `Unknown media: ${body.mediaId}` })
+  }
+  if (clip.kind !== 'video') {
+    throw createError({ statusCode: 400, message: 'The interrupt clip must be a video' })
+  }
+
+  const values = {
+    id: INTERRUPT_ID,
+    mediaId: body.mediaId,
+    atMinutes: body.atMinutes,
+    timezone: body.timezone ?? 'Europe/Kyiv',
+    enabled: body.enabled,
+    label: body.label ?? null,
+    updatedAt: new Date()
+  }
+  await db
+    .insert(schema.interrupts)
+    .values(values)
+    .onConflictDoUpdate({ target: schema.interrupts.id, set: values })
+
+  return buildStatus(db, nowMs)
 }
