@@ -1,6 +1,6 @@
 <!-- app/components/player/PlayerStage.vue -->
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Manifest, ManifestItem } from '~/app/types/api'
 import type { SchedulerHandle } from '~/app/composables/player/createPlayerScheduler'
 import type { PlayerEnv } from '~/app/composables/player/usePlayerEnv'
@@ -12,7 +12,11 @@ const props = defineProps<{
   manifest: Manifest
   scheduler: SchedulerHandle
   env: PlayerEnv
+  /** True while a scheduled interrupt owns the screen. See standDown(). */
+  suspended?: boolean
 }>()
+
+const emit = defineEmits<{ 'stood-down': [] }>()
 
 // Slot A/B swap. When `frontIsA` is true, slot A is front (visible), B is back (preloading).
 const frontIsA = ref(true)
@@ -382,9 +386,58 @@ function mountInitial(): void {
   resetProgressTracking()
 }
 
+/**
+ * Hand the screen to the interrupt overlay.
+ *
+ * Order matters. The back preload slot is released BEFORE the overlay is given
+ * a source, so the box never holds three live decoders — on Amlogic hardware
+ * that is the fastest way to starve the visible one.
+ *
+ * The front video is PAUSED, never torn down: a paused <video> keeps its
+ * currentTime and its decoder, which is what makes the resume frame-exact with
+ * no seek and no re-prime.
+ */
+function standDown(): void {
+  props.scheduler.pause()
+  const item = frontItem()
+  if (item?.type === 'video') {
+    const { video } = elementsFor(frontSlot())
+    video?.pause()
+  }
+  setItemInSlot(backSlot(), null)
+  // The watchdog does NOT exempt a paused element — a paused front video is a
+  // fault it exists to recover from. Left running it would reload the page
+  // about 8 s into the observance, which looks like success while actually
+  // restarting the playlist.
+  if (stallTimer !== null) {
+    window.clearInterval(stallTimer)
+    stallTimer = null
+  }
+  emit('stood-down')
+}
+
+/** Take the screen back. */
+function standUp(): void {
+  const frontIdx = props.scheduler.getFrontIndex()
+  const backIdx = props.scheduler.getBackIndex()
+  const back = backIdx === frontIdx ? null : (props.manifest.items[backIdx] ?? null)
+  setItemInSlot(backSlot(), back)
+  playFrontVideoIfNeeded()
+  resetProgressTracking()
+  props.scheduler.resume()
+  if (stallTimer === null) {
+    stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
+  }
+}
+
 onMounted(() => {
   mountInitial()
   stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
+
+  const stopSuspendWatch = watch(
+    () => props.suspended === true,
+    (on) => (on ? standDown() : standUp())
+  )
 
   const unsubTransition = props.scheduler.onTransition((e) => {
     // The NEW front is the current back slot — flip which slot is front.
@@ -402,6 +455,7 @@ onMounted(() => {
   })
 
   onBeforeUnmount(() => {
+    stopSuspendWatch()
     unsubTransition()
     unsubStart()
     clearRecoveryTimer()
