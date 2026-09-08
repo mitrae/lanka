@@ -1,7 +1,7 @@
 # Scheduled interrupt — design
 
 **Date:** 2026-09-07
-**Status:** approved, not implemented
+**Status:** implemented
 **Scope:** one fleet-wide daily clip that interrupts every playlist at a fixed
 local time and hands the screen back where it left off.
 
@@ -98,7 +98,10 @@ otherwise delete the clip out from under a configured observance, leaving a
 schedule that silently never plays. So:
 
 - deleting the interrupt's media returns **409** by default;
-- `?force=true` **disables the interrupt inside the same transaction**.
+- `?force=true` **deletes the `interrupts` row in the same transaction**,
+  rather than merely disabling it — a config whose `media_id` no longer
+  resolves is not a valid disabled schedule, and `handleGetInterrupt` already
+  treats a missing clip as "no config".
 
 This is done explicitly in the handler, not via `ON DELETE`. Migration 0002
 already demonstrated that a declared FK action in `schema.ts` need not exist in
@@ -181,7 +184,7 @@ even briefly, is the fastest route to Amlogic's instance limit.
 
 On `arming`, `PlayerStage`:
 
-1. `scheduler.suspend()`
+1. `scheduler.pause()`
 2. pauses the front video
 3. `setItemInSlot(backSlot(), null)`
 4. **stops stall-watchdog sampling**
@@ -199,7 +202,7 @@ resumes at its exact `currentTime`), `resetProgressTracking()`,
 
 ### Scheduler changes
 
-`createPlayerScheduler` gains only `suspend()` / `resume()`: pause the image
+`createPlayerScheduler` gains only `pause()` / `resume()`: pause the image
 timer capturing its remaining ms, re-arm with that remainder on resume. Modes,
 `advancesOnError`, the single-item rules and the error budget are untouched.
 
@@ -261,12 +264,22 @@ A mirror of the web work, following the porting pattern `StallWatchdog` set.
   `ManifestDiffer` still gates the stage remount on `playlistId:version`, while
   the interrupt and clock offset arrive on a separate every-fetch callback. The
   pre-download loop and eviction keep-list gain the interrupt's sha.
-- **`Scheduler.kt`** — `suspend()` / `resume()`.
-- **`PlaybackView.kt`** — the interrupt reuses the **back `ExoPlayer`**,
-  reattached to a dedicated overlay `PlayerView` on top (`playerView.player =
-  exo` is a legal reattach). Since the back slot is emptied anyway, no third
-  ExoPlayer ever exists. Watchdog sampling stops for the window; the wall-clock
-  end rule is identical to web.
+- **`Scheduler.kt`** — `pause()` / `resume()` (Kotlin reserves `suspend` as a
+  modifier keyword, so both surfaces name this the same way instead).
+- **`NativeSurface` / `PlaybackView.kt`** — built as: `NativeSurface` owns its
+  own overlay `ExoPlayer`, created on demand at the window and released after,
+  rather than reattaching `PlaybackView`'s back player as first proposed here.
+  `PlaybackView` gains `standDown()`/`standUp()`, mirroring the web stage's
+  choreography (pause the scheduler, pause — never re-prepare — the front
+  player, empty the back slot, stop watchdog sampling; reverse on the way
+  back up). Two reasons for the separate overlay player over a reattachment:
+  the decoder budget comes out identical either way (the back slot is still
+  emptied, so it's front-paused + overlay = 2), and this version also covers
+  the standby / no-content screens — states where no `PlaybackView` exists on
+  screen at all, which the web overlay covers by construction (it lives in
+  `player.vue`, a sibling of the stage, not inside `PlayerStage.vue`).
+  Watchdog sampling stops for the window; the wall-clock end rule is identical
+  to web.
 - **`TelemetryClient`** — carries `interruptAt`.
 
 Native's image path has no network fallback; for the interrupt, an uncached
@@ -307,18 +320,18 @@ on the status list.
 - `createInterruptTimer` — fires at `startsAt`; computes the join offset;
   refuses when the offset exceeds the duration; latches per `startsAt`; clears
   the latch on a new `startsAt`; applies the `serverNow` offset.
-- `createPlayerScheduler` — suspend pauses the image timer; resume re-arms with
-  the **remaining** time, not a fresh full duration; suspend/resume idempotent;
-  `stop()` while suspended.
+- `createPlayerScheduler` — pause halts the image timer; resume re-arms with
+  the **remaining** time, not a fresh full duration; pause/resume idempotent;
+  `stop()` while paused.
 - `useReconciler` — the interrupt is emitted on every successful fetch while
   the manifest is **not** re-emitted on an unchanged key; the interrupt sha
   reaches both the download set and the `evictExcept` keep-list.
 - API — manifest field shape and absence when disabled; `/api/interrupt` auth
   (401/403 for `client`) and validation; media deletion 409 and the
-  `force=true` disable inside the transaction.
+  `force=true` delete inside the transaction.
 
 **Gradle** — `InterruptTimerTest.kt` against the same table as the TS test;
-scheduler suspend/resume.
+scheduler pause/resume.
 
 **On-box checklist.** Where the real risk lives, and what no test reaches. Run
 against a production build (`pnpm build` + `node .output/server/index.mjs`,
