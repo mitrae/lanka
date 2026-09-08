@@ -6,6 +6,7 @@ import type { SchedulerHandle } from '~/app/composables/player/createPlayerSched
 import type { PlayerEnv } from '~/app/composables/player/usePlayerEnv'
 import { createStallWatchdog } from '~/app/composables/player/createStallWatchdog'
 import { describeMediaError } from '~/app/composables/player/describeMediaError'
+import { fetchBlobUrl } from '~/app/composables/player/fetchBlobUrl'
 
 const props = defineProps<{
   manifest: Manifest
@@ -337,16 +338,15 @@ async function playViaBlob(slot: 'A' | 'B', item: ManifestItem, video: HTMLVideo
   // Same-origin on purpose (see the blob comment above). On the APK the
   // interceptor still answers this from the cache; in a browser it is the
   // app's own /media proxy.
-  const url = `/media/${item.sha256}`
   try {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const blob = await res.blob()
+    const blobUrl = await fetchBlobUrl(item.sha256)
     // The slot may have moved on while we were fetching.
     const stillHere = (slot === 'A' ? itemInA.value : itemInB.value)?.id === item.id
-    if (!stillHere) return
+    if (!stillHere) {
+      URL.revokeObjectURL(blobUrl)
+      return
+    }
     releaseBlob(slot)
-    const blobUrl = URL.createObjectURL(blob)
     blobUrlBySlot[slot] = blobUrl
     video.src = blobUrl
     video.load()
