@@ -50,6 +50,21 @@ class TelemetryClient(
         }.toString()
     )
 
+    /**
+     * Proof of observance: the window's startsAt, posted when the clip actually
+     * begins. Carries no currentItemId — the interrupt is not a playlist item
+     * and must not disturb the current item or media.play_count.
+     */
+    fun interruptStarted(deviceId: String, startsAt: Long) = poster.post(
+        deviceId,
+        buildJsonObject {
+            put("apkVersion", apkVersion)
+            put("surface", surface)
+            put("interruptAt", startsAt)
+            putVisibility()
+        }.toString()
+    )
+
     fun itemStarted(deviceId: String, currentItemId: Int) = poster.post(deviceId, body(currentItemId))
     fun itemFailed(deviceId: String, currentItemId: Int?, sha256: String?, message: String) =
         poster.post(deviceId, body(currentItemId, sha256 to message))

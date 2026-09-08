@@ -464,6 +464,55 @@ class PlaybackView @JvmOverloads constructor(
         else mainHandler.post { if (!released) block() }
     }
 
+    /**
+     * Hand the screen to a scheduled interrupt.
+     *
+     * Order matters: the back slot is released BEFORE the overlay player is
+     * built, so the box never holds three decoders — on Amlogic that is the
+     * fastest way to starve the visible one.
+     *
+     * The front player is PAUSED, never re-prepared: it keeps its position and
+     * its codec, which is what makes the resume frame-exact.
+     */
+    fun standDown() {
+        if (released) return
+        scheduler?.pause()
+        val front = exoFor(frontSlot())
+        front.playWhenReady = false
+        front.pause()
+        setItemInSlot(backSlot(), null)
+        // The watchdog does NOT exempt a paused player — left running it would
+        // re-prepare the front video about 8 s into the observance.
+        mainHandler.removeCallbacks(stallRunnable)
+        // A stage already mid-backoff has a recovery timer armed. Left running,
+        // it fires mountInitial() DURING the observance: the paused front
+        // decoder gets re-prepared (destroying the frame-exact resume — the
+        // same re-prime that killed a prod TV) and the back slot is re-armed,
+        // putting three live decoders on the box while the overlay is on
+        // screen. standUp() re-arms recovery below if we are still stalled.
+        clearRecovery()
+    }
+
+    /** Take the screen back. */
+    fun standUp() {
+        if (released) return
+        val m = manifest ?: return
+        val sched = scheduler ?: return
+        val frontIdx = sched.getFrontIndex()
+        val backIdx = sched.getBackIndex()
+        val backItem = if (backIdx == frontIdx) null else m.items.getOrNull(backIdx)
+        setItemInSlot(backSlot(), backItem)
+        playFrontVideoIfNeeded()
+        resetProgressTracking()
+        sched.resume()
+        mainHandler.removeCallbacks(stallRunnable)
+        mainHandler.postDelayed(stallRunnable, STALL_SAMPLE_MS)
+        // Re-arm the backoff cancelled in standDown(), or a stage that entered
+        // the observance already stalled would sit stalled forever with no
+        // timer left to heal it.
+        if (stalled) scheduleRecovery()
+    }
+
     /** Release both ExoPlayers, cancel animators + the recovery handler, and
      *  unsubscribe every scheduler handler. Safe to call more than once. */
     fun release() {

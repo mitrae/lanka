@@ -3,8 +3,11 @@ package ai.lanka.kiosk
 import ai.lanka.kiosk.player.AndroidSchedulerDeps
 import ai.lanka.kiosk.player.CommandActions
 import ai.lanka.kiosk.player.CommandClient
+import ai.lanka.kiosk.player.InterruptState
+import ai.lanka.kiosk.player.InterruptTimer
 import ai.lanka.kiosk.player.Manifest
 import ai.lanka.kiosk.player.ManifestClient
+import ai.lanka.kiosk.player.ManifestInterrupt
 import ai.lanka.kiosk.player.OkHttpTelemetryPoster
 import ai.lanka.kiosk.player.PlaybackView
 import ai.lanka.kiosk.player.Scheduler
@@ -22,7 +25,12 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.io.ByteArrayOutputStream
@@ -91,6 +99,16 @@ class NativeSurface(
         Thread(r, "visibility-sample").apply { isDaemon = true }
     }
 
+    // Scheduled interrupt: a wall-clock overlay, not a playlist item. See
+    // beginInterrupt()/endInterrupt() below.
+    private val interruptTimer = InterruptTimer()
+    private var interruptPlayer: ExoPlayer? = null
+    private var interruptView: PlayerView? = null
+    private var interruptStartsAt = 0L
+    private val interruptExec = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "interrupt-tick").apply { isDaemon = true }
+    }
+
     override fun start() {
         deviceId = DeviceId.get(activity)
 
@@ -135,7 +153,10 @@ class NativeSurface(
             onManifest = { m -> onUi { onManifest(m); onConfirmed() } },
             onError = { onUi { showStandbyIfNeverPlayed() } },
             onReload = { onUi { activity.recreate() } },
-            onCommandSecret = { DeviceSecretStore.put(activity, deviceId, it) }
+            onCommandSecret = { DeviceSecretStore.put(activity, deviceId, it) },
+            onClock = { serverNow, interrupt ->
+                interruptTimer.setSchedule(interrupt, serverNow, System.currentTimeMillis())
+            },
         )
         manifestClient = mc
 
@@ -187,6 +208,15 @@ class NativeSurface(
                 }
             }
         }, 2, 2, TimeUnit.SECONDS)
+
+        // 500 ms so the observance starts within half a second of 09:00:00.
+        interruptExec.scheduleWithFixedDelay({
+            runCatching {
+                if (stopped) return@runCatching
+                val state = interruptTimer.observe(System.currentTimeMillis())
+                onUi { applyInterrupt(state) }
+            }
+        }, 500, 500, TimeUnit.MILLISECONDS)
     }
 
     /** Hop to the UI thread; dropped once stopped (a callback can land after teardown). */
@@ -229,6 +259,85 @@ class NativeSurface(
         showOnly(pv)
         hasPlayed = true
         pv.bind(m, sched)
+        // A playlist edit landing DURING an active interrupt window rebuilds
+        // this view underneath a live overlay. bind() -> mountInitial() just
+        // preloaded the back slot and started the front video — without
+        // standing the fresh view down immediately, that is three decoders on
+        // a box with a handful, right under the overlay. Mirrors
+        // PlayerStage.vue's `if (props.suspended) standDown()` in onMounted.
+        if (interruptPlayer != null) pv.standDown()
+    }
+
+    // ── Scheduled interrupt (wall-clock overlay) ──────────────────────────────
+    //
+    // NativeSurface owns its own overlay ExoPlayer, built on demand at the
+    // window and released after — rather than reattaching PlaybackView's back
+    // player, as the design spec first proposed. The decoder budget is
+    // identical either way (the back slot is emptied, so it's still
+    // front-paused + overlay = 2), and this is the only version that also
+    // observes when there is NO PlaybackView on screen — standby / no-content
+    // — which the web overlay covers by construction (it lives in player.vue,
+    // not PlayerStage.vue). All of this runs on the UI thread: the tick above
+    // hops via onUi{} because ExoPlayer is not thread-safe.
+
+    /** Enter or leave the interrupt window. Idempotent per state. */
+    private fun applyInterrupt(state: InterruptState) {
+        when (state) {
+            is InterruptState.Active -> if (interruptPlayer == null) beginInterrupt(state)
+            is InterruptState.Inactive -> if (interruptPlayer != null) endInterrupt()
+        }
+    }
+
+    private fun beginInterrupt(state: InterruptState.Active) {
+        val sha = state.schedule.sha256
+        // Stand the stage down FIRST: the back slot must be released before a
+        // third decoder could exist.
+        playbackView?.standDown()
+
+        val uri =
+            if (mediaCache.exists(sha)) Uri.fromFile(mediaCache.file(sha))
+            else Uri.parse("${BuildConfig.LANKA_SERVER_URL}/media/$sha")
+
+        val exo = ExoPlayer.Builder(activity).build().apply {
+            volume = 0f // no audio, ever
+            repeatMode = Player.REPEAT_MODE_OFF
+            addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    // Loud, never blank: give the screen back and record it.
+                    telemetry.itemFailed(deviceId, null, sha, "interrupt: ${error.errorCodeName}")
+                    onUi { endInterrupt() }
+                }
+            })
+            setMediaItem(MediaItem.fromUri(uri))
+            // Joining in progress keeps every screen frame-aligned.
+            if (state.offsetMs > 0) seekTo(state.offsetMs)
+            prepare()
+            playWhenReady = true
+        }
+        val view = PlayerView(activity).apply {
+            useController = false
+            setBackgroundColor(Color.BLACK)
+            player = exo
+        }
+        interruptPlayer = exo
+        interruptView = view
+        interruptStartsAt = state.schedule.startsAt
+        root.addView(view, matchParent())
+        view.bringToFront()
+        telemetry.interruptStarted(deviceId, interruptStartsAt)
+    }
+
+    /**
+     * Leave the window. Driven by the wall clock (the tick), never by the
+     * clip's own end — so a hung clip cannot hold the screen.
+     */
+    private fun endInterrupt() {
+        interruptView?.let { v -> v.player = null; root.removeView(v) }
+        interruptView = null
+        interruptPlayer?.let { runCatching { it.release() } }
+        interruptPlayer = null
+        interruptTimer.markDone()
+        playbackView?.standUp()
     }
 
     private fun showStandbyIfNeverPlayed() {
@@ -339,6 +448,10 @@ class NativeSurface(
         // Before the OkHttp shutdown below, so a tick in flight cannot enqueue
         // a call onto a closing client.
         visibilityExec.shutdownNow()
+        // Ownership rule: the overlay player + view this surface created must
+        // be released here too, on every path including mid-window.
+        endInterrupt()
+        interruptExec.shutdownNow()
         // Release the shared OkHttp client (dispatcher threads + connection pool).
         // Graceful shutdown: manifest/command clients above are already closed.
         if (::http.isInitialized) {

@@ -29,7 +29,11 @@ class ManifestClient(
     private val onReload: (() -> Unit)? = null,
     // Called with the raw command-channel secret the FIRST time /register issues
     // one (TOFU). The caller persists it (DeviceSecretStore) for the command WS.
-    private val onCommandSecret: ((String) -> Unit)? = null
+    private val onCommandSecret: ((String) -> Unit)? = null,
+    // Invoked on EVERY successful fetch, unlike onManifest which the differ
+    // gates. The window rolls to tomorrow after each fire and the clock offset
+    // must stay fresh, but neither may remount the PlaybackView.
+    private val onClock: ((Long?, ManifestInterrupt?) -> Unit)? = null
 ) {
     private val differ = ManifestDiffer()
     private val poll = Executors.newSingleThreadScheduledExecutor { r ->
@@ -88,6 +92,8 @@ class ManifestClient(
                     if (raw.isBlank()) null
                     else json.decodeFromString(Manifest.serializer(), raw)
                 }
+                onClock?.invoke(manifest?.serverNow, manifest?.interrupt)
+                prefetchInterrupt(manifest?.interrupt)
                 when (val d = differ.onFetched(manifest)) {
                     is ManifestDecision.Ignore -> {}
                     is ManifestDecision.EmitNull -> onManifest(null)
@@ -109,8 +115,23 @@ class ManifestClient(
         shas.filterNot { mediaCache.exists(it) }.forEach { sha ->
             runCatching { mediaCache.downloadSync(sha, mediaUrl(sha)) }
         }
+        // The interrupt clip is not a playlist item — without this it is evicted
+        // on the next playlist change and missing at 09:00. Its own download
+        // runs on every fetch via prefetchInterrupt(), not gated on Emit here;
+        // this only has to keep it out of the eviction sweep below.
+        val keep = m.interrupt?.sha256?.let { shas + it } ?: shas
         // Downloads are best-effort; failed shas fall back to network streaming at play time.
-        mediaCache.evictExcept(shas.toSet())
+        mediaCache.evictExcept(keep.toSet())
+    }
+
+    /** Keep the interrupt clip cached. Runs on EVERY fetch (not gated on
+     *  ManifestDecision.Emit like prefetch()) so an unchanged playlist still
+     *  refreshes/keeps it — a stale schedule must not leave the box without
+     *  the clip at 09:00. */
+    private fun prefetchInterrupt(i: ManifestInterrupt?) {
+        val sha = i?.sha256 ?: return
+        if (mediaCache.exists(sha)) return
+        runCatching { mediaCache.downloadSync(sha, mediaUrl(sha)) }
     }
 
     fun openStream() {
