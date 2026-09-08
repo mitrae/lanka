@@ -21,7 +21,7 @@ definePageMeta({
 const {
   screen, manifest, scheduler, env, deviceId, lastError,
   interruptPhase, interruptSrc, interruptSha, interruptOffsetMs,
-  onStageStoodDown, onInterruptFailed
+  onStageStoodDown, onInterruptStarted, onInterruptFailed
 } = usePlayerBoot()
 
 useHead({
@@ -55,6 +55,7 @@ useHead({
       :sha256="interruptSha"
       :src="interruptSrc"
       :start-offset-ms="interruptOffsetMs"
+      @started="onInterruptStarted"
       @failed="onInterruptFailed"
     />
   </div>

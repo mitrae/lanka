@@ -46,6 +46,7 @@ export interface PlayerBootState {
   interruptSha: Ref<string | null>
   interruptOffsetMs: Ref<number>
   onStageStoodDown: () => void
+  onInterruptStarted: () => void
   onInterruptFailed: (message: string) => void
 }
 
@@ -95,6 +96,17 @@ export function usePlayerBoot(
     clearArmTimer()
     if (interruptPhase.value !== 'arming') return
     interruptPhase.value = 'playing'
+  }
+
+  /**
+   * Proof of observance, posted only once the clip has genuinely decoded a
+   * frame — NOT at handover. A screen where the clip fails to play must read as
+   * missed, or `devices.last_interrupt_at` would report an observance that
+   * never appeared on the glass, which is the one thing this field exists to
+   * rule out.
+   */
+  function onInterruptStarted(): void {
+    if (interruptPhase.value !== 'playing') return
     telemetry.interruptStarted(deviceId.value, interruptStartsAt)
   }
 
@@ -109,6 +121,10 @@ export function usePlayerBoot(
   }
 
   function onInterruptFailed(message: string): void {
+    // A late `error` can arrive in the same tick the wall-clock branch already
+    // closed the window, before Vue unmounts the overlay. Without this guard
+    // that posts a device_errors row for a window that ended normally.
+    if (interruptPhase.value === 'idle') return
     // Loud, never blank: the playlist comes back and the failure is on record.
     telemetry.itemFailed(
       deviceId.value,
@@ -349,6 +365,7 @@ export function usePlayerBoot(
     interruptSha,
     interruptOffsetMs,
     onStageStoodDown,
+    onInterruptStarted,
     onInterruptFailed
   }
 }

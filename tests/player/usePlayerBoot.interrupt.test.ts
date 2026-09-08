@@ -9,13 +9,14 @@
 // task-11-report.md for the exact boundary.
 //
 // What IS reachable through usePlayerBoot's public return value without any
-// of that: onStageStoodDown and onInterruptFailed are returned directly, and
-// interruptPhase/interruptSrc/interruptSha/interruptOffsetMs are the exact
-// refs the closures close over — so the arming guard and the failure-teardown
-// cleanup can be driven directly, by setting the phase to what sampleInterrupt
-// would have set it to and calling the handler, same as PlayerStage's own
-// suspension tests drive standDown()/standUp() via `suspended` rather than a
-// real interrupt window.
+// of that: onStageStoodDown, onInterruptStarted and onInterruptFailed are all
+// returned directly, and interruptPhase/interruptSrc/interruptSha/
+// interruptOffsetMs are the exact refs the closures close over — so the
+// arming guard, the started-vs-handover distinction, and the failure-teardown
+// cleanup can all be driven directly, by setting the phase to what
+// sampleInterrupt would have set it to and calling the handler, same as
+// PlayerStage's own suspension tests drive standDown()/standUp() via
+// `suspended` rather than a real interrupt window.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { usePlayerBoot } from '~/app/composables/player/usePlayerBoot'
 import { _resetNativeDeviceCache } from '~/app/composables/player/useNativeDevice'
@@ -52,7 +53,13 @@ describe('usePlayerBoot interrupt state machine (reachable surface)', () => {
     expect(api.postTelemetry).not.toHaveBeenCalled()
   })
 
-  it('onStageStoodDown advances arming -> playing exactly once and posts interruptStarted', () => {
+  it('onStageStoodDown advances arming -> playing WITHOUT posting telemetry — handover alone is not proof of observance', () => {
+    // This is the semantics the team lead corrected: the plan's original
+    // wiring posted interruptStarted from the handover itself, before the
+    // clip had decoded a single frame. A screen where the clip then fails to
+    // decode would have posted interruptStarted and THEN the failure, so the
+    // dashboard would report an observance that never actually appeared on
+    // the glass — the one thing devices.last_interrupt_at exists to rule out.
     const api = mockApi()
     const boot = usePlayerBoot(api)
     boot.interruptPhase.value = 'arming'
@@ -60,6 +67,35 @@ describe('usePlayerBoot interrupt state machine (reachable surface)', () => {
     boot.onStageStoodDown()
 
     expect(boot.interruptPhase.value).toBe('playing')
+    expect(api.postTelemetry).not.toHaveBeenCalled()
+
+    // A second acknowledgement (e.g. a stray late call) must not re-fire —
+    // the phase is no longer 'arming'.
+    boot.onStageStoodDown()
+    expect(boot.interruptPhase.value).toBe('playing')
+    expect(api.postTelemetry).not.toHaveBeenCalled()
+  })
+
+  it('onInterruptStarted posts interruptStarted only while the clip is genuinely playing, and is a no-op otherwise', () => {
+    const api = mockApi()
+    const boot = usePlayerBoot(api)
+
+    // Idle: no window at all.
+    boot.onInterruptStarted()
+    expect(api.postTelemetry).not.toHaveBeenCalled()
+
+    // Armed but not yet handed over — the overlay isn't even mounted in this
+    // phase in production (player.vue gates it on 'playing'), but the guard
+    // is pinned defensively anyway.
+    boot.interruptPhase.value = 'arming'
+    boot.onInterruptStarted()
+    expect(api.postTelemetry).not.toHaveBeenCalled()
+
+    // The real path: handover, then the overlay's own `@playing` event.
+    boot.onStageStoodDown()
+    expect(boot.interruptPhase.value).toBe('playing')
+    boot.onInterruptStarted()
+
     expect(api.postTelemetry).toHaveBeenCalledTimes(1)
     const [deviceId, body] = api.postTelemetry.mock.calls[0]
     expect(typeof deviceId).toBe('string')
@@ -67,11 +103,6 @@ describe('usePlayerBoot interrupt state machine (reachable surface)', () => {
     // interrupt is not a playlist item and must not touch play_count.
     expect('currentItemId' in body).toBe(false)
     expect(typeof body.interruptAt).toBe('number')
-
-    // A second acknowledgement (e.g. a stray late call) must not re-fire —
-    // the phase is no longer 'arming'.
-    boot.onStageStoodDown()
-    expect(api.postTelemetry).toHaveBeenCalledTimes(1)
   })
 
   it('onInterruptFailed tears the overlay down loudly: resumes idle and records the sha', () => {
@@ -97,17 +128,22 @@ describe('usePlayerBoot interrupt state machine (reachable surface)', () => {
     expect(body.error).toEqual({ sha256: 'deadbeef', message: 'interrupt: decode error' })
   })
 
-  it('onInterruptFailed while already idle does not corrupt state (defensive double-call)', () => {
-    // The overlay itself dedupes its own `failed` emit (see
-    // InterruptOverlay's `failed` guard), so usePlayerBoot should never
-    // actually receive two calls for one window — this pins that a stray
-    // extra call stays harmless rather than asserting it is unreachable.
+  it('onInterruptFailed while already idle is a true no-op — no stray device_errors row for a window that ended normally', () => {
+    // Phase-guarded (added alongside the interruptStarted fix): a late
+    // `error` can arrive in the same tick the wall-clock branch already
+    // closed the window, before Vue unmounts the overlay. Before this guard,
+    // itemFailed still posted unconditionally even from idle — this pins
+    // that it no longer does. The overlay itself also dedupes its own
+    // `failed` emit (see InterruptOverlay's `failed` guard), so usePlayerBoot
+    // should never actually receive two calls for one window in practice;
+    // this test covers the defensive case regardless.
     const api = mockApi()
     const boot = usePlayerBoot(api)
     expect(boot.interruptPhase.value).toBe('idle')
 
     boot.onInterruptFailed('late failure')
 
+    expect(api.postTelemetry).not.toHaveBeenCalled()
     expect(boot.interruptPhase.value).toBe('idle')
     expect(boot.interruptSrc.value).toBeNull()
     expect(boot.interruptSha.value).toBeNull()
