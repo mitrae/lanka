@@ -3378,43 +3378,12 @@ class InterruptTimerTest {
 }
 ```
 
-Create `android/app/src/test/kotlin/ai/lanka/kiosk/player/SchedulerPauseTest.kt`:
+Add the pause/resume cases to the **existing** `SchedulerTest.kt`, reusing its
+`FakeDeps` (see above — do not define a second fake clock). Shown here as a
+separate class for readability; put them wherever they sit most naturally in
+that file:
 
 ```kotlin
-package ai.lanka.kiosk.player
-
-import org.junit.Assert.assertEquals
-import org.junit.Test
-
-/** Virtual clock + timer queue, so pause/resume can be tested without Android. */
-private class FakeDeps : SchedulerDeps {
-    // Named `clock`, not `now`: SchedulerDeps.now() is the method it overrides,
-    // and android.os.SystemClock (the production default) does not exist in the
-    // JVM unit-test source set.
-    var clock = 0L
-    private data class T(val id: Long, val at: Long, val cb: () -> Unit)
-    private val timers = mutableListOf<T>()
-    private var nextId = 1L
-    val pending: Int get() = timers.size
-
-    override fun now(): Long = clock
-
-    override fun setTimeout(cb: () -> Unit, ms: Long): Any {
-        val id = nextId++
-        timers.add(T(id, clock + ms, cb))
-        return id
-    }
-    override fun clearTimeout(handle: Any) {
-        timers.removeAll { it.id == handle }
-    }
-    fun advance(ms: Long) {
-        clock += ms
-        for (t in timers.toList()) {
-            if (t.at <= clock) { timers.remove(t); t.cb() }
-        }
-    }
-}
-
 class SchedulerPauseTest {
     private val twoImages = listOf(
         ManifestItem(1, "image", "a", 10_000),
