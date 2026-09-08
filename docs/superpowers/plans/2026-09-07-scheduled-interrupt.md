@@ -2421,15 +2421,23 @@ describe('PlayerStage suspension', () => {
   })
 
   it('stops watchdog sampling while suspended — otherwise a paused front video reloads the page', async () => {
-    vi.useFakeTimers()
+    // NOTE: do NOT write this as "advance timers and assert nothing happened".
+    // Under jsdom `currentSrc` never populates, so sampleProgress can never trip
+    // a stall regardless of whether the interval was cleared — such a test
+    // passes even with the clearInterval deleted. Pin the mechanism instead:
+    // spy on window.clearInterval and assert the sampling handle is cleared on
+    // suspend and a fresh one created on resume. Verify by sabotage — delete the
+    // clearInterval call and confirm your test goes red.
+    const clearSpy = vi.spyOn(window, 'clearInterval')
+    const setSpy = vi.spyOn(window, 'setInterval')
     const { w } = mountStage()
-    await w.setProps({ suspended: true })
+    const setCallsAtMount = setSpy.mock.calls.length
 
-    // 60 s of an intentionally paused front video. The watchdog's threshold is
-    // 8 s, so if sampling were still running this would report a stall.
-    vi.advanceTimersByTime(60_000)
-    expect(w.emitted('stood-down')).toHaveLength(1)
-    vi.useRealTimers()
+    await w.setProps({ suspended: true })
+    expect(clearSpy).toHaveBeenCalled()
+
+    await w.setProps({ suspended: false })
+    expect(setSpy.mock.calls.length).toBeGreaterThan(setCallsAtMount)
   })
 
   it('resumes the front video WITHOUT reloading it — frame-exact resume', async () => {
@@ -2444,6 +2452,21 @@ describe('PlayerStage suspension', () => {
     expect(resumeSpy).toHaveBeenCalled()
     expect(front.src).toBe(srcBefore) // never re-assigned → currentTime preserved
     expect(front.play).toHaveBeenCalled()
+  })
+
+  it('cancels a pending stall recovery while suspended, and re-arms it on resume', async () => {
+    // A stage already mid-backoff when the interrupt fires would otherwise run
+    // mountInitial() during the observance: front re-primed, back re-armed,
+    // three live decoders alongside the overlay.
+    vi.useFakeTimers()
+    const { w } = mountStage()
+    // Drive the stage into the stalled state, then suspend mid-backoff.
+    ;(w.vm as any).stalled = true
+    await w.setProps({ suspended: true })
+    const loadCallsBefore = (HTMLMediaElement.prototype.load as any).mock.calls.length
+    vi.advanceTimersByTime(30_000) // past RECOVERY_DELAY_MS
+    expect((HTMLMediaElement.prototype.load as any).mock.calls.length).toBe(loadCallsBefore)
+    vi.useRealTimers()
   })
 
   it('restores the back-slot preload on resume', async () => {
@@ -2501,6 +2524,13 @@ function standDown(): void {
     video?.pause()
   }
   setItemInSlot(backSlot(), null)
+  // A stage already mid-backoff has a recovery timer armed. Left running it
+  // fires mountInitial() DURING the observance, which re-assigns src on both
+  // slots: the paused front decoder is re-primed (destroying the frame-exact
+  // resume, and re-priming is what killed a prod TV) and the back slot is
+  // re-armed, putting three live decoders on a box that has a handful — while
+  // the overlay is on screen. standUp() re-arms it if we are still stalled.
+  clearRecoveryTimer()
   // The watchdog does NOT exempt a paused element — a paused front video is a
   // fault it exists to recover from. Left running it would reload the page
   // about 8 s into the observance, which looks like success while actually
@@ -2524,6 +2554,9 @@ function standUp(): void {
   if (stallTimer === null) {
     stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
   }
+  // Re-arm the backoff we cancelled on the way down, or a stage that entered
+  // the observance stalled would sit stalled forever with no timer to heal it.
+  if (stalled.value) scheduleRecovery()
 }
 ```
 
