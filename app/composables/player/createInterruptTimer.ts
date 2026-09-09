@@ -37,6 +37,11 @@ export interface InterruptTimerHandle {
     clientNow: number
   ): void
   observe(clientNow: number): InterruptState
+  /** `clientNow` on the server's clock — the same correction observe() uses.
+   *  The overlay derives its join offset from this AT SEEK TIME, so a screen
+   *  that took 3 s to reach loadedmetadata lands 3 s further in, not 3 s
+   *  behind every other screen. */
+  correctedNow(clientNow: number): number
   /**
    * Mark a window consumed. Takes the `startsAt` of the window that ACTUALLY
    * played, never the currently loaded schedule's: the server rolls
@@ -56,6 +61,13 @@ export function createInterruptTimer(): InterruptTimerHandle {
   let schedule: InterruptSchedule | null = null
   let offsetMs = 0
   let doneFor: number | null = null
+  /** startsAt of the window observe() has already reported active. Once we
+   *  are IN a window, a later clock sample that pulls the corrected clock back
+   *  below startsAt must not read as "not started": a 30 s poll that left at
+   *  08:59:58 and took 3 s to answer derives an offset 3 s behind the one
+   *  before it, and that reading used to end the clip 1.5 s in and latch the
+   *  day as done. Only endsAt (or the done latch) ends an active window. */
+  let activeFor: number | null = null
 
   return {
     setSchedule(next, serverNow, clientNow) {
@@ -73,12 +85,22 @@ export function createInterruptTimer(): InterruptTimerHandle {
       if (!schedule) return INACTIVE
       if (doneFor === schedule.startsAt) return INACTIVE
       const now = clientNow + offsetMs
-      if (now < schedule.startsAt) return INACTIVE
       if (now >= schedule.endsAt) return INACTIVE
+      if (now < schedule.startsAt) {
+        if (activeFor !== schedule.startsAt) return INACTIVE
+        // Already inside this window: the clock was corrected backwards, not
+        // the window withdrawn. Clamp the offset rather than seek negative.
+        return { active: true, schedule, offsetMs: 0 }
+      }
       const offset = now - schedule.startsAt
       // Nothing left to play: the window outlives the clip.
       if (offset >= schedule.durationMs) return INACTIVE
+      activeFor = schedule.startsAt
       return { active: true, schedule, offsetMs: offset }
+    },
+
+    correctedNow(clientNow) {
+      return clientNow + offsetMs
     },
 
     markDone(startsAt) {

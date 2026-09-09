@@ -285,6 +285,28 @@ describe('createPlayerScheduler', () => {
   describe('pause/resume', () => {
     const twoImages = [image(1, 10_000), image(2, 10_000)]
 
+    it('start() while paused defers the first item start until resume()', () => {
+      // A manifest that lands DURING an interrupt window mounts its scheduler
+      // under a live overlay. Starting it there emits itemStart(0) — one
+      // play_count tick and a current_item_id for an item nobody sees — and
+      // arms a slide timer that then runs behind the clip.
+      const deps = fakeDeps()
+      const s = createPlayerScheduler([image(1, 5_000), video(2)], deps)
+      const starts: number[] = []
+      s.onItemStart((i) => starts.push(i))
+
+      s.pause()
+      s.start()
+      expect(starts).toEqual([])
+      expect(deps.pending()).toBe(0)
+
+      s.resume()
+      expect(starts).toEqual([0])
+      expect(deps.pending()).toBe(1) // the slide timer, armed fresh at resume
+      deps.advanceTime(5_000)
+      expect(s.getFrontIndex()).toBe(1)
+    })
+
     it('does not advance while paused', () => {
       const s = createPlayerScheduler(twoImages, deps)
       const transitions: number[] = []

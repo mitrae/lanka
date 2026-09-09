@@ -35,7 +35,7 @@ describe('InterruptOverlay', () => {
 
   it('seeks to the join offset once metadata is available, then plays', async () => {
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 35_000 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 35_000 }
     })
     const video = w.find('video').element as HTMLVideoElement
     await w.find('video').trigger('loadedmetadata')
@@ -45,23 +45,135 @@ describe('InterruptOverlay', () => {
 
   it('emits started once playback actually begins', async () => {
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     await w.find('video').trigger('playing')
     expect(w.emitted('started')).toBeTruthy()
   })
 
-  it('emits failed if nothing decodes within the startup budget', async () => {
+  it('emits failed if nothing decodes within the startup budget and the blob retry fails too', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'))
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     vi.advanceTimersByTime(5_000)
-    expect(w.emitted('failed')).toBeTruthy()
+    await flushPromises()
+    expect(w.emitted('failed')).toHaveLength(1)
+    globalThis.fetch = originalFetch
+  })
+
+  it('a startup budget that expires with no frame tries the blob path first, with a FRESH budget', async () => {
+    // The direct-URL attempt and the blob retry used to share one 5 s timer:
+    // a late-budget error made the retry dead code and forfeited the day.
+    const originalCreate = URL.createObjectURL
+    const originalRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url')
+    URL.revokeObjectURL = vi.fn()
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['x']) })
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
+    })
+    const video = w.find('video').element as HTMLVideoElement
+
+    vi.advanceTimersByTime(5_000)
+    await flushPromises()
+    expect(globalThis.fetch).toHaveBeenCalledWith('/media/silence')
+    expect(video.getAttribute('src')).toBe('blob:mock-url')
+    expect(w.emitted('failed')).toBeFalsy()
+
+    vi.advanceTimersByTime(4_999)
+    expect(w.emitted('failed')).toBeFalsy()
+    vi.advanceTimersByTime(1)
+    expect(w.emitted('failed')).toHaveLength(1)
+
+    globalThis.fetch = originalFetch
+    URL.createObjectURL = originalCreate
+    URL.revokeObjectURL = originalRevoke
+  })
+
+  it('seeks to the offset as of loadedmetadata, not as of mount — every screen lands on the same second', async () => {
+    let offset = 300
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => offset }
+    })
+    offset = 3_500 // a cache-miss box took 3.2 s to reach metadata
+    await w.find('video').trigger('loadedmetadata')
+    expect((w.find('video').element as HTMLVideoElement).currentTime).toBe(3.5)
+  })
+
+  it('the blob retry re-seeks to the LIVE offset, never back to where the first attempt joined', async () => {
+    const originalCreate = URL.createObjectURL
+    const originalRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url')
+    URL.revokeObjectURL = vi.fn()
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['x']) })
+    let offset = 0
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => offset }
+    })
+    const video = w.find('video').element as HTMLVideoElement
+    await w.find('video').trigger('loadedmetadata')
+    expect(video.currentTime).toBe(0)
+
+    await w.find('video').trigger('error') // the pipeline rejected the direct URL
+    await flushPromises()
+    offset = 7_000 // 7 s of the window passed while the blob was fetched
+    await w.find('video').trigger('loadedmetadata')
+    expect(video.currentTime).toBe(7)
+
+    globalThis.fetch = originalFetch
+    URL.createObjectURL = originalCreate
+    URL.revokeObjectURL = originalRevoke
+  })
+
+  it('emits failed on a decode error AFTER playback started, once the blob retry also fails — a black overlay is not an observance', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'))
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
+    })
+    await w.find('video').trigger('playing')
+    expect(w.emitted('started')).toBeTruthy()
+
+    await w.find('video').trigger('error')
+    await flushPromises()
+    expect(w.emitted('failed')).toHaveLength(1)
+    globalThis.fetch = originalFetch
+  })
+
+  it('a blob retry after a mid-clip error is failed by its own budget if it never produces a frame', async () => {
+    // `playing` must describe the element NOW, not "it played once": the
+    // retry's budget bailed on the stale flag and a dead blob load sat black
+    // until the wall clock.
+    const originalCreate = URL.createObjectURL
+    const originalRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url')
+    URL.revokeObjectURL = vi.fn()
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['x']) })
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
+    })
+    await w.find('video').trigger('playing')
+    await w.find('video').trigger('error')
+    await flushPromises()
+    expect(w.emitted('failed')).toBeFalsy()
+
+    vi.advanceTimersByTime(5_000)
+    expect(w.emitted('failed')).toHaveLength(1)
+    expect(w.emitted('started')).toHaveLength(1) // and never re-emitted
+
+    globalThis.fetch = originalFetch
+    URL.createObjectURL = originalCreate
+    URL.revokeObjectURL = originalRevoke
   })
 
   it('does not emit failed once playback has started', async () => {
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     await w.find('video').trigger('playing')
     vi.advanceTimersByTime(10_000)
@@ -70,7 +182,7 @@ describe('InterruptOverlay', () => {
 
   it('genuinely releases the video element on unmount, and stops the startup timer', () => {
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     const video = w.find('video').element as HTMLVideoElement
     expect(video.getAttribute('src')).toBe('/media/silence')
@@ -98,9 +210,10 @@ describe('InterruptOverlay', () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down'))
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     vi.advanceTimersByTime(5_000)
+    await flushPromises() // the budget's own blob attempt fails
     expect(w.emitted('failed')).toHaveLength(1)
     await w.find('video').trigger('error')
     await flushPromises()
@@ -128,7 +241,7 @@ describe('InterruptOverlay', () => {
     )
 
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     const video = w.find('video').element as HTMLVideoElement
 
@@ -149,7 +262,7 @@ describe('InterruptOverlay', () => {
 
   it('is muted — a second decoder is exactly what must not exist here', () => {
     const w = mount(InterruptOverlay, {
-      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+      props: { sha256: 'silence', src: '/media/silence', offsetNow: () => 0 }
     })
     // Not attributes('muted'): Vue sets `muted` as a DOM property
     // (el.muted = true), never as an HTML attribute — true in real browsers

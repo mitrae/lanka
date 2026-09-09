@@ -151,6 +151,38 @@ describe('createInterruptTimer', () => {
     expect(t.observe(START + 30_000).active).toBe(false)
   })
 
+  it('stays active when a later clock sample moves the corrected clock back before startsAt', () => {
+    // A 30 s poll that left at 08:59:58 and took 3 s to answer carries
+    // serverNow=08:59:58.5 and lands at 09:00:01.5 — the offset it derives
+    // pulls the corrected clock 3 s back, below startsAt. Reading that as
+    // INACTIVE ended the clip ~1.5 s in and latched the day as done.
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START - 10_000, START - 10_000)
+    expect(t.observe(START + 1_500).active).toBe(true)
+    // Response stamped 3 s before it arrived: offset becomes -3 s.
+    t.setSchedule(sched, START - 1_500, START + 1_500)
+    const s = t.observe(START + 1_600)
+    expect(s.active).toBe(true)
+    expect(s.active && s.offsetMs).toBe(0) // clamped, never negative
+    // ...and it still ends on endsAt, on the corrected clock.
+    expect(t.observe(START + 60_000 + 3_000).active).toBe(false)
+  })
+
+  it('a backwards correction before the window ever became active still means inactive', () => {
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START - 5_000) // TV 5 s behind: offset +5 s
+    // Corrected: START - 1 s. Never active yet.
+    expect(t.observe(START - 1_000 - 5_000).active).toBe(false)
+    t.setSchedule(sched, START - 4_000, START - 5_000) // offset +1 s
+    expect(t.observe(START - 3_000).active).toBe(false)
+  })
+
+  it('correctedNow applies the derived offset to a client instant', () => {
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START - 3_600_000) // TV an hour behind
+    expect(t.correctedNow(START - 3_600_000 + 5_000)).toBe(START + 5_000)
+  })
+
   it('keeps a previously derived offset when serverNow is null', () => {
     const t = createInterruptTimer()
     const clientNow = START - 3_600_000

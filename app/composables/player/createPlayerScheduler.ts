@@ -90,6 +90,11 @@ export function createPlayerScheduler(
   let imageTimerMs = 0
   let paused = false
   let pausedRemainingMs: number | null = null
+  /** start() arrived while paused — a manifest mounted DURING an interrupt
+   *  window. The first item start (telemetry + slide timer) is owed to
+   *  resume(): emitting it under the overlay would count a play nobody saw
+   *  and run the slide clock behind the clip. */
+  let startDeferred = false
 
   const itemStartHandlers = new Set<(i: number) => void>()
   const transitionHandlers = new Set<(e: TransitionEvent) => void>()
@@ -161,8 +166,12 @@ export function createPlayerScheduler(
       return mode === 'loop'
     },
     start() {
-      if (stopped || paused) return
+      if (stopped) return
       if (mode === 'empty') return
+      if (paused) {
+        startDeferred = true
+        return
+      }
       emitItemStart(0)
       armImageTimerIfNeeded(0)
     },
@@ -198,6 +207,7 @@ export function createPlayerScheduler(
       stopped = true
       paused = false
       pausedRemainingMs = null
+      startDeferred = false
       clearImageTimer()
       itemStartHandlers.clear()
       transitionHandlers.clear()
@@ -217,6 +227,12 @@ export function createPlayerScheduler(
     resume() {
       if (stopped || !paused) return
       paused = false
+      if (startDeferred) {
+        startDeferred = false
+        emitItemStart(0)
+        armImageTimerIfNeeded(0)
+        return
+      }
       if (pausedRemainingMs === null) return
       const index = imageTimerIndex
       const remaining = pausedRemainingMs

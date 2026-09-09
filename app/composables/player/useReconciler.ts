@@ -33,6 +33,22 @@ export interface ClockSample {
  */
 const FETCH_TIMEOUT_MS = 15_000
 
+/**
+ * Retry schedule for the interrupt clip's pre-download.
+ *
+ * `NativeFS.download()` blocks the WebView's only JS thread — slide timers,
+ * the stall watchdog, telemetry and the interrupt tick all stop while it runs.
+ * A clip that never lands (the storage guard skipped it, a truncated CDN
+ * object fails the hash) used to be re-fetched on EVERY 30 s poll, forever:
+ * up to a full download's worth of frozen JS per poll. The clip is needed at
+ * 09:00, not now, so back off in minutes and reset only when the sha changes.
+ */
+const CLIP_RETRY_BASE_MS = 60_000
+const CLIP_RETRY_MAX_MS = 60 * 60_000
+function clipRetryDelay(attempt: number): number {
+  return Math.min(CLIP_RETRY_BASE_MS * 2 ** attempt, CLIP_RETRY_MAX_MS)
+}
+
 /** Reject if `p` has not settled within `ms`. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -153,6 +169,8 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   let es: EventSource | null = null
   let streamState: StreamState = 'disconnected'
 
+  let clipRetry: { sha256: string; attempts: number; nextTryAt: number } | null = null
+
   const manifestHandlers = new Set<(m: Manifest | null) => void>()
   const errorHandlers = new Set<(e: unknown) => void>()
   const syncingHandlers = new Set<(syncing: boolean) => void>()
@@ -169,6 +187,46 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
   }
   function emitClock(c: ClockSample): void {
     for (const fn of clockHandlers) fn(c)
+  }
+
+  /**
+   * Keep the interrupt clip on disk long before its window — a cache miss at
+   * 09:00 means a CDN fetch over the venue uplink. Runs AFTER the manifest is
+   * emitted, so the first paint never waits behind a clip needed hours later.
+   */
+  function prefetchInterruptClip(interrupt: InterruptSchedule | null, nowMs: number): void {
+    if (!deps.nativeFS || !deps.cdnUrl || !interrupt) return
+    if (deps.nativeFS.exists(interrupt.sha256)) {
+      clipRetry = null
+      return
+    }
+    // A new clip gets a fresh budget; the old one's failures are irrelevant.
+    if (clipRetry && clipRetry.sha256 !== interrupt.sha256) clipRetry = null
+    if (clipRetry && nowMs < clipRetry.nextTryAt) return
+    emitSyncing(true)
+    let landed = false
+    try {
+      // `exists()` re-checked on purpose: an older bridge returns true after
+      // the storage guard silently skipped the download.
+      landed =
+        deps.nativeFS.download(interrupt.sha256, deps.cdnUrl(interrupt.sha256)) &&
+        deps.nativeFS.exists(interrupt.sha256)
+    } catch {
+      landed = false
+    } finally {
+      // A throwing download must not leave the syncing flag stuck on.
+      emitSyncing(false)
+    }
+    if (landed) {
+      clipRetry = null
+      return
+    }
+    const attempts = (clipRetry?.attempts ?? 0) + 1
+    clipRetry = {
+      sha256: interrupt.sha256,
+      attempts,
+      nextTryAt: nowMs + clipRetryDelay(attempts - 1)
+    }
   }
 
   function clearRetryTimer(): void {
@@ -223,40 +281,31 @@ export function createReconciler(deps: ReconcilerDeps): ReconcilerHandle {
         : null
       emitClock({ serverNow: m.serverNow ?? null, interrupt })
 
-      // The clip must be on disk long before the window opens; a cache miss at
-      // 09:00 means a CDN fetch over the venue uplink. Only when missing —
-      // download() blocks the JS thread.
-      if (deps.nativeFS && deps.cdnUrl && interrupt && !deps.nativeFS.exists(interrupt.sha256)) {
-        emitSyncing(true)
-        try {
-          deps.nativeFS.download(interrupt.sha256, deps.cdnUrl(interrupt.sha256))
-        } finally {
-          // A throwing download must not leave the syncing flag stuck on.
-          emitSyncing(false)
-        }
-      }
-
       const key = { playlistId: m.playlistId, version: m.version }
-      if (!shouldReconcile(last, key)) return
-      last = key
-      hasEmitted = true
-      // Pre-download uncached items when the Android NativeFS bridge is present.
-      if (deps.nativeFS && deps.cdnUrl) {
-        const sha256s = m.items.map(i => i.sha256)
-        const uncached = sha256s.filter(s => !deps.nativeFS!.exists(s))
-        if (uncached.length > 0) {
-          emitSyncing(true)
-          for (const sha256 of uncached) {
-            deps.nativeFS!.download(sha256, deps.cdnUrl!(sha256))
+      if (shouldReconcile(last, key)) {
+        last = key
+        hasEmitted = true
+        // Pre-download uncached items when the Android NativeFS bridge is present.
+        if (deps.nativeFS && deps.cdnUrl) {
+          const sha256s = m.items.map(i => i.sha256)
+          const uncached = sha256s.filter(s => !deps.nativeFS!.exists(s))
+          if (uncached.length > 0) {
+            emitSyncing(true)
+            for (const sha256 of uncached) {
+              deps.nativeFS!.download(sha256, deps.cdnUrl!(sha256))
+            }
+            emitSyncing(false)
           }
-          emitSyncing(false)
+          // The interrupt clip is not a playlist item — without this it would be
+          // evicted on the next playlist change and be missing at 09:00.
+          const keep = interrupt ? [...sha256s, interrupt.sha256] : sha256s
+          deps.nativeFS!.evictExcept(JSON.stringify(keep))
         }
-        // The interrupt clip is not a playlist item — without this it would be
-        // evicted on the next playlist change and be missing at 09:00.
-        const keep = interrupt ? [...sha256s, interrupt.sha256] : sha256s
-        deps.nativeFS!.evictExcept(JSON.stringify(keep))
+        emitManifest(m)
       }
-      emitManifest(m)
+      // After the emit, on every fetch (an unchanged playlist still has to keep
+      // the clip), and never more often than its own backoff allows.
+      prefetchInterruptClip(interrupt, Date.now())
     } catch (err) {
       emitError(err)
       retryTimer = setTimeout(() => {

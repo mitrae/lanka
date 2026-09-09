@@ -3,7 +3,7 @@
 // Top-level orchestrator for the /player route. Glues reconciler +
 // scheduler + telemetry + native-device. Exposes reactive state that
 // app/pages/player.vue renders.
-import { onBeforeUnmount, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
+import { nextTick, onBeforeUnmount, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import { useApiClient, type ApiClient } from '~/app/composables/useApiClient'
 import type { Manifest } from '~/app/types/api'
 import { createInterruptTimer, type InterruptTimerHandle } from './createInterruptTimer'
@@ -29,7 +29,17 @@ declare const __LANKA_BUILD__: string | undefined
 const RELOAD_GUARD_KEY = 'lanka.reloadedForBuild'
 
 export type PlayerScreen = 'booting' | 'standby' | 'no-content' | 'playing'
-export type InterruptPhase = 'idle' | 'arming' | 'playing'
+/**
+ * idle → arming (stage asked to stand down) → playing (overlay mounted) →
+ * ending → idle. `ending` exists for one flush: the overlay is unmounted
+ * (phase leaves 'playing') while the stage stays suspended (phase is not
+ * 'idle'), so the overlay's decoder is released BEFORE the stage re-arms its
+ * back slot and resumes the front video on the next flush. In a single flush
+ * Vue patches the stage — the earlier sibling in player.vue — first, and its
+ * pre-flush watcher ran standUp() while the overlay's <video> was still live:
+ * three decoders at the exact instant the paused front decoder had to resume.
+ */
+export type InterruptPhase = 'idle' | 'arming' | 'playing' | 'ending'
 
 export interface PlayerBootState {
   screen: Ref<PlayerScreen>
@@ -44,7 +54,12 @@ export interface PlayerBootState {
   interruptPhase: Ref<InterruptPhase>
   interruptSrc: Ref<string | null>
   interruptSha: Ref<string | null>
-  interruptOffsetMs: Ref<number>
+  /** Milliseconds into the live window on the corrected clock, as of the
+   *  call; 0 outside a window. A function, not a snapshot: the overlay seeks
+   *  when metadata arrives, and by then the arming tick's value is stale by
+   *  the whole load — every screen would land behind the wall clock by its
+   *  own latency, and a blob retry would rewind to the first join point. */
+  interruptOffsetNow: () => number
   onStageStoodDown: () => void
   onInterruptStarted: () => void
   onInterruptFailed: (message: string) => void
@@ -74,7 +89,6 @@ export function usePlayerBoot(
   const interruptPhase = ref<InterruptPhase>('idle')
   const interruptSrc = ref<string | null>(null)
   const interruptSha = ref<string | null>(null)
-  const interruptOffsetMs = ref(0)
   const interruptTimer: InterruptTimerHandle = createInterruptTimer()
   let interruptStartsAt = 0
   let armTimer: number | null = null
@@ -98,6 +112,12 @@ export function usePlayerBoot(
     interruptPhase.value = 'playing'
   }
 
+  function interruptOffsetNow(): number {
+    const phase = interruptPhase.value
+    if (phase !== 'arming' && phase !== 'playing') return 0
+    return Math.max(0, interruptTimer.correctedNow(Date.now()) - interruptStartsAt)
+  }
+
   /**
    * Proof of observance, posted only once the clip has genuinely decoded a
    * frame — NOT at handover. A screen where the clip fails to play must read as
@@ -112,22 +132,26 @@ export function usePlayerBoot(
 
   function endInterrupt(): void {
     clearArmTimer()
-    if (interruptPhase.value === 'idle') return
+    const phase = interruptPhase.value
+    if (phase === 'idle' || phase === 'ending') return
     // The window that PLAYED, not whatever schedule is loaded now: a poll
     // landing after the server rolled nextWindow over would otherwise latch
     // tomorrow's window and skip tomorrow's observance.
     interruptTimer.markDone(interruptStartsAt)
-    interruptPhase.value = 'idle'
+    // Overlay down on this flush, stage up on the next — see InterruptPhase.
+    interruptPhase.value = 'ending'
     interruptSrc.value = null
     interruptSha.value = null
-    interruptOffsetMs.value = 0
+    void nextTick(() => {
+      if (interruptPhase.value === 'ending') interruptPhase.value = 'idle'
+    })
   }
 
   function onInterruptFailed(message: string): void {
     // A late `error` can arrive in the same tick the wall-clock branch already
     // closed the window, before Vue unmounts the overlay. Without this guard
     // that posts a device_errors row for a window that ended normally.
-    if (interruptPhase.value === 'idle') return
+    if (interruptPhase.value === 'idle' || interruptPhase.value === 'ending') return
     // Loud, never blank: the playlist comes back and the failure is on record.
     // interruptFailed, not itemFailed: the playlist item on screen never
     // changed, and itemFailed's `null` currentItemId would CLEAR the device's
@@ -149,7 +173,6 @@ export function usePlayerBoot(
       interruptStartsAt = state.schedule.startsAt
       interruptSha.value = state.schedule.sha256
       interruptSrc.value = env.fileUrl(state.schedule.sha256)
-      interruptOffsetMs.value = state.offsetMs
       interruptPhase.value = 'arming'
       // No stage on screen (standby / no-content): nobody will acknowledge.
       // NOTE on this branch: with today's contract it is defensive rather than
@@ -205,6 +228,11 @@ export function usePlayerBoot(
     })
 
     scheduler.value = sched
+    // A manifest that lands DURING a window mounts under a live overlay. Pause
+    // before start(): the scheduler then owes its first item start (telemetry
+    // + slide timer) to the stage's standUp() → resume(), instead of counting
+    // a play nobody saw and running the slide clock behind the clip.
+    if (interruptPhase.value !== 'idle') sched.pause()
     sched.start()
   }
 
@@ -370,7 +398,7 @@ export function usePlayerBoot(
     interruptPhase,
     interruptSrc,
     interruptSha,
-    interruptOffsetMs,
+    interruptOffsetNow,
     onStageStoodDown,
     onInterruptStarted,
     onInterruptFailed

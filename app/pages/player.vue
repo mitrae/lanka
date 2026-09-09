@@ -20,7 +20,7 @@ definePageMeta({
 
 const {
   screen, manifest, scheduler, env, deviceId, lastError,
-  interruptPhase, interruptSrc, interruptSha, interruptOffsetMs,
+  interruptPhase, interruptSrc, interruptSha, interruptOffsetNow,
   onStageStoodDown, onInterruptStarted, onInterruptFailed
 } = usePlayerBoot()
 
@@ -54,7 +54,7 @@ useHead({
       v-if="interruptPhase === 'playing' && interruptSrc && interruptSha"
       :sha256="interruptSha"
       :src="interruptSrc"
-      :start-offset-ms="interruptOffsetMs"
+      :offset-now="interruptOffsetNow"
       @started="onInterruptStarted"
       @failed="onInterruptFailed"
     />

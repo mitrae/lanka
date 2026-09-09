@@ -242,6 +242,69 @@ describe('PlayerStage suspension', () => {
     clearSpy.mockRestore()
   })
 
+  it('a front-video error while suspended is reported, but neither reloads nor plays the paused front', async () => {
+    // standDown() only stopped two timers; every event-driven self-heal path
+    // still ran. A Range fetch dying under the overlay re-sourced and
+    // play()ed the paused front video from 0 — the re-prime that killed a
+    // prod TV — and the blob retry did the same from the other direction.
+    const { w, scheduler } = mountStage()
+    const errors: string[] = []
+    scheduler.onItemError((_, msg) => errors.push(msg))
+    const front = w.findAll('video')[0].element as HTMLVideoElement
+    const originalFetch = globalThis.fetch
+    const fetchSpy = vi.fn().mockRejectedValue(new Error('no network'))
+    globalThis.fetch = fetchSpy
+
+    await w.setProps({ suspended: true })
+    const loadsBefore = (front.load as ReturnType<typeof vi.fn>).mock.calls.length
+    const playsBefore = (front.play as ReturnType<typeof vi.fn>).mock.calls.length
+
+    await w.findAll('video')[0].trigger('error')
+    await flushPromises()
+
+    expect(errors).toHaveLength(1) // telemetry never goes blind
+    expect(fetchSpy).not.toHaveBeenCalled() // no blob retry under the overlay
+    expect((front.load as ReturnType<typeof vi.fn>).mock.calls.length).toBe(loadsBefore)
+    expect((front.play as ReturnType<typeof vi.fn>).mock.calls.length).toBe(playsBefore)
+    globalThis.fetch = originalFetch
+  })
+
+  it('errors while suspended never trip the stalled state or arm the recovery timer', async () => {
+    const singleManifest = {
+      playlistId: 4,
+      playlistName: 'Y',
+      version: 1,
+      items: [{ id: 1, type: 'video' as const, sha256: 'solo', durationMs: 30_000 }]
+    }
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network'))
+    const setSpy = vi.spyOn(window, 'setTimeout')
+    const scheduler = createPlayerScheduler(singleManifest.items, {
+      now: () => Date.now(),
+      setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+      clearTimeout: (h) => window.clearTimeout(h as number)
+    })
+    const w = mount(PlayerStage, {
+      props: { manifest: singleManifest, scheduler, env, suspended: false } as any
+    })
+    const front = w.find('video').element as HTMLVideoElement
+    await w.setProps({ suspended: true })
+    const loadsBefore = (front.load as ReturnType<typeof vi.fn>).mock.calls.length
+
+    for (let i = 0; i < 6; i++) {
+      await w.find('video').trigger('error')
+      await flushPromises()
+    }
+
+    expect(w.find('.stalled-banner').exists()).toBe(false)
+    expect(setSpy.mock.calls.some(([, ms]) => ms === 15_000)).toBe(false)
+    expect((front.load as ReturnType<typeof vi.fn>).mock.calls.length).toBe(loadsBefore)
+
+    w.unmount()
+    globalThis.fetch = originalFetch
+    setSpy.mockRestore()
+  })
+
   it('stands down immediately when mounted already suspended — a manifest change during the observance remounts the stage keyed on playlistId:version, with `suspended` already true and no transition for the watcher to react to', async () => {
     // Without a mount-time check, a fresh stage would run mountInitial() (load
     // + play the front item, preload the back item) underneath a still-live
@@ -263,13 +326,18 @@ describe('PlayerStage suspension', () => {
 
     expect(pauseSpy).toHaveBeenCalled()
     expect(w.emitted('stood-down')).toBeTruthy()
-    // Back slot released: mountInitial() would have preloaded 'b' into it.
     const videos = w.findAll('video')
+    // Mounted INTO the stood-down state, not mounted live and then stood
+    // down: the front item is loaded (one paused decoder, ready for a
+    // frame-exact resume) but never played, and the back slot is never
+    // preloaded — under a live overlay that was three decoders on a box with
+    // a handful, plus a play() nobody saw.
+    expect(videos[0].attributes('src')).toContain('/media/a')
     expect(videos[1].attributes('src')).toBeUndefined()
-    // The watchdog interval onMounted armed is cleared again by the mount-time
-    // standDown() — sampling never runs while the fresh stage is suspended.
-    expect(setSpy).toHaveBeenCalledTimes(1)
-    expect(clearSpy).toHaveBeenCalledWith(setSpy.mock.results[0]!.value)
+    expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled()
+    // No watchdog interval is armed at all while the fresh stage is suspended.
+    expect(setSpy).not.toHaveBeenCalled()
+    expect(clearSpy).not.toHaveBeenCalled()
 
     setSpy.mockRestore()
     clearSpy.mockRestore()
