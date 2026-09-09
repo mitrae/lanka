@@ -145,6 +145,27 @@ class SchedulerPauseTest {
         assertEquals(0, s.getFrontIndex())
     }
 
+    @Test fun `start while paused defers the first item start until resume`() {
+        // A manifest that lands DURING an interrupt window mounts its scheduler
+        // under a live overlay: starting it there counts a play nobody sees and
+        // runs the slide clock behind the clip.
+        val deps = FakeDeps()
+        val s = Scheduler(listOf(image(1, 5_000), video(2)), deps)
+        val starts = mutableListOf<Int>()
+        s.onItemStart { starts.add(it) }
+
+        s.pause()
+        s.start()
+        assertEquals(emptyList<Int>(), starts)
+        assertEquals(0, deps.pending())
+
+        s.resume()
+        assertEquals(listOf(0), starts)
+        assertEquals(1, deps.pending()) // the slide timer, armed fresh at resume
+        deps.advanceTime(5_000)
+        assertEquals(1, s.getFrontIndex())
+    }
+
     @Test fun `resumes with the remaining time`() {
         val deps = FakeDeps()
         val s = Scheduler(twoImages, deps)

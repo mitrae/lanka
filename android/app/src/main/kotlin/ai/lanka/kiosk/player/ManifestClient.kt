@@ -36,6 +36,7 @@ class ManifestClient(
     private val onClock: ((Long?, ManifestInterrupt?) -> Unit)? = null
 ) {
     private val differ = ManifestDiffer()
+    private val interruptGate = PrefetchGate()
     private val poll = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "manifest-poll").apply { isDaemon = true }
     }
@@ -93,7 +94,6 @@ class ManifestClient(
                     else json.decodeFromString(Manifest.serializer(), raw)
                 }
                 onClock?.invoke(manifest?.serverNow, manifest?.interrupt)
-                prefetchInterrupt(manifest?.interrupt)
                 when (val d = differ.onFetched(manifest)) {
                     is ManifestDecision.Ignore -> {}
                     is ManifestDecision.EmitNull -> onManifest(null)
@@ -102,6 +102,9 @@ class ManifestClient(
                         onManifest(d.manifest)
                     }
                 }
+                // After the emit: the first paint never waits behind a clip
+                // that is needed at 09:00.
+                prefetchInterrupt(manifest?.interrupt)
             }
         } catch (e: Throwable) {
             onError(e)
@@ -127,11 +130,18 @@ class ManifestClient(
     /** Keep the interrupt clip cached. Runs on EVERY fetch (not gated on
      *  ManifestDecision.Emit like prefetch()) so an unchanged playlist still
      *  refreshes/keeps it — a stale schedule must not leave the box without
-     *  the clip at 09:00. */
+     *  the clip at 09:00. Never more often than [PrefetchGate] allows: a clip
+     *  that never lands (storage guard, truncated CDN object) must not block
+     *  this thread for a full download on every poll. */
     private fun prefetchInterrupt(i: ManifestInterrupt?) {
         val sha = i?.sha256 ?: return
-        if (mediaCache.exists(sha)) return
+        if (mediaCache.exists(sha)) { interruptGate.succeeded(sha); return }
+        val now = System.currentTimeMillis()
+        if (!interruptGate.shouldTry(sha, now)) return
         runCatching { mediaCache.downloadSync(sha, mediaUrl(sha)) }
+        // exists() re-checked: the storage guard skips without throwing.
+        if (mediaCache.exists(sha)) interruptGate.succeeded(sha)
+        else interruptGate.failed(sha, System.currentTimeMillis())
     }
 
     fun openStream() {

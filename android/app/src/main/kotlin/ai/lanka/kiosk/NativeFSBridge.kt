@@ -62,7 +62,10 @@ class NativeFSBridge(
     fun download(sha256: String, url: String): Boolean {
         return try {
             cache.downloadSync(sha256, url)
-            true
+            // Not `true`: downloadSync returns without throwing when the
+            // storage guard skips the download (or another download of the
+            // same sha is in flight). The reconciler's backoff needs the truth.
+            cache.exists(sha256)
         } catch (e: Exception) {
             Log.w(TAG, "download failed for $sha256: ${e.message}")
             false

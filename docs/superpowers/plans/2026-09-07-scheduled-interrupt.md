@@ -4116,32 +4116,24 @@ z-order, where a regression puts the playlist *on top of* the clip.
 
 Not defects that block merge; each was judged and deferred deliberately.
 
-1. **The interrupt pre-download has no attempt cap or backoff**
-   (`useReconciler.ts`). It is on the every-fetch path by design — the clip must
-   be on disk before 09:00 even on an unchanged playlist — but `NativeFS.download()`
-   blocks the JS thread, so a clip that persistently fails to land parks the
-   player's single thread every 30 s indefinitely. While parked nothing else on
-   that thread runs, including the 500 ms interrupt tick; a park coinciding with
-   09:00:00 misses the window outright, and the 500 ms arm timeout cannot help
-   because it is a `setTimeout` on the same blocked thread. Native is not
-   exposed (its prefetch runs on the manifest-poll executor). Fix is an attempt
-   cap or `backoff()`; deferred because where the counter lives wants thought.
-2. **The join offset is captured at arm time, not at seek time**
-   (`usePlayerBoot.ts` → `InterruptOverlay.onLoadedMetadata`). On a cold load —
-   cache miss, CDN fallback, blob retry — metadata can arrive seconds later, so
-   the box joins behind the rest of the fleet and the "every screen shows the
-   same second" property degrades. The wall-clock end bounds the damage. Fix:
-   recompute from `Date.now()` plus the timer's offset inside `onLoadedMetadata`.
-3. **`sampleInterrupt` has no test.** The wall-clock end rule and the latch —
-   the two behaviours defining the window's lifecycle — are exercised by nothing;
-   the Critical above lived inside that gap. Cheapest durable pin: expose a
-   `_sampleInterrupt` test hook (the file already precedents `_resetNativeDeviceCache`),
-   inject a clock, and drive two consecutive windows.
-4. **`app/pages/media.vue` calls `GET /api/interrupt` on every visit** purely to
+Two earlier entries were closed by the 2026-09-09 review pass on PR #1:
+the interrupt pre-download now backs off per sha (60 s doubling to 1 h,
+after the manifest emit, on both surfaces — `useReconciler.ts` / `PrefetchGate.kt`),
+and the join offset is read off the corrected clock at seek time
+(`InterruptOverlay`'s `offsetNow` prop / `interruptOffsetNow` in `usePlayerBoot`).
+
+1. **`sampleInterrupt` has no direct test.** The booted tests in
+   `usePlayerBoot.interrupt.test.ts` now drive one window through the real
+   tick (register → reconcile → tick → arm), but the wall-clock end rule and
+   the latch across two consecutive windows are still exercised by nothing
+   above the pure timer. Cheapest durable pin: expose a `_sampleInterrupt`
+   test hook (the file already precedents `_resetNativeDeviceCache`), inject a
+   clock, and drive two consecutive windows.
+2. **`app/pages/media.vue` calls `GET /api/interrupt` on every visit** purely to
    badge one row, which runs a full fleet-status computation including a
    per-device `resolvePlaylistForDevice`. Free when unconfigured, cheap at fleet
    size. Consider a light variant or carrying `isInterruptClip` on the media row.
-5. Dead `Number(p.y ?? p.year)` branch in `server/services/interrupt.ts` —
+3. Dead `Number(p.y ?? p.year)` branch in `server/services/interrupt.ts` —
    `Intl` never emits a part of type `y`.
 
 ## Rollout

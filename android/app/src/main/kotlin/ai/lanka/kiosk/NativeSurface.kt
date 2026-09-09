@@ -273,14 +273,12 @@ class NativeSurface(
         root.addView(pv, matchParent())
         showOnly(pv)
         hasPlayed = true
-        pv.bind(m, sched)
         // A playlist edit landing DURING an active interrupt window rebuilds
-        // this view underneath a live overlay. bind() -> mountInitial() just
-        // preloaded the back slot and started the front video — without
-        // standing the fresh view down immediately, that is three decoders on
-        // a box with a handful, right under the overlay. Mirrors
-        // PlayerStage.vue's `if (props.suspended) standDown()` in onMounted.
-        if (interruptPlayer != null) pv.standDown()
+        // this view underneath a live overlay. Mount it INTO the stood-down
+        // state: bind() then prepares only the front item, paused, and the
+        // scheduler starts deferred — no third codec, no item start nobody
+        // saw. Mirrors PlayerStage.vue's mountSuspended().
+        pv.bind(m, sched, suspended = interruptPlayer != null)
     }
 
     // ── Scheduled interrupt (wall-clock overlay) ──────────────────────────────
@@ -305,17 +303,70 @@ class NativeSurface(
 
     private fun beginInterrupt(state: InterruptState.Active) {
         val sha = state.schedule.sha256
-        // Stand the stage down FIRST: the back slot must be released before a
-        // third decoder could exist.
-        playbackView?.standDown()
-
         val uri =
             if (mediaCache.exists(sha)) Uri.fromFile(mediaCache.file(sha))
             else Uri.parse("${BuildConfig.LANKA_SERVER_URL}/media/$sha")
 
         interruptReported = false
         val startsAt = state.schedule.startsAt
-        val exo = ExoPlayer.Builder(activity).build().apply {
+
+        // Build BEFORE standing the stage down. Construction allocates no
+        // codec (prepare() does, below, after standDown()), and a throw here
+        // — OOM, a PlayerView inflate failure on the Amlogic ROM — used to
+        // leave the stage stood down with `interruptPlayer` still null: the
+        // wall-clock branch never called endInterrupt()/standUp(), so the
+        // playlist stayed frozen until the next manifest change, and the
+        // 500 ms tick re-ran this and leaked one ExoPlayer per tick. The
+        // tick's runCatching swallowed all of it.
+        val exo: ExoPlayer
+        val view: PlayerView
+        try {
+            exo = buildInterruptPlayer(sha, startsAt)
+            view = PlayerView(activity).apply {
+                useController = false
+                setBackgroundColor(Color.BLACK)
+            }
+        } catch (e: Throwable) {
+            telemetry.interruptFailed(deviceId, sha, "interrupt: overlay unavailable: $e")
+            interruptTimer.markDone(startsAt) // one failure per window, not one per tick
+            return
+        }
+
+        // Stand the stage down before prepare(): the back slot must be
+        // released before a third decoder could exist.
+        playbackView?.standDown()
+        interruptPlayer = exo
+        interruptView = view
+        interruptStartsAt = startsAt
+        try {
+            view.player = exo
+            root.addView(view, matchParent())
+            view.bringToFront()
+            exo.setMediaItem(MediaItem.fromUri(uri))
+            // Joining in progress keeps every screen frame-aligned.
+            if (state.offsetMs > 0) exo.seekTo(state.offsetMs)
+            exo.prepare()
+            exo.playWhenReady = true
+        } catch (e: Throwable) {
+            telemetry.interruptFailed(deviceId, sha, "interrupt: overlay failed to start: $e")
+            endInterrupt() // releases the overlay, latches the window, stands the stage up
+            return
+        }
+
+        // Loud, never blank. onPlayerError alone is not enough: Media3 can sit
+        // in STATE_BUFFERING, or STATE_READY behind a hung Amlogic MediaCodec,
+        // for the whole window without ever reporting an error.
+        val guard = Runnable {
+            interruptStartupGuard = null
+            telemetry.interruptFailed(deviceId, sha, "interrupt: clip never started")
+            endInterrupt()
+        }
+        interruptStartupGuard = guard
+        handler.postDelayed(guard, interruptStartupBudgetMs)
+    }
+
+    private fun buildInterruptPlayer(sha: String, startsAt: Long): ExoPlayer =
+        ExoPlayer.Builder(activity).build().apply {
             volume = 0f // no audio, ever
             repeatMode = Player.REPEAT_MODE_OFF
             addListener(object : Player.Listener {
@@ -342,34 +393,7 @@ class NativeSurface(
                     }
                 }
             })
-            setMediaItem(MediaItem.fromUri(uri))
-            // Joining in progress keeps every screen frame-aligned.
-            if (state.offsetMs > 0) seekTo(state.offsetMs)
-            prepare()
-            playWhenReady = true
         }
-        val view = PlayerView(activity).apply {
-            useController = false
-            setBackgroundColor(Color.BLACK)
-            player = exo
-        }
-        interruptPlayer = exo
-        interruptView = view
-        interruptStartsAt = startsAt
-        root.addView(view, matchParent())
-        view.bringToFront()
-
-        // Loud, never blank. onPlayerError alone is not enough: Media3 can sit
-        // in STATE_BUFFERING, or STATE_READY behind a hung Amlogic MediaCodec,
-        // for the whole window without ever reporting an error.
-        val guard = Runnable {
-            interruptStartupGuard = null
-            telemetry.interruptFailed(deviceId, sha, "interrupt: clip never started")
-            endInterrupt()
-        }
-        interruptStartupGuard = guard
-        handler.postDelayed(guard, interruptStartupBudgetMs)
-    }
 
     /** Ownership rule: the posted guard is removed on every exit from a window. */
     private fun clearInterruptStartupGuard() {

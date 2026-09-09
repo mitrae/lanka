@@ -123,6 +123,33 @@ class InterruptTimerTest {
         assertTrue(!isActive(t.observe(start + 30_000)))
     }
 
+    @Test fun `stays active when a later clock sample moves the corrected clock back before startsAt`() {
+        // A 30 s poll that left at 08:59:58 and took 3 s to answer derives an
+        // offset 3 s behind the previous one. Reading that as Inactive ended
+        // the clip 1.5 s in and latched the day as done.
+        val t = InterruptTimer()
+        t.setSchedule(sched, start - 10_000, start - 10_000)
+        assertTrue(isActive(t.observe(start + 1_500)))
+        t.setSchedule(sched, start - 1_500, start + 1_500) // offset becomes -3 s
+        val s = t.observe(start + 1_600)
+        assertEquals(InterruptState.Active(sched, 0L), s) // clamped, never negative
+        assertTrue(!isActive(t.observe(start + 60_000 + 3_000))) // still ends on endsAt
+    }
+
+    @Test fun `a backwards correction before the window ever became active still means inactive`() {
+        val t = InterruptTimer()
+        t.setSchedule(sched, start, start - 5_000) // TV 5 s behind: offset +5 s
+        assertTrue(!isActive(t.observe(start - 1_000 - 5_000)))
+        t.setSchedule(sched, start - 4_000, start - 5_000) // offset +1 s
+        assertTrue(!isActive(t.observe(start - 3_000)))
+    }
+
+    @Test fun `correctedNow applies the derived offset to a client instant`() {
+        val t = InterruptTimer()
+        t.setSchedule(sched, start, start - 3_600_000) // TV an hour behind
+        assertEquals(start + 5_000, t.correctedNow(start - 3_600_000 + 5_000))
+    }
+
     @Test fun `keeps a previously derived offset when serverNow is null`() {
         val t = InterruptTimer()
         val clientNow = start - 3_600_000

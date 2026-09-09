@@ -59,6 +59,20 @@ class MediaCache private constructor(private val dir: File) {
      */
     fun downloadSync(sha256: String, url: String) {
         if (exists(sha256)) return
+        // One download per sha at a time, shared with cacheAsync: the poll
+        // thread and the SSE thread's reconcile both prefetch the interrupt
+        // clip, and two writers on the same .tmp each failed the other's hash
+        // check and deleted it — forever. The loser returns at once; its
+        // caller sees exists() false and comes back on its own backoff.
+        if (!inFlight.add(sha256)) return
+        try {
+            downloadLocked(sha256, url)
+        } finally {
+            inFlight.remove(sha256)
+        }
+    }
+
+    private fun downloadLocked(sha256: String, url: String) {
         val tmp = File(dir, "$sha256$TMP_SUFFIX")
         try {
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {

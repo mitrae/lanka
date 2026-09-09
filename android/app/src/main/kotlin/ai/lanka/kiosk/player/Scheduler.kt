@@ -28,6 +28,11 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     private var imageTimerMs = 0L
     private var paused = false
     private var pausedRemainingMs: Long? = null
+    /** start() arrived while paused — a manifest mounted DURING an interrupt
+     *  window. The first item start (telemetry + slide timer) is owed to
+     *  resume(): emitting it under the overlay would count a play nobody saw
+     *  and run the slide clock behind the clip. See the TS twin. */
+    private var startDeferred = false
 
     private val itemStartHandlers = mutableSetOf<(Int) -> Unit>()
     private val transitionHandlers = mutableSetOf<(TransitionEvent) -> Unit>()
@@ -72,7 +77,8 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     }
 
     fun start() {
-        if (stopped || paused || mode == SchedulerMode.EMPTY) return
+        if (stopped || mode == SchedulerMode.EMPTY) return
+        if (paused) { startDeferred = true; return }
         emitItemStart(0); armImageTimerIfNeeded(0)
     }
 
@@ -107,7 +113,7 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     }
 
     fun stop() {
-        stopped = true; paused = false; pausedRemainingMs = null; clearImageTimer()
+        stopped = true; paused = false; pausedRemainingMs = null; startDeferred = false; clearImageTimer()
         itemStartHandlers.clear(); transitionHandlers.clear(); errorHandlers.clear()
     }
 
@@ -129,6 +135,7 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     fun resume() {
         if (stopped || !paused) return
         paused = false
+        if (startDeferred) { startDeferred = false; emitItemStart(0); armImageTimerIfNeeded(0); return }
         val remaining = pausedRemainingMs ?: return
         pausedRemainingMs = null
         armImageTimer(imageTimerIndex, remaining)

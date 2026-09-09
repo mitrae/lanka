@@ -31,6 +31,14 @@ class InterruptTimer {
     private var schedule: ManifestInterrupt? = null
     private var offsetMs = 0L
     private var doneFor: Long? = null
+    /** startsAt of the window observe() has already reported active. Once we
+     *  are IN a window, a later clock sample that pulls the corrected clock
+     *  back below startsAt must not read as "not started": a 30 s poll that
+     *  left at 08:59:58 and took 3 s to answer derives an offset 3 s behind
+     *  the one before it, and that reading used to end the clip 1.5 s in and
+     *  latch the day as done. Only endsAt (or the done latch) ends an active
+     *  window. See the TS twin. */
+    private var activeFor: Long? = null
 
     /**
      * Publish the current schedule and re-derive the clock offset. Passing null
@@ -51,13 +59,24 @@ class InterruptTimer {
         val s = schedule ?: return InterruptState.Inactive
         if (doneFor == s.startsAt) return InterruptState.Inactive
         val now = clientNow + offsetMs
-        if (now < s.startsAt) return InterruptState.Inactive
         if (now >= s.endsAt) return InterruptState.Inactive
+        if (now < s.startsAt) {
+            if (activeFor != s.startsAt) return InterruptState.Inactive
+            // Already inside this window: the clock was corrected backwards,
+            // not the window withdrawn. Clamp rather than seek negative.
+            return InterruptState.Active(s, 0L)
+        }
         val offset = now - s.startsAt
         // Nothing left to play: the window outlives the clip.
         if (offset >= s.durationMs) return InterruptState.Inactive
+        activeFor = s.startsAt
         return InterruptState.Active(s, offset)
     }
+
+    /** `clientNow` on the server's clock — the same correction observe() uses.
+     *  The overlay derives its join offset from this at seek time. */
+    @Synchronized
+    fun correctedNow(clientNow: Long): Long = clientNow + offsetMs
 
     /**
      * Mark a window consumed. Takes the `startsAt` of the window that ACTUALLY
