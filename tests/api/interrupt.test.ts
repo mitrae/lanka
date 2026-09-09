@@ -87,6 +87,32 @@ describe('interrupt config API', () => {
     expect(res.window).toBeNull()
   })
 
+  it('rejects a timezone Intl does not know — a stored one would throw inside every manifest poll', async () => {
+    const m = await seedMedia(db, { sha256: 'clip', kind: 'video', durationMs: 60_000 })
+    await expect(
+      handlePutInterrupt(
+        db, { mediaId: m.id, atMinutes: AT_9AM, enabled: true, timezone: 'Europe/Kiev ' }, Date.now()
+      )
+    ).rejects.toMatchObject({ statusCode: 400 })
+    const rows = await db.select().from((await import('~/server/db/schema')).interrupts)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('rejects a clip outside the kiosk envelope — a 1080p "high" preset would fail on every Amlogic box at once', async () => {
+    const hd = await seedMedia(db, { sha256: 'hd', kind: 'video', durationMs: 60_000, quality: 'high' })
+    await expect(
+      handlePutInterrupt(db, { mediaId: hd.id, atMinutes: AT_9AM, enabled: true }, Date.now())
+    ).rejects.toMatchObject({ statusCode: 400 })
+  })
+
+  it('still lets an out-of-envelope clip be DISABLED — the off switch is always reachable', async () => {
+    const hd = await seedMedia(db, { sha256: 'hd', kind: 'video', durationMs: 60_000, quality: 'high' })
+    const res = await handlePutInterrupt(
+      db, { mediaId: hd.id, atMinutes: AT_9AM, enabled: false }, Date.now()
+    )
+    expect(res.config).toMatchObject({ mediaId: hd.id, enabled: false })
+  })
+
   it('rejects media that does not exist', async () => {
     await expect(
       handlePutInterrupt(db, { mediaId: 999, atMinutes: AT_9AM, enabled: true }, Date.now())

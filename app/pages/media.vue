@@ -69,17 +69,25 @@ watch(
 
 async function remove(m: MediaListRow) {
   const used = m.usedInPlaylists > 0
+  // The daily schedule is cleared only through its OWN flag, after a confirm
+  // that says so: the playlist `force` must never take the schedule with it.
+  const isInterruptClip = interruptMediaId.value !== null && m.id === interruptMediaId.value
+  const parts = [
+    used
+      ? t('media.deleteConfirmUsed', m.usedInPlaylists, { n: m.usedInPlaylists })
+      : t('media.deleteConfirmUnused')
+  ]
+  if (isInterruptClip) parts.push(t('media.deleteConfirmInterrupt'))
   const ok = await confirm({
     title: t('media.deleteConfirmTitle', { name: m.filename }),
-    description: used
-      ? t('media.deleteConfirmUsed', m.usedInPlaylists, { n: m.usedInPlaylists })
-      : t('media.deleteConfirmUnused'),
+    description: parts.join(' '),
     confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
   try {
-    await store.delete(m.id, { force: used })
+    await store.delete(m.id, { force: used, clearInterrupt: isInterruptClip })
+    if (isInterruptClip) interruptMediaId.value = null
     toast.add({ title: t('media.deleted'), color: 'success' })
   } catch (err: any) {
     toast.add({

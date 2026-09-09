@@ -3,7 +3,7 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { resolvePlaylistForDevice } from '~/server/services/resolver'
-import { getInterrupt, nextWindow } from '~/server/services/interrupt'
+import { getInterrupt, nextWindow, type InterruptWindow } from '~/server/services/interrupt'
 
 export type ManifestItem = {
   id: number
@@ -87,9 +87,18 @@ export async function handleManifest(
       .from(schema.media)
       .where(eq(schema.media.id, interruptRow.mediaId))
     const durationMs = clip?.durationMs ?? 0
-    const w = clip
-      ? nextWindow(nowMs, interruptRow.atMinutes, interruptRow.timezone, durationMs)
-      : null
+    // One bad row must degrade to "no interrupt", never to a 500: this runs
+    // inside every TV's 30 s poll, and a throw here would stop playlist
+    // changes, deploy reloads and schedule updates reaching the whole fleet
+    // (an unknown timezone makes Intl throw RangeError, for one).
+    let w: InterruptWindow | null = null
+    try {
+      w = clip
+        ? nextWindow(nowMs, interruptRow.atMinutes, interruptRow.timezone, durationMs)
+        : null
+    } catch (err) {
+      console.error('[manifest] interrupt window unavailable, publishing none:', err)
+    }
     if (clip && w) {
       interrupt = {
         mediaId: clip.id,

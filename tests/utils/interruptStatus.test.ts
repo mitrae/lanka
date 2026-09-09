@@ -39,6 +39,43 @@ describe('deviceInterruptOutcome', () => {
     )).toBe('missed')
   })
 
+  it('is "inProgress", never "missed", while today\'s window is still running', () => {
+    // From 09:00:00 the minute comparison alone reads >= atMinutes, but no
+    // device can have posted its observance yet — the clip is decoding its
+    // first frame and telemetry lands a second later. Painting the whole
+    // fleet red for that minute is the false alarm this page must never raise.
+    const window = { startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000 }
+    expect(deviceInterruptOutcome(
+      { observedToday: false, lastInterruptAt: null, hasPlaylist: true },
+      enabledConfig,
+      540,
+      window,
+      1_800_000_005_000
+    )).toBe('inProgress')
+  })
+
+  it('is "missed" once today\'s window has ended, even if the next window is loaded', () => {
+    const window = { startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000 }
+    expect(deviceInterruptOutcome(
+      { observedToday: false, lastInterruptAt: null, hasPlaylist: true },
+      enabledConfig,
+      541,
+      window,
+      1_800_000_060_000
+    )).toBe('missed')
+  })
+
+  it('a reported observance beats "inProgress"', () => {
+    const window = { startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000 }
+    expect(deviceInterruptOutcome(
+      { observedToday: true, lastInterruptAt: 1_800_000_000_000, hasPlaylist: true },
+      enabledConfig,
+      540,
+      window,
+      1_800_000_005_000
+    )).toBe('observed')
+  })
+
   it('is "notScheduled" when there is no config at all', () => {
     expect(deviceInterruptOutcome(
       { observedToday: false, lastInterruptAt: null, hasPlaylist: true },

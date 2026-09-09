@@ -4,9 +4,15 @@ import type { InterruptConfig, InterruptDeviceStatus } from '~/app/types/api'
 export type InterruptOutcome =
   | 'observed'
   | 'missed'
+  | 'inProgress'
   | 'notYet'
   | 'notScheduled'
   | 'cannotObserve'
+
+export interface InterruptWindowLike {
+  startsAt: number
+  endsAt: number
+}
 
 /**
  * Today's outcome for one device, as a pure function of already-known state.
@@ -29,7 +35,14 @@ export type InterruptOutcome =
 export function deviceInterruptOutcome(
   device: Pick<InterruptDeviceStatus, 'observedToday' | 'lastInterruptAt' | 'hasPlaylist'>,
   config: Pick<InterruptConfig, 'enabled' | 'atMinutes'> | null,
-  nowMinutes: number
+  nowMinutes: number,
+  /** The server's next not-yet-ended window (`status.window`) and the epoch
+   *  to judge it by. While the window is RUNNING nobody can have observed it
+   *  yet — the clip is decoding its first frame and the telemetry lands a
+   *  second later — so that minute is "in progress", never "missed". Epochs,
+   *  not wall-clock: still no zone arithmetic here. */
+  window: InterruptWindowLike | null = null,
+  nowMs = 0
 ): InterruptOutcome {
   // observedToday is checked FIRST, deliberately: if a device somehow reports
   // an observance despite hasPlaylist being false (a stale resolver read, a
@@ -42,5 +55,6 @@ export function deviceInterruptOutcome(
   // a permanent block of red in the badge column trains an operator to ignore
   // red on the one page whose job is to say which screen failed.
   if (!device.hasPlaylist) return 'cannotObserve'
+  if (window && nowMs >= window.startsAt && nowMs < window.endsAt) return 'inProgress'
   return nowMinutes >= config.atMinutes ? 'missed' : 'notYet'
 }

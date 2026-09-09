@@ -11,7 +11,7 @@ export async function handleDeleteMedia(
   db: BetterSQLite3Database<typeof schema>,
   store: MediaStore,
   id: number,
-  opts: { force: boolean }
+  opts: { force: boolean; clearInterrupt?: boolean }
 ): Promise<void> {
   const existing = await db
     .select()
@@ -39,13 +39,17 @@ export async function handleDeleteMedia(
     .from(schema.interrupts)
     .where(eq(schema.interrupts.mediaId, id))
 
-  if (interruptRows.length > 0 && !opts.force) {
+  // Its own flag, deliberately NOT `force`: the dashboard escalates to
+  // force=true for any clip that is in a playlist, after a confirm that only
+  // mentions playlists. Letting that also clear the daily schedule would
+  // delete a compliance feature as a side effect of an unrelated dialog.
+  if (interruptRows.length > 0 && !opts.clearInterrupt) {
     throw createError({
       statusCode: 409,
       message:
         `Media ${id} is the scheduled interrupt clip. Deleting it would leave a ` +
-        `schedule that silently never plays. Pass force=true to delete it and ` +
-        `clear the schedule.`
+        `schedule that silently never plays. Pass clearInterrupt=true to delete ` +
+        `it and clear the schedule.`
     })
   }
 
@@ -107,7 +111,8 @@ export default defineEventHandler(async (event) => {
   if (!Number.isInteger(id)) throw createError({ statusCode: 400 })
   const q = getQuery(event)
   await handleDeleteMedia(useDb(), useMediaStore(), id, {
-    force: q.force === 'true'
+    force: q.force === 'true',
+    clearInterrupt: q.clearInterrupt === 'true'
   })
   setResponseStatus(event, 204)
   return null

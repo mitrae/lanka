@@ -78,7 +78,27 @@ function localDate(ts: number, tz: string): { y: number; m: number; d: number } 
   return { y: Number(p.y ?? p.year), m: Number(p.month), d: Number(p.day) }
 }
 
-const DAY_MS = 86_400_000
+/** The calendar date `days` days away from `date` — pure calendar arithmetic,
+ *  no zone involved. Date.UTC normalises day overflow (Mar 32 → Apr 1). */
+function shiftDate(
+  date: { y: number; m: number; d: number },
+  days: number
+): { y: number; m: number; d: number } {
+  const t = new Date(Date.UTC(date.y, date.m - 1, date.d + days))
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() }
+}
+
+/** True when Intl can resolve `tz`. Node throws RangeError on an unknown zone,
+ *  and it would throw from inside every device's manifest poll if one were
+ *  ever stored — so it is refused at the PUT instead. */
+export function isKnownTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz })
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * The next occurrence that has not yet ENDED.
@@ -99,8 +119,14 @@ export function nextWindow(
   // Yesterday covers a window still running across local midnight; tomorrow
   // covers today's already being over. Ascending, so the first hit is the
   // earliest not-yet-ended occurrence.
+  //
+  // Walk CALENDAR days, not ±24 h of epoch: a DST day is 23 or 25 h long, so
+  // 23:30 on the eve of spring-forward plus 24 h is already 00:30 two dates
+  // ahead — which skipped the DST-Sunday window entirely for every box
+  // polling in that hour, and on the fall-back day found no window at all.
+  const today = localDate(nowMs, timezone)
   for (const dayOffset of [-1, 0, 1]) {
-    const { y, m, d } = localDate(nowMs + dayOffset * DAY_MS, timezone)
+    const { y, m, d } = shiftDate(today, dayOffset)
     const startsAt = zonedTimeToEpoch(y, m, d, hh, mm, timezone)
     const endsAt = startsAt + durationMs
     if (nowMs < endsAt) return { startsAt, endsAt }
@@ -173,7 +199,12 @@ export interface InterruptStatus {
 export const InterruptPutSchema = z.object({
   mediaId: z.number().int().positive(),
   atMinutes: z.number().int().min(0).max(1439),
-  timezone: z.string().min(1).max(64).optional(),
+  timezone: z
+    .string()
+    .min(1)
+    .max(64)
+    .refine(isKnownTimezone, { message: 'Unknown IANA timezone' })
+    .optional(),
   enabled: z.boolean(),
   label: z.string().max(200).nullable().optional()
 })
@@ -292,6 +323,17 @@ export async function handlePutInterrupt(
     throw createError({
       statusCode: 400,
       message: 'A clip with no known duration cannot define an interrupt window'
+    })
+  }
+  // Same gate, same reasoning: the `high` preset emits 1080p, which is outside
+  // the ≤720p kiosk envelope (see isKioskSafe). Every Amlogic box would hit a
+  // decode error at the same second, on the one day it matters.
+  if (body.enabled && clip.quality === 'high') {
+    throw createError({
+      statusCode: 400,
+      message:
+        'The interrupt clip must use the low or standard quality preset — ' +
+        'high emits 1080p, which the kiosk boxes cannot decode'
     })
   }
 

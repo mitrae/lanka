@@ -45,6 +45,25 @@ describe('nextWindow', () => {
     expect(w!.startsAt).toBe(at('2026-10-25T09:00:00+02:00'))
   })
 
+  it('publishes the DST-Sunday window from the last local hour before spring-forward', () => {
+    // Sat 2026-03-28 23:30 EET. The spring-forward day is 23 h long, so +24 h
+    // of epoch is already Mon 00:30 EEST — a day walk over epoch skipped
+    // Sunday entirely and told every box polling in that hour to wait for
+    // Monday.
+    const now = at('2026-03-28T23:30:00+02:00')
+    const w = nextWindow(now, AT_9AM, KYIV, MIN)
+    expect(w!.startsAt).toBe(at('2026-03-29T09:00:00+03:00'))
+  })
+
+  it('still finds tomorrow\'s early window just after midnight on the fall-back day', () => {
+    // Sun 2026-10-25 00:30 EEST with a 00:10 window: the day is 25 h long, so
+    // +24 h of epoch is still Sunday 23:30 EET and the walk found no
+    // not-yet-ended occurrence at all.
+    const now = at('2026-10-25T00:30:00+03:00')
+    const w = nextWindow(now, 10, KYIV, MIN)
+    expect(w!.startsAt).toBe(at('2026-10-26T00:10:00+02:00'))
+  })
+
   it('honours a non-zero minute', () => {
     const now = at('2026-07-01T06:00:00+03:00')
     const w = nextWindow(now, 9 * 60 + 30, KYIV, MIN)

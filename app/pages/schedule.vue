@@ -37,8 +37,11 @@ const label = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-// Restricted to videos: the server 400s an image, so the picker never offers one.
-const videos = computed(() => mediaStore.list.filter((m) => m.kind === 'video'))
+// Restricted to videos inside the kiosk envelope: the server 400s an image
+// and a `high` (1080p) clip alike, so the picker never offers either.
+const videos = computed(() =>
+  mediaStore.list.filter((m) => m.kind === 'video' && m.quality !== 'high')
+)
 
 /** `HH:MM` <-> minutes since local midnight, both directions. */
 const timeString = computed({
@@ -123,7 +126,13 @@ function kyivMinutesNow(): number {
  *  lives in the pure, unit-tested `deviceInterruptOutcome`. This is just the
  *  impure clock read (kyivMinutesNow) plus the i18n/colour mapping. */
 function outcomeFor(d: InterruptDeviceStatus): InterruptOutcome {
-  return deviceInterruptOutcome(d, status.value?.config ?? null, kyivMinutesNow())
+  return deviceInterruptOutcome(
+    d,
+    status.value?.config ?? null,
+    kyivMinutesNow(),
+    status.value?.window ?? null,
+    Date.now()
+  )
 }
 
 function deviceState(d: InterruptDeviceStatus): string {
@@ -133,6 +142,8 @@ function deviceState(d: InterruptDeviceStatus): string {
       return t('schedule.observedAt', { time: new Date(d.lastInterruptAt!).toLocaleTimeString() })
     case 'missed':
       return t('schedule.missed')
+    case 'inProgress':
+      return t('schedule.inProgress')
     case 'notYet':
       return t('schedule.notYet')
     case 'notScheduled':

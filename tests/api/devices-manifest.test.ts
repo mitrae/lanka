@@ -126,6 +126,26 @@ describe('GET /api/devices/:id/manifest handler', () => {
     expect(r?.items[1].durationMs).toBe(7000) // image override
   })
 
+  it('publishes no interrupt, rather than throwing, when the stored timezone is one Intl rejects', async () => {
+    // This handler runs inside every TV's 30 s poll. One bad row must not
+    // take playlist changes and deploy reloads away from the whole fleet.
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: grp.id })
+    const v = await seedMedia(db, { sha256: 'aaa', kind: 'video', durationMs: 15000 })
+    const clip = await seedMedia(db, { sha256: 'silence', kind: 'video', durationMs: 60000 })
+    const pl = await seedPlaylist(db, { name: 'P', items: [{ mediaId: v.id }] })
+    await assign(db, { deviceId: 'dev-1', playlistId: pl.id })
+    await db.insert(schema.interrupts).values({
+      id: 1, mediaId: clip.id, atMinutes: 540, timezone: 'Mars/Olympus', enabled: true
+    })
+
+    const m = await handleManifest(db, 'dev-1', Date.now())
+    expect(m).not.toBeNull()
+    expect(m!.items).toHaveLength(1)
+    expect(m!.interrupt).toBeUndefined()
+  })
+
   it('carries serverNow and the next interrupt window', async () => {
     const addr = await seedAddress(db)
     const grp = await seedGroup(db, addr.id)
