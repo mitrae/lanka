@@ -485,6 +485,9 @@
     "notYet": "Not yet due",
     "noWindow": "No window",
     "noWindowWarning": "The schedule is enabled but no window could be computed — the clip has no known duration. Nothing has been sent to any device.",
+    "devTest": "Dev test:",
+    "devTestIn": "In ~{minutes} min",
+    "devTestReset": "Back to 09:00",
     "noPlaylistWarning": "These devices have no playlist assigned. They receive no manifest and will not observe.",
     "clipInUse": "Used by the daily schedule"
   },

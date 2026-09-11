@@ -89,6 +89,14 @@ export default defineNuxtConfig({
       // build time via the Dockerfile ARG because this is an SPA (ssr:false).
       // Empty in dev → the player falls back to the relative /media/<sha> path.
       mediaPublicBase: process.env.MEDIA_PUBLIC_BASE ?? '',
+      // Dev-only "fire in ~N min" buttons on /schedule, to test the scheduled
+      // interrupt without waiting for 09:00. A flag rather than import.meta.dev
+      // on purpose: box playback is verified against a PRODUCTION build locally
+      // (see CLAUDE.md), where a dev-mode gate would hide the buttons. Docker
+      // prod builds never see the local .env, so prod stays clean — there one
+      // misclick would fire the clip on every venue screen within a minute.
+      // Runtime override: NUXT_PUBLIC_INTERRUPT_DEV_TOOLS=true.
+      interruptDevTools: process.env.INTERRUPT_DEV_TOOLS === 'true',
       // Google OAuth public Client ID for "Sign in with Google". Public by
       // design (not a secret). Plain GOOGLE_CLIENT_ID name — mirrors
       // MEDIA_PUBLIC_BASE: read here at build time and baked into the SPA via

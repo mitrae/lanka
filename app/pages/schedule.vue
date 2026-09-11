@@ -14,6 +14,7 @@ import type { TableColumn } from '@nuxt/ui'
 import { useMediaStore } from '~/app/stores/media'
 import type { InterruptDeviceStatus, InterruptStatus } from '~/app/types/api'
 import { deviceInterruptOutcome, type InterruptOutcome } from '~/app/utils/interruptStatus'
+import { quickTestAtMinutes } from '~/app/utils/interruptQuickTest'
 
 definePageMeta({ layout: 'default' })
 
@@ -36,6 +37,9 @@ const enabled = ref(true)
 const label = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+/** Dev-only quick-test buttons (INTERRUPT_DEV_TOOLS=true); see nuxt.config.ts. */
+const devTools = String(useRuntimeConfig().public.interruptDevTools) === 'true'
 
 // Restricted to videos inside the kiosk envelope: the server 400s an image
 // and a `high` (1080p) clip alike, so the picker never offers either.
@@ -207,6 +211,20 @@ async function save(): Promise<void> {
   }
 }
 
+/** Retime the interrupt to fire in ~n minutes and save at once. Moves the
+ *  REAL fleet-wide schedule — "Back to 09:00" restores it. Two clicks in a row
+ *  give two consecutive windows, which is on-box checklist step 10. */
+async function quickTest(n: number): Promise<void> {
+  atMinutes.value = quickTestAtMinutes(kyivMinutesNow(), n)
+  enabled.value = true
+  await save()
+}
+
+async function resetToNine(): Promise<void> {
+  atMinutes.value = 9 * 60
+  await save()
+}
+
 onMounted(async () => {
   try {
     const [s] = await Promise.all([api.getInterrupt(), mediaStore.refresh()])
@@ -292,6 +310,32 @@ onUnmounted(() => {
             {{ $t('schedule.save') }}
           </UButton>
           <span class="text-sm text-(--ui-text-muted)">{{ nextWindowLabel }}</span>
+        </div>
+
+        <div
+          v-if="devTools"
+          class="mt-4 flex flex-wrap items-center gap-2 rounded-md border border-dashed border-(--ui-border-accented) p-3"
+        >
+          <span class="text-xs font-medium text-(--ui-text-muted)">{{ $t('schedule.devTest') }}</span>
+          <UButton
+            v-for="n in [1, 2, 5]"
+            :key="n"
+            size="xs"
+            variant="soft"
+            :disabled="mediaId === null || saving"
+            @click="quickTest(n)"
+          >
+            {{ $t('schedule.devTestIn', { minutes: n }) }}
+          </UButton>
+          <UButton
+            size="xs"
+            variant="ghost"
+            color="neutral"
+            :disabled="mediaId === null || saving"
+            @click="resetToNine"
+          >
+            {{ $t('schedule.devTestReset') }}
+          </UButton>
         </div>
       </UCard>
 
