@@ -412,3 +412,43 @@ describe('createPlayerScheduler', () => {
     })
   })
 })
+
+describe('resume({ restart: true })', () => {
+  function harness(items: any[]) {
+    let now = 0
+    const timers: { id: number; at: number; cb: () => void }[] = []
+    let nextId = 1
+    const deps = {
+      now: () => now,
+      setTimeout: (cb: () => void, ms: number) => { const id = nextId++; timers.push({ id, at: now + ms, cb }); return id },
+      clearTimeout: (h: unknown) => { const i = timers.findIndex((t) => t.id === h); if (i >= 0) timers.splice(i, 1) }
+    }
+    const advance = (ms: number) => {
+      now += ms
+      for (const t of [...timers]) if (t.at <= now) { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); t.cb() }
+    }
+    return { deps, advance }
+  }
+  const twoImages = [
+    { id: 1, type: 'image', sha256: 'a', durationMs: 10_000 },
+    { id: 2, type: 'image', sha256: 'b', durationMs: 10_000 }
+  ]
+
+  it('re-arms the slide with its FULL duration, not the remainder', () => {
+    // The restart counterpart of the plain resume(): a slide that was 4 s in
+    // when the interrupt began gets its whole 10 s back, not the leftover 6 s.
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    const transitions: number[] = []
+    s.onTransition((e) => transitions.push(e.to))
+    s.start()
+    h.advance(4_000)
+    s.pause()
+    s.resume({ restart: true })
+
+    h.advance(9_999)
+    expect(transitions).toEqual([]) // would already have fired on the 6 s remainder
+    h.advance(1)
+    expect(transitions).toEqual([1])
+  })
+})

@@ -472,14 +472,34 @@ function mountSuspended(): void {
 }
 
 /** Take the screen back. */
+/**
+ * How the playlist resumes after an interrupt.
+ *
+ * `restart` today: an ad interrupted halfway is a broken impression — the
+ * advertiser paid for a whole one — so the interrupted item starts over.
+ * The `continue` path is deliberately kept, because it reads better for a long
+ * informational clip, and is expected to become a per-organization choice
+ * (media.organization_id) rather than one fleet-wide setting.
+ *
+ * Restarting seeks the SAME paused element back to 0. It never re-assigns
+ * `src`: that would re-prime the decoder, which is what killed the Haier TV.
+ */
+type ResumeMode = 'restart' | 'continue'
+const RESUME_MODE: ResumeMode = 'restart'
+
 function standUp(): void {
   const frontIdx = props.scheduler.getFrontIndex()
   const backIdx = props.scheduler.getBackIndex()
   const back = backIdx === frontIdx ? null : (props.manifest.items[backIdx] ?? null)
   setItemInSlot(backSlot(), back)
+  const restart = RESUME_MODE === 'restart'
+  if (restart) {
+    const { video } = elementsFor(frontSlot())
+    if (video && frontItem()?.type === 'video') video.currentTime = 0
+  }
   playFrontVideoIfNeeded()
   resetProgressTracking()
-  props.scheduler.resume()
+  props.scheduler.resume({ restart })
   if (stallTimer === null) {
     stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
   }

@@ -47,8 +47,15 @@ export interface SchedulerHandle {
    * move the front index. Idempotent.
    */
   pause(): void
-  /** Re-arm the slide timer with its REMAINING time. Idempotent. */
-  resume(): void
+  /**
+   * Un-freeze the playlist.
+   *
+   * Default (`restart: false`) re-arms the slide timer with its REMAINING
+   * time — the frame-exact continuation. With `restart: true` the current item
+   * starts over, so an image gets its FULL duration back; the stage does the
+   * matching seek for a video. Idempotent.
+   */
+  resume(opts?: { restart?: boolean }): void
   getFrontIndex(): number
   getBackIndex(): number
   onTransition(fn: (e: TransitionEvent) => void): () => void
@@ -224,9 +231,10 @@ export function createPlayerScheduler(
       pausedRemainingMs = Math.max(0, imageTimerMs - elapsed)
       clearImageTimer()
     },
-    resume() {
+    resume(opts) {
       if (stopped || !paused) return
       paused = false
+      const restart = opts?.restart === true
       if (startDeferred) {
         startDeferred = false
         emitItemStart(0)
@@ -237,7 +245,8 @@ export function createPlayerScheduler(
       const index = imageTimerIndex
       const remaining = pausedRemainingMs
       pausedRemainingMs = null
-      armImageTimer(index, remaining)
+      const full = Math.max(0, items[index]?.durationMs | 0)
+      armImageTimer(index, restart ? full : remaining)
     },
     getFrontIndex() {
       return front

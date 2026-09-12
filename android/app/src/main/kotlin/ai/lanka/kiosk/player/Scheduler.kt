@@ -132,13 +132,20 @@ class Scheduler(private val items: List<ManifestItem>, private val deps: Schedul
     }
 
     /** Re-arm the slide timer with its REMAINING time. Idempotent. */
-    fun resume() {
+    /**
+     * Un-freeze the playlist. Default re-arms the slide timer with its
+     * REMAINING time (frame-exact continuation); with [restart] the current
+     * item starts over, so an image gets its FULL duration back and the view
+     * does the matching seek for a video. Mirrors the TS twin. Idempotent.
+     */
+    fun resume(restart: Boolean = false) {
         if (stopped || !paused) return
         paused = false
         if (startDeferred) { startDeferred = false; emitItemStart(0); armImageTimerIfNeeded(0); return }
         val remaining = pausedRemainingMs ?: return
         pausedRemainingMs = null
-        armImageTimer(imageTimerIndex, remaining)
+        val full = maxOf(0, items.getOrNull(imageTimerIndex)?.durationMs ?: 0).toLong()
+        armImageTimer(imageTimerIndex, if (restart) full else remaining)
     }
 
     fun getFrontIndex() = front

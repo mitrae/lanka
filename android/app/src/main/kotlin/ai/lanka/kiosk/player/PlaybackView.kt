@@ -75,6 +75,8 @@ class PlaybackView @JvmOverloads constructor(
         /** Media ms a load must advance before earlier failures are forgiven;
          *  one frame every few seconds is a crawling decoder, not health. */
         const val HEALTHY_PROGRESS_MS = 5000L
+        /** See ResumeMode. Kept as a constant so the continue path stays live. */
+        private val RESUME_MODE = ResumeMode.RESTART
     }
 
     // Slot A/B swap. When `frontIsA` is true, slot A is front (visible), B is back.
@@ -540,6 +542,16 @@ class PlaybackView @JvmOverloads constructor(
     }
 
     /** Take the screen back. */
+    /**
+     * How the playlist resumes after an interrupt. Mirrors PlayerStage.vue's
+     * RESUME_MODE: `restart` today, because an ad interrupted halfway is a
+     * broken impression. The continue path is kept deliberately and is
+     * expected to become a per-organization choice. Restarting seeks the SAME
+     * prepared player back to 0 — it never re-prepares, which is what killed
+     * the Haier TV.
+     */
+    private enum class ResumeMode { RESTART, CONTINUE }
+
     fun standUp() {
         if (released) return
         suspended = false
@@ -549,9 +561,11 @@ class PlaybackView @JvmOverloads constructor(
         val backIdx = sched.getBackIndex()
         val backItem = if (backIdx == frontIdx) null else m.items.getOrNull(backIdx)
         setItemInSlot(backSlot(), backItem)
+        val restart = RESUME_MODE == ResumeMode.RESTART
+        if (restart && itemFor(frontSlot())?.type == "video") exoFor(frontSlot()).seekTo(0)
         playFrontVideoIfNeeded()
         resetProgressTracking()
-        sched.resume()
+        sched.resume(restart)
         mainHandler.removeCallbacks(stallRunnable)
         mainHandler.postDelayed(stallRunnable, STALL_SAMPLE_MS)
         // Re-arm the backoff cancelled in standDown(), or a stage that entered

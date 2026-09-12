@@ -180,6 +180,21 @@ class SchedulerPauseTest {
         assertEquals(1, s.getFrontIndex())
     }
 
+    // Twin of the TS `resume({ restart: true })` case. A slide 4 s into its 10 s
+    // gets the whole 10 s back, not the leftover 6 s.
+    @Test fun `resume with restart re-arms the slide with its full duration`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        deps.advanceTime(4_000)
+        s.pause()
+        s.resume(restart = true)
+        deps.advanceTime(9_999)
+        assertEquals(0, s.getFrontIndex())
+        deps.advanceTime(1)
+        assertEquals(1, s.getFrontIndex())
+    }
+
     @Test fun `pause and resume are idempotent`() {
         val deps = FakeDeps()
         val s = Scheduler(twoImages, deps)

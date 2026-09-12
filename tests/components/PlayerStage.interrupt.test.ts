@@ -47,6 +47,18 @@ function stubElementPause(el: HTMLMediaElement) {
   return fn
 }
 
+/** Give the element a settable currentTime: jsdom's is read-only-ish and the
+ *  restart assertion must see a real write, not a silently dropped one. */
+function stubElementCurrentTime(el: HTMLMediaElement, initial: number) {
+  let t = initial
+  Object.defineProperty(el, 'currentTime', {
+    configurable: true,
+    get: () => t,
+    set: (v: number) => { t = v }
+  })
+  return () => t
+}
+
 function mountStage() {
   const scheduler = createPlayerScheduler(items, {
     now: () => Date.now(),
@@ -341,5 +353,25 @@ describe('PlayerStage suspension', () => {
 
     setSpy.mockRestore()
     clearSpy.mockRestore()
+  })
+})
+
+describe('PlayerStage resume mode', () => {
+  beforeEach(() => stubMedia())
+
+  it('restarts the interrupted item from the top instead of continuing it', async () => {
+    // An ad interrupted halfway is a broken impression: the advertiser paid for
+    // a whole one. RESUME_MODE = 'restart' seeks the SAME paused element back
+    // to 0 — it must not re-assign src, which would re-prime the decoder.
+    const { w } = mountStage()
+    const front = w.findAll('video')[0].element as HTMLVideoElement
+    const readTime = stubElementCurrentTime(front, 371) // 6m11s into the clip
+    const srcBefore = front.src
+
+    await w.setProps({ suspended: true })
+    await w.setProps({ suspended: false })
+
+    expect(readTime()).toBe(0)
+    expect(front.src).toBe(srcBefore)
   })
 })
