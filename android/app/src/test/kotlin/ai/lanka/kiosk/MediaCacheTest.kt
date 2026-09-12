@@ -98,6 +98,55 @@ class MediaCacheTest {
         assertEquals(0, tmpFiles.size)
     }
 
+    @Test fun `a second downloadSync for a sha already in flight returns at once — one connection, one tmp`() {
+        // The poll thread and the SSE thread's reconcile both prefetch the
+        // interrupt clip. Without a guard both wrote the same .tmp, both failed
+        // the hash check, both deleted it — forever.
+        val content = "hello media content".toByteArray()
+        val sha = sha256Hex(content)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val accepted = java.util.concurrent.atomic.AtomicInteger(0)
+        val ss = ServerSocket(0)
+        val port = ss.localPort
+        Thread {
+            runCatching {
+                while (true) {
+                    val client = ss.accept()
+                    accepted.incrementAndGet()
+                    val reader = client.getInputStream().bufferedReader()
+                    while (reader.readLine()?.isNotEmpty() == true) { }
+                    release.await()
+                    val headers = "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nContent-Length: ${content.size}\r\n\r\n"
+                    client.getOutputStream().apply { write(headers.toByteArray()); write(content); flush() }
+                    client.close()
+                }
+            }
+        }.also { it.isDaemon = true }.start()
+
+        val first = Thread { runCatching { cache.downloadSync(sha, "http://127.0.0.1:$port/media") } }
+        first.start()
+        // Let the first call reach the server and block on the latch.
+        val deadline = System.currentTimeMillis() + 5_000
+        while (accepted.get() == 0 && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertEquals(1, accepted.get())
+
+        val secondReturnedAt = java.util.concurrent.atomic.AtomicLong(0)
+        val second = Thread {
+            runCatching { cache.downloadSync(sha, "http://127.0.0.1:$port/media") }
+            secondReturnedAt.set(System.currentTimeMillis())
+        }
+        val t0 = System.currentTimeMillis()
+        second.start()
+        second.join(2_000)
+        assertTrue("second call must not wait on the first download", secondReturnedAt.get() != 0L && secondReturnedAt.get() - t0 < 2_000)
+
+        release.countDown()
+        first.join(5_000)
+        ss.close()
+        assertTrue(cache.exists(sha))
+        assertEquals(1, accepted.get())
+    }
+
     // --- download verification: the path IS the hash ---
 
     @Test fun `downloadSync rejects a body shorter than Content-Length`() {

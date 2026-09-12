@@ -78,6 +78,7 @@
   - `export const INTERRUPT_ID = 1`
   - `export interface InterruptWindow { startsAt: number; endsAt: number }`
   - `export function nextWindow(nowMs: number, atMinutes: number, timezone: string, durationMs: number): InterruptWindow | null`
+  - `export function todaysWindow(nowMs: number, atMinutes: number, timezone: string, durationMs: number): InterruptWindow | null`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -85,7 +86,7 @@ Create `tests/services/interrupt.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest'
-import { nextWindow } from '~/server/services/interrupt'
+import { nextWindow, todaysWindow } from '~/server/services/interrupt'
 
 const KYIV = 'Europe/Kyiv'
 const MIN = 60_000
@@ -140,6 +141,42 @@ describe('nextWindow', () => {
   it('returns null for a zero or negative duration — a window with no length is not a window', () => {
     expect(nextWindow(Date.now(), AT_9AM, KYIV, 0)).toBeNull()
     expect(nextWindow(Date.now(), AT_9AM, KYIV, -1)).toBeNull()
+  })
+})
+
+describe('todaysWindow', () => {
+  // Distinct from nextWindow on purpose. nextWindow answers "what should the box
+  // be told to wait for", so it rolls to tomorrow the moment today's ends.
+  // todaysWindow answers "which occurrence was today", which is what the
+  // dashboard compares each device's report against — and it must NOT roll over,
+  // or from 09:01 onwards every screen would read as "not yet due".
+  it('returns today\'s occurrence before it has happened', () => {
+    const now = at('2026-07-01T06:00:00+03:00')
+    expect(todaysWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-01T09:00:00+03:00')
+    )
+  })
+
+  it('returns today\'s occurrence AFTER it has ended — where nextWindow rolls over', () => {
+    const now = at('2026-07-01T10:00:00+03:00')
+    expect(todaysWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-01T09:00:00+03:00')
+    )
+    expect(nextWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-02T09:00:00+03:00')
+    )
+  })
+
+  it('uses the LOCAL calendar date, not the server\'s', () => {
+    // 23:30 UTC on 30 June is already 02:30 on 1 July in Kyiv.
+    const now = at('2026-06-30T23:30:00Z')
+    expect(todaysWindow(now, AT_9AM, KYIV, MIN)!.startsAt).toBe(
+      at('2026-07-01T09:00:00+03:00')
+    )
+  })
+
+  it('returns null for a zero duration', () => {
+    expect(todaysWindow(Date.now(), AT_9AM, KYIV, 0)).toBeNull()
   })
 })
 ```
@@ -310,6 +347,30 @@ export function nextWindow(
   return null
 }
 
+/**
+ * The occurrence on the local calendar date of `nowMs`, whether or not it has
+ * already passed.
+ *
+ * Deliberately NOT nextWindow: that one rolls to tomorrow the instant today's
+ * window ends, because its job is to tell a box what to wait for. The dashboard
+ * needs the opposite — "which occurrence was today" — to compare each device's
+ * reported observance against. Deriving the status from nextWindow would make
+ * every screen read "not yet due" from 09:01 onwards.
+ */
+export function todaysWindow(
+  nowMs: number,
+  atMinutes: number,
+  timezone: string,
+  durationMs: number
+): InterruptWindow | null {
+  if (durationMs <= 0) return null
+  const hh = Math.floor(atMinutes / 60)
+  const mm = atMinutes % 60
+  const { y, m, d } = localDate(nowMs, timezone)
+  const startsAt = zonedTimeToEpoch(y, m, d, hh, mm, timezone)
+  return { startsAt, endsAt: startsAt + durationMs }
+}
+
 export type InterruptRow = typeof schema.interrupts.$inferSelect
 
 export async function getInterrupt(
@@ -326,7 +387,7 @@ export async function getInterrupt(
 - [ ] **Step 6: Run the tests**
 
 Run: `pnpm vitest run tests/services/interrupt.test.ts`
-Expected: PASS (7 tests)
+Expected: PASS (14 tests)
 
 - [ ] **Step 7: Run the full suite so the new migration is proven against every existing test**
 
@@ -350,7 +411,7 @@ git commit -m "feat(interrupt): interrupts table and the pure nextWindow occurre
 - Create: `tests/api/interrupt.test.ts`
 
 **Interfaces:**
-- Consumes: `INTERRUPT_ID`, `getInterrupt`, `nextWindow` (Task 1).
+- Consumes: `INTERRUPT_ID`, `getInterrupt`, `nextWindow`, `todaysWindow` (Task 1).
 - Produces:
   - `handleGetInterrupt(db, nowMs): Promise<InterruptStatus>`
   - `handlePutInterrupt(db, body, nowMs): Promise<InterruptStatus>`
@@ -505,8 +566,10 @@ Append to `server/services/interrupt.ts`:
 
 ```ts
 import { z } from 'zod'
-import { asc } from 'drizzle-orm'
 import { resolvePlaylistForDevice } from './resolver'
+// NOTE: merge `asc` into the existing `import { eq } from 'drizzle-orm'` at the
+// top of this file rather than adding a second import statement from it.
+import { asc } from 'drizzle-orm'
 
 export interface InterruptConfig {
   mediaId: number
@@ -575,11 +638,15 @@ async function buildStatus(
     ? nextWindow(nowMs, row.atMinutes, row.timezone, durationMs)
     : null
 
-  // "Today's" window for the observance check is the one currently published:
-  // before 09:00 that is today's (nothing has observed yet, everything reads
-  // "missed", which is correct — it has not happened); after it, the same
-  // startsAt every device should have reported.
-  const todayStart = window && nowMs >= window.startsAt ? window.startsAt : null
+  // Deliberately todaysWindow, NOT `window`. `window` is what the box is told to
+  // wait for and rolls to tomorrow the instant today's ends — using it here
+  // would make every screen read "not yet due" from 09:01 onwards, which is
+  // exactly when an operator looks at this page. Before today's start there is
+  // nothing to have observed yet, so todayStart stays null.
+  const todays = row.enabled
+    ? todaysWindow(nowMs, row.atMinutes, row.timezone, durationMs)
+    : null
+  const todayStart = todays && nowMs >= todays.startsAt ? todays.startsAt : null
 
   const deviceRows = await db
     .select({
@@ -1196,6 +1263,38 @@ describe('createInterruptTimer', () => {
     expect(t.observe(START + 5_000).active).toBe(false)
   })
 
+  it('keeps the latch across a WITHDRAWAL and republish of the same window', () => {
+    // The reachable replay path: a device 204s (unassigned), or an admin
+    // toggles `enabled` off and on again, inside a window that already played.
+    // The server recomputes the interrupt deterministically, so the republished
+    // window has the identical startsAt — and must not fire a second time.
+    const t = createInterruptTimer()
+    t.setSchedule(sched, START, START)
+    t.markDone()
+    t.setSchedule(null, null, START + 5_000)
+    t.setSchedule(sched, START + 10_000, START + 10_000)
+    expect(t.observe(START + 10_000).active).toBe(false)
+  })
+
+  it('stops at endsAt even when the clip is LONGER than the window', () => {
+    // Discriminating for the endsAt cutoff specifically: with durationMs equal
+    // to the window length, the duration guard masks the endsAt guard, so
+    // neither test proves the other.
+    const t = createInterruptTimer()
+    const longClip: InterruptSchedule = { ...sched, durationMs: 600_000 }
+    t.setSchedule(longClip, START, START)
+    expect(t.observe(START + 59_999).active).toBe(true)
+    expect(t.observe(START + 60_000).active).toBe(false)
+  })
+
+  it('keeps a previously derived offset when serverNow is null', () => {
+    const t = createInterruptTimer()
+    const clientNow = START - 3_600_000
+    t.setSchedule(sched, START, clientNow) // offset = +1h
+    t.setSchedule(sched, null, clientNow)  // no clock sample: keep the offset
+    expect(t.observe(clientNow).active).toBe(true)
+  })
+
   it('goes inactive when the schedule is withdrawn', () => {
     const t = createInterruptTimer()
     t.setSchedule(sched, START, START)
@@ -1246,8 +1345,8 @@ export interface InterruptTimerHandle {
   /**
    * Publish the current schedule and re-derive the clock offset.
    * `serverNow` is the server's epoch at response time; `clientNow` is
-   * `Date.now()` when it was received. A schedule with a new `startsAt`
-   * clears the done latch.
+   * `Date.now()` when it was received. Passing `null` withdraws the schedule
+   * without disturbing the done latch.
    */
   setSchedule(
     schedule: InterruptSchedule | null,
@@ -1269,11 +1368,12 @@ export function createInterruptTimer(): InterruptTimerHandle {
   return {
     setSchedule(next, serverNow, clientNow) {
       if (serverNow !== null) offsetMs = serverNow - clientNow
-      if (next === null) {
-        schedule = null
-        return
-      }
-      if (!schedule || schedule.startsAt !== next.startsAt) doneFor = null
+      // `doneFor` is deliberately never cleared here. observe() compares it
+      // against the CURRENT schedule's startsAt, so a latch left over from an
+      // earlier window is already inert — and clearing it on "we didn't have a
+      // schedule a moment ago" would reopen the exact replay this latch exists
+      // to prevent: a withdrawal (a 204, or the admin toggling `enabled` off)
+      // followed by a republish of the same window inside that window.
       schedule = next
     },
 
@@ -1299,7 +1399,7 @@ export function createInterruptTimer(): InterruptTimerHandle {
 - [ ] **Step 4: Run the tests**
 
 Run: `pnpm vitest run tests/player/createInterruptTimer.test.ts`
-Expected: PASS (11 tests)
+Expected: PASS (14 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1425,6 +1525,47 @@ describe('pause/resume', () => {
     expect(h.pending).toBe(0)
   })
 
+  it('does not advance on itemEnded while paused', () => {
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    const transitions: number[] = []
+    s.onTransition((e) => transitions.push(e.to))
+    s.start()
+    s.pause()
+    s.itemEnded(0)
+    expect(transitions).toEqual([])
+    expect(s.getFrontIndex()).toBe(0)
+  })
+
+  it('still REPORTS itemErrored while paused, but does not advance', () => {
+    // A decoder that dies mid-observance must reach device_errors; what it must
+    // not do is move the front index out from under the element the stage is
+    // about to resume.
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    const errors: string[] = []
+    const transitions: number[] = []
+    s.onItemError((_i, m) => errors.push(m))
+    s.onTransition((e) => transitions.push(e.to))
+    s.start()
+    s.pause()
+    s.itemErrored(0, 'decoder died')
+    expect(errors).toEqual(['decoder died'])
+    expect(transitions).toEqual([])
+    expect(s.getFrontIndex()).toBe(0)
+  })
+
+  it('leaves exactly one timer after an itemEnded is dropped and the scheduler resumes', () => {
+    const h = harness(twoImages)
+    const s = createPlayerScheduler(twoImages as any, h.deps)
+    s.start()
+    h.advance(4_000)
+    s.pause()
+    s.itemEnded(0) // dropped
+    s.resume()
+    expect(h.pending).toBe(1)
+  })
+
   it('single-video mode has no timer to pause and survives both calls', () => {
     const one = [{ id: 1, type: 'video', sha256: 'v', durationMs: 5_000 }]
     const h = harness(one)
@@ -1453,10 +1594,63 @@ Add to the `SchedulerHandle` interface, after `stop()`:
    * Freeze the playlist for a scheduled interrupt: cancel the image slide
    * timer, remembering how much of it was left. No transitions, no item starts.
    * Idempotent.
+   *
+   * While paused the scheduler REFUSES to advance. `itemEnded` is dropped and
+   * `itemErrored` still reports but does not move the front index — see the
+   * guards in those methods for why.
    */
   pause(): void
   /** Re-arm the slide timer with its REMAINING time. Idempotent. */
   resume(): void
+```
+
+**Guard the advancing paths against a paused scheduler.** `pause()` promises
+"no transitions", but nothing enforces it: the stage keeps feeding events during
+the interrupt, and the front video — paused, not torn down — can still fire
+`error` when its decoder dies, which is a documented Amlogic failure. An
+`ended` can also race the pause boundary.
+
+If `advance()` runs while paused the damage is not merely a leaked timer: the
+scheduler's front index moves while the visible element is still the old,
+paused item, so `standUp()` restores the back slot from the new index and calls
+`play()` on the wrong element — a broken screen once the observance ends.
+
+In `itemEnded`, change the first line to:
+
+```ts
+    itemEnded(index) {
+      // Dropped while paused: advancing here would desync the front index from
+      // the element the stage is about to resume.
+      if (stopped || paused) return
+```
+
+In `itemErrored`, keep the report but refuse the advance — a failure during the
+observance must still reach `device_errors`:
+
+```ts
+    itemErrored(index, msg) {
+      if (stopped) return
+      emitError(index, msg)
+      // Report, never advance: same desync hazard as itemEnded.
+      if (paused) return
+```
+
+`noteError` needs no guard — it only emits and never advances.
+
+Also guard `start()`, and make `armImageTimer` defensive about an existing
+handle. Overwriting `imageTimer` without clearing leaks the old handle, which
+is a latent bug independent of pausing:
+
+```ts
+    start() {
+      if (stopped || paused) return
+      if (mode === 'empty') return
+```
+
+```ts
+  function armImageTimer(index: number, ms: number): void {
+    clearImageTimer() // never overwrite a live handle — that leaks it
+    imageTimerIndex = index
 ```
 
 Replace the timer state and `armImageTimerIfNeeded` with:
@@ -1604,8 +1798,16 @@ describe('clock channel', () => {
     version: 1,
     items: [{ id: 1, type: 'video', sha256: 'a', durationMs: 1000 }]
   }
+  // What the server sends on the manifest…
   const interrupt = {
     mediaId: 9, sha256: 'silence', durationMs: 60_000,
+    startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000
+  }
+  // …and what the clock channel emits. `mediaId` is deliberately dropped: the
+  // player addresses media by sha256 and never needs the row id, so
+  // InterruptSchedule stays the narrow thing createInterruptTimer consumes.
+  const schedule = {
+    sha256: 'silence', durationMs: 60_000,
     startsAt: 1_800_000_000_000, endsAt: 1_800_000_060_000
   }
 
@@ -1622,7 +1824,7 @@ describe('clock channel', () => {
     await r.reconcile()
 
     expect(clocks).toHaveLength(3)
-    expect(clocks[2]).toEqual({ serverNow: 123, interrupt })
+    expect(clocks[2]).toEqual({ serverNow: 123, interrupt: schedule })
     // The stage must NOT be remounted by an unchanged manifest.
     expect(manifests).toHaveLength(1)
   })
@@ -1877,7 +2079,31 @@ describe('InterruptOverlay', () => {
     const w = mount(InterruptOverlay, {
       props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
     })
-    expect(w.find('video').attributes('muted')).toBeDefined()
+    // Vue sets `muted` as a DOM PROPERTY, not an attribute — asserting
+    // attributes('muted') can never pass, in jsdom or a real browser.
+    expect((w.find('video').element as HTMLVideoElement).muted).toBe(true)
+  })
+
+  it('does not re-arm the element, leak the blob, or emit after unmount', async () => {
+    // The parent tears this component down on the window's wall-clock end,
+    // which can land while a blob retry is still in flight.
+    let resolveFetch: (b: Blob) => void = () => {}
+    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(
+      Promise.resolve({ ok: true, blob: () => new Promise<Blob>((r) => { resolveFetch = r }) })
+    ))
+    const w = mount(InterruptOverlay, {
+      props: { sha256: 'silence', src: '/media/silence', startOffsetMs: 0 }
+    })
+    const video = w.find('video').element as HTMLVideoElement
+    await w.find('video').trigger('error') // starts the blob retry
+    w.unmount()
+    resolveFetch(new Blob(['x']))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(video.getAttribute('src')).toBeNull()
+    expect(revoke).toHaveBeenCalled()
+    expect(w.emitted('failed')).toBeFalsy()
   })
 })
 ```
@@ -1979,6 +2205,10 @@ let startupTimer: number | null = null
 let playing = false
 let blobUrl: string | null = null
 let triedBlob = false
+let failed = false
+/** Set on unmount. The parent tears this component down on the window's
+ *  wall-clock end, which can land while a blob retry is still in flight. */
+let disposed = false
 
 function clearStartupTimer(): void {
   if (startupTimer !== null) {
@@ -1988,7 +2218,11 @@ function clearStartupTimer(): void {
 }
 
 function fail(message: string): void {
-  if (playing) return
+  // `failed` is emitted at most once, and never after teardown: a late error
+  // from a still-in-flight load would otherwise fire into a parent that has
+  // already resumed the playlist.
+  if (playing || failed || disposed) return
+  failed = true
   clearStartupTimer()
   emit('failed', message)
 }
@@ -2025,7 +2259,17 @@ async function onError(): Promise<void> {
   if (!triedBlob && el) {
     triedBlob = true
     try {
-      blobUrl = await fetchBlobUrl(props.sha256)
+      const url = await fetchBlobUrl(props.sha256)
+      // The parent may have torn us down at the window's wall-clock end while
+      // this fetch was in flight. Re-arming `src` here would put a decoder back
+      // on an element onBeforeUnmount deliberately released — on hardware with
+      // a handful of decoder instances — and the URL would never be revoked,
+      // since the one revoke on the unmount path already ran.
+      if (disposed) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      blobUrl = url
       el.src = blobUrl
       el.load()
       return
@@ -2050,6 +2294,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   clearStartupTimer()
   const el = video.value
   if (el) {
@@ -2176,15 +2421,23 @@ describe('PlayerStage suspension', () => {
   })
 
   it('stops watchdog sampling while suspended — otherwise a paused front video reloads the page', async () => {
-    vi.useFakeTimers()
+    // NOTE: do NOT write this as "advance timers and assert nothing happened".
+    // Under jsdom `currentSrc` never populates, so sampleProgress can never trip
+    // a stall regardless of whether the interval was cleared — such a test
+    // passes even with the clearInterval deleted. Pin the mechanism instead:
+    // spy on window.clearInterval and assert the sampling handle is cleared on
+    // suspend and a fresh one created on resume. Verify by sabotage — delete the
+    // clearInterval call and confirm your test goes red.
+    const clearSpy = vi.spyOn(window, 'clearInterval')
+    const setSpy = vi.spyOn(window, 'setInterval')
     const { w } = mountStage()
-    await w.setProps({ suspended: true })
+    const setCallsAtMount = setSpy.mock.calls.length
 
-    // 60 s of an intentionally paused front video. The watchdog's threshold is
-    // 8 s, so if sampling were still running this would report a stall.
-    vi.advanceTimersByTime(60_000)
-    expect(w.emitted('stood-down')).toHaveLength(1)
-    vi.useRealTimers()
+    await w.setProps({ suspended: true })
+    expect(clearSpy).toHaveBeenCalled()
+
+    await w.setProps({ suspended: false })
+    expect(setSpy.mock.calls.length).toBeGreaterThan(setCallsAtMount)
   })
 
   it('resumes the front video WITHOUT reloading it — frame-exact resume', async () => {
@@ -2199,6 +2452,21 @@ describe('PlayerStage suspension', () => {
     expect(resumeSpy).toHaveBeenCalled()
     expect(front.src).toBe(srcBefore) // never re-assigned → currentTime preserved
     expect(front.play).toHaveBeenCalled()
+  })
+
+  it('cancels a pending stall recovery while suspended, and re-arms it on resume', async () => {
+    // A stage already mid-backoff when the interrupt fires would otherwise run
+    // mountInitial() during the observance: front re-primed, back re-armed,
+    // three live decoders alongside the overlay.
+    vi.useFakeTimers()
+    const { w } = mountStage()
+    // Drive the stage into the stalled state, then suspend mid-backoff.
+    ;(w.vm as any).stalled = true
+    await w.setProps({ suspended: true })
+    const loadCallsBefore = (HTMLMediaElement.prototype.load as any).mock.calls.length
+    vi.advanceTimersByTime(30_000) // past RECOVERY_DELAY_MS
+    expect((HTMLMediaElement.prototype.load as any).mock.calls.length).toBe(loadCallsBefore)
+    vi.useRealTimers()
   })
 
   it('restores the back-slot preload on resume', async () => {
@@ -2256,6 +2524,13 @@ function standDown(): void {
     video?.pause()
   }
   setItemInSlot(backSlot(), null)
+  // A stage already mid-backoff has a recovery timer armed. Left running it
+  // fires mountInitial() DURING the observance, which re-assigns src on both
+  // slots: the paused front decoder is re-primed (destroying the frame-exact
+  // resume, and re-priming is what killed a prod TV) and the back slot is
+  // re-armed, putting three live decoders on a box that has a handful — while
+  // the overlay is on screen. standUp() re-arms it if we are still stalled.
+  clearRecoveryTimer()
   // The watchdog does NOT exempt a paused element — a paused front video is a
   // fault it exists to recover from. Left running it would reload the page
   // about 8 s into the observance, which looks like success while actually
@@ -2279,12 +2554,25 @@ function standUp(): void {
   if (stallTimer === null) {
     stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
   }
+  // Re-arm the backoff we cancelled on the way down, or a stage that entered
+  // the observance stalled would sit stalled forever with no timer to heal it.
+  if (stalled.value) scheduleRecovery()
 }
 ```
 
-Inside `onMounted`, after the timer is started, add the watcher:
+Inside `onMounted`, after the timer is started, add the watcher — **and a
+mount-time catch-up**:
 
 ```ts
+  // This component is keyed on playlistId:version, so a manifest change during
+  // an interrupt REMOUNTS it with `suspended` already true. The watch below is
+  // not immediate, so without this the fresh stage would preload the back slot
+  // and play the playlist underneath a live overlay: three decoders on a box
+  // with a handful, and the watchdog reloading the page ~8 s in.
+  // The emit is harmless here — the parent is already past `arming`, so its
+  // handler is a no-op.
+  if (props.suspended) standDown()
+
   const stopSuspendWatch = watch(
     () => props.suspended === true,
     (on) => (on ? standDown() : standUp())
@@ -2333,6 +2621,7 @@ git commit -m "feat(player): stage stands down for an interrupt — paused front
   interruptSha: Ref<string | null>
   interruptOffsetMs: Ref<number>
   onStageStoodDown(): void
+  onInterruptStarted(): void
   onInterruptFailed(message: string): void
   ```
   and `Telemetry.interruptStarted(deviceId: string, startsAt: number): void`
@@ -2392,6 +2681,7 @@ In `PlayerBootState`:
   interruptSha: Ref<string | null>
   interruptOffsetMs: Ref<number>
   onStageStoodDown: () => void
+  onInterruptStarted: () => void
   onInterruptFailed: (message: string) => void
 ```
 
@@ -2423,6 +2713,17 @@ Inside `usePlayerBoot`, near the other refs:
     clearArmTimer()
     if (interruptPhase.value !== 'arming') return
     interruptPhase.value = 'playing'
+  }
+
+  /**
+   * Proof of observance, posted only once the clip has genuinely decoded a
+   * frame — NOT at handover. A screen where the clip fails to play must read as
+   * missed, or `devices.last_interrupt_at` would report an observance that
+   * never appeared on the glass, which is the one thing this field exists to
+   * rule out.
+   */
+  function onInterruptStarted(): void {
+    if (interruptPhase.value !== 'playing') return
     telemetry.interruptStarted(deviceId.value, interruptStartsAt)
   }
 
@@ -2437,6 +2738,10 @@ Inside `usePlayerBoot`, near the other refs:
   }
 
   function onInterruptFailed(message: string): void {
+    // A late `error` can arrive in the same tick the wall-clock branch already
+    // closed the window, before Vue unmounts the overlay. Without this guard
+    // that posts a device_errors row for a window that ended normally.
+    if (interruptPhase.value === 'idle') return
     // Loud, never blank: the playlist comes back and the failure is on record.
     telemetry.itemFailed(
       deviceId.value,
@@ -2464,6 +2769,14 @@ Inside `usePlayerBoot`, near the other refs:
       armTimer = window.setTimeout(onStageStoodDown, ARM_TIMEOUT_MS)
       return
     }
+    // NOTE on the `screen.value !== 'playing'` branch above: with today's
+    // contract it is defensive rather than live. A device with no playlist gets
+    // a bare 204, and the reconciler's 204 path zeroes the schedule too, so
+    // screen and clock cannot diverge. It is kept deliberately: the 204
+    // behaviour is a decision that was taken explicitly and may be revisited
+    // (delivering the observance to unassigned screens was considered and
+    // deferred), and without this branch that change would deadlock the
+    // handshake on a stage that will never acknowledge.
     // The window closed — on the wall clock, whatever the clip was doing.
     if (interruptPhase.value !== 'idle') endInterrupt()
   }
@@ -2503,7 +2816,7 @@ In `app/pages/player.vue`, destructure the new members and update the template:
 const {
   screen, manifest, scheduler, env, deviceId, lastError,
   interruptPhase, interruptSrc, interruptSha, interruptOffsetMs,
-  onStageStoodDown, onInterruptFailed
+  onStageStoodDown, onInterruptStarted, onInterruptFailed
 } = usePlayerBoot()
 ```
 
@@ -2531,6 +2844,7 @@ import InterruptOverlay from '~/app/components/player/InterruptOverlay.vue'
       :sha256="interruptSha"
       :src="interruptSrc"
       :start-offset-ms="interruptOffsetMs"
+      @started="onInterruptStarted"
       @failed="onInterruptFailed"
     />
 ```
@@ -2639,8 +2953,7 @@ In `i18n/locales/en.json`:
     "observedAt": "Observed at {time}",
     "missed": "Missed",
     "notYet": "Not yet due",
-    "noPlaylistWarning": "These devices have no playlist assigned. They receive no manifest and will not observe.",
-    "deviceCount": "no devices | {count} device | {count} devices"
+    "noPlaylistWarning": "These devices have no playlist assigned. They receive no manifest and will not observe."
   }
 ```
 
@@ -2667,8 +2980,7 @@ Add the identical key set to `i18n/locales/uk.json`. **Mind the plural order** �
     "observedAt": "Відтворено о {time}",
     "missed": "Пропущено",
     "notYet": "Ще не час",
-    "noPlaylistWarning": "Цим пристроям не призначено плейлист. Вони не отримують маніфест і не відтворять ролик.",
-    "deviceCount": "{count} пристрій | {count} пристрої | {count} пристроїв"
+    "noPlaylistWarning": "Цим пристроям не призначено плейлист. Вони не отримують маніфест і не відтворять ролик."
   }
 ```
 
@@ -2864,6 +3176,39 @@ onMounted(async () => {
 
 If a Nuxt UI v3 prop name differs in this project's version, follow whatever `app/pages/playlists/index.vue` and `app/pages/devices/index.vue` already use — they are the authority, not this snippet.
 
+**Extract the status derivation.** `deviceState`'s "missed vs not yet due"
+judgment must stay in lockstep with the server's `todaysWindow` /
+`observedToday` semantics, and it is the single piece of reasoning this plan
+has gotten wrong more than once. It does not belong inside a component where
+no test can reach it. Put the decision in `app/utils/interruptStatus.ts` as a
+plain function over plain data — the clock read and all `Intl` work stay at the
+call site, so the module never knows about timezones:
+
+```ts
+export type InterruptOutcome = 'observed' | 'missed' | 'notYet' | 'notScheduled'
+
+export function deviceInterruptOutcome(
+  device: Pick<InterruptDeviceStatus, 'observedToday' | 'lastInterruptAt'>,
+  config: Pick<InterruptConfig, 'enabled' | 'atMinutes'> | null,
+  nowMinutes: number
+): InterruptOutcome {
+  if (device.observedToday && device.lastInterruptAt !== null) return 'observed'
+  if (!config || !config.enabled) return 'notScheduled'
+  return nowMinutes >= config.atMinutes ? 'missed' : 'notYet'
+}
+```
+
+`tests/utils/interruptStatus.test.ts` pins the boundary explicitly: `atMinutes:
+540` with `nowMinutes: 540` → `'missed'`, `539` → `'notYet'`, plus the observed
+and disabled/unconfigured branches.
+
+**Both load paths must surface failure.** `onMounted` and the manual refresh
+each need a `catch` that toasts via the codebase's `err.data?.message ??
+err.message` idiom, and the 30 s poll must be armed whether or not the first
+load succeeded. Without that, a failed load renders identically to a fresh
+unconfigured install — on the page whose whole job is proving the fleet
+observed, that is the worst available failure mode.
+
 - [ ] **Step 5: Badge the clip on the media page**
 
 The 409 from Task 4 stops an accidental deletion, but only after the operator has tried. Surface it before they do: in `app/pages/media.vue` (and `MediaDetailDrawer` if the delete button lives there), fetch `api.getInterrupt()` once and render a `UBadge` on the row whose `id === config.mediaId`, labelled `t('schedule.title')`.
@@ -2897,7 +3242,7 @@ git commit -m "feat(dashboard): schedule page — interrupt config and per-devic
 - Modify: `android/app/src/main/kotlin/ai/lanka/kiosk/player/Scheduler.kt`
 - Create: `android/app/src/main/kotlin/ai/lanka/kiosk/player/InterruptTimer.kt`
 - Create: `android/app/src/test/kotlin/ai/lanka/kiosk/player/InterruptTimerTest.kt`
-- Create: `android/app/src/test/kotlin/ai/lanka/kiosk/player/SchedulerPauseTest.kt`
+- Modify: `android/app/src/test/kotlin/ai/lanka/kiosk/player/SchedulerTest.kt` (add pause/resume cases, reusing its existing FakeDeps)
 
 **Interfaces:**
 - Consumes: the manifest contract from Task 3.
@@ -2999,6 +3344,30 @@ class InterruptTimerTest {
         assertTrue(!isActive(t.observe(start + 5_000)))
     }
 
+    @Test fun `keeps the latch across a withdrawal and republish`() {
+        val t = InterruptTimer()
+        t.setSchedule(sched, start, start)
+        t.markDone()
+        t.setSchedule(null, null, start + 5_000)
+        t.setSchedule(sched, start + 10_000, start + 10_000)
+        assertTrue(!isActive(t.observe(start + 10_000)))
+    }
+
+    @Test fun `stops at endsAt even when the clip is longer than the window`() {
+        val t = InterruptTimer()
+        t.setSchedule(sched.copy(durationMs = 600_000), start, start)
+        assertTrue(isActive(t.observe(start + 59_999)))
+        assertTrue(!isActive(t.observe(start + 60_000)))
+    }
+
+    @Test fun `keeps a previously derived offset when serverNow is null`() {
+        val t = InterruptTimer()
+        val clientNow = start - 3_600_000
+        t.setSchedule(sched, start, clientNow)
+        t.setSchedule(sched, null, clientNow)
+        assertTrue(isActive(t.observe(clientNow)))
+    }
+
     @Test fun `goes inactive when the schedule is withdrawn`() {
         val t = InterruptTimer()
         t.setSchedule(sched, start, start)
@@ -3009,43 +3378,12 @@ class InterruptTimerTest {
 }
 ```
 
-Create `android/app/src/test/kotlin/ai/lanka/kiosk/player/SchedulerPauseTest.kt`:
+Add the pause/resume cases to the **existing** `SchedulerTest.kt`, reusing its
+`FakeDeps` (see above — do not define a second fake clock). Shown here as a
+separate class for readability; put them wherever they sit most naturally in
+that file:
 
 ```kotlin
-package ai.lanka.kiosk.player
-
-import org.junit.Assert.assertEquals
-import org.junit.Test
-
-/** Virtual clock + timer queue, so pause/resume can be tested without Android. */
-private class FakeDeps : SchedulerDeps {
-    // Named `clock`, not `now`: SchedulerDeps.now() is the method it overrides,
-    // and android.os.SystemClock (the production default) does not exist in the
-    // JVM unit-test source set.
-    var clock = 0L
-    private data class T(val id: Long, val at: Long, val cb: () -> Unit)
-    private val timers = mutableListOf<T>()
-    private var nextId = 1L
-    val pending: Int get() = timers.size
-
-    override fun now(): Long = clock
-
-    override fun setTimeout(cb: () -> Unit, ms: Long): Any {
-        val id = nextId++
-        timers.add(T(id, clock + ms, cb))
-        return id
-    }
-    override fun clearTimeout(handle: Any) {
-        timers.removeAll { it.id == handle }
-    }
-    fun advance(ms: Long) {
-        clock += ms
-        for (t in timers.toList()) {
-            if (t.at <= clock) { timers.remove(t); t.cb() }
-        }
-    }
-}
-
 class SchedulerPauseTest {
     private val twoImages = listOf(
         ManifestItem(1, "image", "a", 10_000),
@@ -3084,6 +3422,55 @@ class SchedulerPauseTest {
         s.pause(); s.pause(); s.resume(); s.resume()
         deps.advance(6_000)
         assertEquals(1, s.getFrontIndex())
+    }
+
+    @Test fun `does not advance on itemEnded while paused`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        s.pause()
+        s.itemEnded(0)
+        assertEquals(0, s.getFrontIndex())
+    }
+
+    @Test fun `reports itemErrored while paused without advancing`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        val errors = mutableListOf<String>()
+        s.onItemError { _, m -> errors.add(m) }
+        s.start()
+        s.pause()
+        s.itemErrored(0, "decoder died")
+        assertEquals(listOf("decoder died"), errors)
+        assertEquals(0, s.getFrontIndex())
+    }
+
+    @Test fun `resume is a no-op when nothing was paused`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        s.resume()
+        deps.advance(10_000)
+        assertEquals(1, s.getFrontIndex())
+    }
+
+    @Test fun `single-video mode has no timer to pause and survives both calls`() {
+        val one = listOf(ManifestItem(1, "video", "v", 5_000))
+        val deps = FakeDeps()
+        val s = Scheduler(one, deps)
+        s.start(); s.pause(); s.resume()
+        assertEquals(SchedulerMode.SINGLE_VIDEO, s.mode)
+    }
+
+    @Test fun `leaves exactly one timer after a dropped itemEnded and a resume`() {
+        val deps = FakeDeps()
+        val s = Scheduler(twoImages, deps)
+        s.start()
+        deps.advance(4_000)
+        s.pause()
+        s.itemEnded(0) // dropped
+        s.resume()
+        assertEquals(1, deps.pendingCount)
     }
 
     @Test fun `stop while paused leaves no timer`() {
@@ -3147,23 +3534,34 @@ sealed class InterruptState {
     data class Active(val schedule: ManifestInterrupt, val offsetMs: Long) : InterruptState()
 }
 
+/**
+ * Unlike its single-threaded TypeScript twin, this instance is touched from
+ * three threads: `setSchedule` from the network thread, `observe` from the
+ * interrupt tick, `markDone` from the UI thread. All three methods are
+ * `@Synchronized` — not the fields `@Volatile`, because `observe` reads all
+ * three in combination and per-field visibility still permits a torn read.
+ * The object is tiny and contention is one 500 ms tick against one 30 s fetch.
+ */
 class InterruptTimer {
     private var schedule: ManifestInterrupt? = null
     private var offsetMs = 0L
     private var doneFor: Long? = null
 
     /**
-     * Publish the current schedule and re-derive the clock offset. A schedule
-     * with a new startsAt clears the done latch.
+     * Publish the current schedule and re-derive the clock offset. Passing null
+     * withdraws the schedule without disturbing the done latch.
      */
+    @Synchronized
     fun setSchedule(next: ManifestInterrupt?, serverNow: Long?, clientNow: Long) {
         if (serverNow != null) offsetMs = serverNow - clientNow
-        if (next == null) { schedule = null; return }
-        val current = schedule
-        if (current == null || current.startsAt != next.startsAt) doneFor = null
+        // doneFor is deliberately never cleared here — see the TS twin. observe()
+        // compares it against the CURRENT schedule's startsAt, so a stale latch is
+        // already inert, and clearing it on a withdrawal would reopen the replay
+        // this latch exists to prevent.
         schedule = next
     }
 
+    @Synchronized
     fun observe(clientNow: Long): InterruptState {
         val s = schedule ?: return InterruptState.Inactive
         if (doneFor == s.startsAt) return InterruptState.Inactive
@@ -3177,6 +3575,7 @@ class InterruptTimer {
     }
 
     /** Mark the current window consumed. */
+    @Synchronized
     fun markDone() {
         schedule?.let { doneFor = it.startsAt }
     }
@@ -3204,6 +3603,7 @@ Replace the timer state and arming:
     }
 
     private fun armImageTimer(index: Int, ms: Long) {
+        clearImageTimer() // never overwrite a live handle — that leaks it
         imageTimerIndex = index
         imageTimerArmedAt = nowMs()
         imageTimerMs = ms
@@ -3218,27 +3618,72 @@ Replace the timer state and arming:
     }
 ```
 
-`SchedulerDeps` has no clock, so add one with a default so existing callers and `AndroidSchedulerDeps` keep compiling:
+`SchedulerDeps` has no clock, so add one — **abstract, with no default body**:
 
 ```kotlin
 interface SchedulerDeps {
     fun setTimeout(cb: () -> Unit, ms: Long): Any
     fun clearTimeout(handle: Any)
-    /** Virtualised in tests; System.uptimeMillis() in production. */
-    fun now(): Long = android.os.SystemClock.uptimeMillis()
+    /** Virtualised in tests; SystemClock.uptimeMillis() in production. */
+    fun now(): Long
 }
 ```
 
-**In the JVM unit-test source set `android.os.SystemClock` is unavailable**, which is why `FakeDeps` above overrides `now()`.
+**Do not give it a default of `android.os.SystemClock.uptimeMillis()`.** This
+module sets `unitTests.isReturnDefaultValues = true`, so in a JVM test that call
+returns **0** instead of throwing — every existing scheduler test would run
+against a frozen clock, `pause()` would compute a nonsense elapsed time, and
+nothing would fail. An abstract method makes the compiler name every implementor
+instead.
+
+There are exactly two implementors, and both must gain `now()`:
+
+- `AndroidSchedulerDeps` (production) → `override fun now(): Long = android.os.SystemClock.uptimeMillis()`
+- `FakeDeps` in the **existing** `SchedulerTest.kt` → it already carries a virtual
+  clock field used as `now + ms`; expose it as `override fun now(): Long = <that field>`.
+
+**Reuse that existing `FakeDeps` for the new pause/resume tests** rather than
+defining a second one. Two fake clocks in one module is how they drift apart.
 
 In `Scheduler`, reference it as `private fun nowMs() = deps.now()`.
+
+**Guard the advancing paths**, exactly as the TypeScript twin does and for the
+same reason — a paused front player can still surface an error, and advancing
+would desync the front index from the surface the host is about to resume:
+
+```kotlin
+    fun start() {
+        if (stopped || paused || mode == SchedulerMode.EMPTY) return
+        emitItemStart(0); armImageTimerIfNeeded(0)
+    }
+
+    fun itemEnded(index: Int) {
+        // Dropped while paused — see the TS twin.
+        if (stopped || paused) return
+        if (mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
+        if (index != front) return
+        advance()
+    }
+
+    fun itemErrored(index: Int, message: String) {
+        if (stopped) return
+        emitError(index, message)
+        if (paused) return // report, never advance
+        if (mode == SchedulerMode.EMPTY || mode == SchedulerMode.SINGLE_VIDEO || mode == SchedulerMode.SINGLE_IMAGE) return
+        if (index != front) return
+        advance()
+    }
+```
+
+`noteError` needs no guard — it only emits.
 
 Add the two methods:
 
 ```kotlin
     /**
      * Freeze the playlist for a scheduled interrupt: cancel the slide timer,
-     * remembering how much of it was left. Idempotent.
+     * remembering how much of it was left. While paused the scheduler refuses
+     * to advance. Idempotent.
      */
     fun pause() {
         if (stopped || paused) return
@@ -3446,6 +3891,19 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
         }
     }
 
+    /**
+     * `showOnly` must skip the overlay. It hides every root child that is not
+     * its argument, and `interruptView` is a sibling child — so a manifest
+     * change landing mid-window would hide the overlay while its player kept
+     * decoding invisibly. `addView` also appends, so a freshly added screen
+     * sits above the overlay in z-order and it must be re-raised:
+     *
+     *     if (child === interruptView) continue
+     *     ...
+     *     interruptView?.bringToFront()
+     *
+     * The decoder-budget guard is a different invariant and does not cover this.
+     */
     private fun beginInterrupt(state: InterruptState.Active) {
         val sha = state.schedule.sha256
         // Stand the stage down FIRST: the back slot must be released before a
@@ -3460,6 +3918,20 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
             volume = 0f // no audio, ever
             repeatMode = Player.REPEAT_MODE_OFF
             addListener(object : Player.Listener {
+                /**
+                 * Proof of observance, posted only once the clip is genuinely
+                 * rendering — NOT at handover. A screen whose clip fails to
+                 * decode must read as missed, or devices.last_interrupt_at
+                 * reports an observance that never reached the glass, which is
+                 * the one thing that field exists to rule out. Mirrors the web
+                 * overlay's `started` emit.
+                 */
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying && !interruptReported) {
+                        interruptReported = true
+                        telemetry.interruptStarted(deviceId, interruptStartsAt)
+                    }
+                }
                 override fun onPlayerError(error: PlaybackException) {
                     // Loud, never blank: give the screen back and record it.
                     telemetry.itemFailed(deviceId, null, sha, "interrupt: ${error.errorCodeName}")
@@ -3482,7 +3954,6 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
         interruptStartsAt = state.schedule.startsAt
         root.addView(view, matchParent())
         view.bringToFront()
-        telemetry.interruptStarted(deviceId, interruptStartsAt)
     }
 
     /**
@@ -3490,6 +3961,10 @@ Add the handlers (all UI thread — ExoPlayer is not thread-safe):
      * clip's own end — so a hung clip cannot hold the screen.
      */
     private fun endInterrupt() {
+        // Mirrors the web twin's idle guard. Without it, stop() latches
+        // markDone() on whatever schedule is loaded — so a stop at 08:59 marks
+        // today's window played on a timer that never ran it.
+        if (interruptPlayer == null) return
         interruptView?.let { v -> v.player = null; root.removeView(v) }
         interruptView = null
         interruptPlayer?.let { runCatching { it.release() } }
@@ -3599,7 +4074,67 @@ No unit test reaches the part that actually matters. Build a **production** bund
 5. `device_errors` stays clean; `devices.last_interrupt_at` lands within a second or two of the window start, and `/schedule` shows the device as observed.
 6. Late join: start the box mid-window; it enters at the right offset and still ends on time.
 7. Pull the network before the window: it fires anyway, from the schedule it already holds, off the local cache.
-8. Repeat on the native surface (`set-surface native`).
+8. **Edit the assigned playlist while the window is running** (bump its version
+   from the dashboard, so a manifest change lands mid-observance). The clip must
+   stay on screen and on top for the rest of the minute, and the playlist must
+   resume normally after. On the native surface this is the one step that
+   exercises the `showOnly` z-order/visibility path, which no test in either
+   toolchain can observe — it was a Critical found only by reading.
+9. Repeat every step on the native surface (`set-surface native`). Everything in
+   `NativeSurface`/`PlaybackView` is build-verified only; this checklist is its
+   entire verification.
+10. **Run two consecutive windows** — two mornings, or reconfigure for a second
+    window the same day. Every test and every other step here exercises exactly
+    *one* window, which is why a second-window bug (the latch marking tomorrow
+    as already-played) survived fifteen tasks of review and was caught only by
+    the final read. This is the highest-value step on the list and it stays
+    valuable now that the bug is fixed: it is the only thing that exercises the
+    latch at all.
+11. **Set the TV's system clock an hour wrong** before the window and confirm it
+    still fires at the right instant (`adb shell date`, or just turn off
+    automatic time). The `serverNow` → offset correction is the most
+    load-bearing mechanism in the design that no test can validate against real
+    hardware, and it is trivial to exercise.
+12. **Point the schedule at a deliberately broken clip** — an H.264 High-profile
+    file, whose failure mode on these boxes is already documented. Expect the
+    screen back within ~5 s on both surfaces, with a `device_errors` row
+    carrying the sha and NO `last_interrupt_at`. This is the only way to see
+    "failure is loud, never blank" actually working rather than assumed.
+13. **Cover the two screens the overlay reaches but the stage does not:** a
+    device with no playlist (confirm `/schedule` warns, and that the box
+    correctly does *not* observe, per the 204 contract), and a box sitting on
+    the standby or no-content screen when the window opens (confirm the overlay
+    appears anyway, on both surfaces). Neither claim is observable to any test.
+
+**Two steps whose failure looks like success**, so watch for them specifically:
+step 4 (no page reload) — if the watchdog gate regresses the screen still comes
+back, just from item 0 with the playlist restarted; and step 8 (mid-window
+playlist edit) — the only observation point in either toolchain for native
+z-order, where a regression puts the playlist *on top of* the clip.
+
+## Known follow-ups (deferred from the final review)
+
+Not defects that block merge; each was judged and deferred deliberately.
+
+Two earlier entries were closed by the 2026-09-09 review pass on PR #1:
+the interrupt pre-download now backs off per sha (60 s doubling to 1 h,
+after the manifest emit, on both surfaces — `useReconciler.ts` / `PrefetchGate.kt`),
+and the join offset is read off the corrected clock at seek time
+(`InterruptOverlay`'s `offsetNow` prop / `interruptOffsetNow` in `usePlayerBoot`).
+
+1. **`sampleInterrupt` has no direct test.** The booted tests in
+   `usePlayerBoot.interrupt.test.ts` now drive one window through the real
+   tick (register → reconcile → tick → arm), but the wall-clock end rule and
+   the latch across two consecutive windows are still exercised by nothing
+   above the pure timer. Cheapest durable pin: expose a `_sampleInterrupt`
+   test hook (the file already precedents `_resetNativeDeviceCache`), inject a
+   clock, and drive two consecutive windows.
+2. **`app/pages/media.vue` calls `GET /api/interrupt` on every visit** purely to
+   badge one row, which runs a full fleet-status computation including a
+   per-device `resolvePlaylistForDevice`. Free when unconfigured, cheap at fleet
+   size. Consider a light variant or carrying `isInterruptClip` on the media row.
+3. Dead `Number(p.y ?? p.year)` branch in `server/services/interrupt.ts` —
+   `Intl` never emits a part of type `y`.
 
 ## Rollout
 

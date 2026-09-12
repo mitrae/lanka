@@ -55,7 +55,8 @@ describe('GET /api/devices/:id/manifest handler', () => {
       items: [
         { id: expect.any(Number), type: 'video', sha256: 'aaa', durationMs: 15000 },
         { id: expect.any(Number), type: 'image', sha256: 'bbb', durationMs: 8000 }
-      ]
+      ],
+      serverNow: expect.any(Number)
     })
   })
 
@@ -123,5 +124,67 @@ describe('GET /api/devices/:id/manifest handler', () => {
     const r = await handleManifest(db, 'dev-1')
     expect(r?.items[0].durationMs).toBe(15000) // video native
     expect(r?.items[1].durationMs).toBe(7000) // image override
+  })
+
+  it('publishes no interrupt, rather than throwing, when the stored timezone is one Intl rejects', async () => {
+    // This handler runs inside every TV's 30 s poll. One bad row must not
+    // take playlist changes and deploy reloads away from the whole fleet.
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: grp.id })
+    const v = await seedMedia(db, { sha256: 'aaa', kind: 'video', durationMs: 15000 })
+    const clip = await seedMedia(db, { sha256: 'silence', kind: 'video', durationMs: 60000 })
+    const pl = await seedPlaylist(db, { name: 'P', items: [{ mediaId: v.id }] })
+    await assign(db, { deviceId: 'dev-1', playlistId: pl.id })
+    await db.insert(schema.interrupts).values({
+      id: 1, mediaId: clip.id, atMinutes: 540, timezone: 'Mars/Olympus', enabled: true
+    })
+
+    const m = await handleManifest(db, 'dev-1', Date.now())
+    expect(m).not.toBeNull()
+    expect(m!.items).toHaveLength(1)
+    expect(m!.interrupt).toBeUndefined()
+  })
+
+  it('carries serverNow and the next interrupt window', async () => {
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: grp.id })
+    const v = await seedMedia(db, { sha256: 'aaa', kind: 'video', durationMs: 15000 })
+    const clip = await seedMedia(db, { sha256: 'silence', kind: 'video', durationMs: 60000 })
+    const pl = await seedPlaylist(db, { name: 'P', items: [{ mediaId: v.id }] })
+    await assign(db, { deviceId: 'dev-1', playlistId: pl.id })
+    await db.insert(schema.interrupts).values({
+      id: 1, mediaId: clip.id, atMinutes: 9 * 60, timezone: 'Europe/Kyiv', enabled: true
+    })
+
+    const now = new Date('2026-07-01T06:00:00+03:00').getTime()
+    const result = await handleManifest(db, 'dev-1', now)
+
+    expect(result!.serverNow).toBe(now)
+    expect(result!.interrupt).toEqual({
+      mediaId: clip.id,
+      sha256: 'silence',
+      durationMs: 60000,
+      startsAt: new Date('2026-07-01T09:00:00+03:00').getTime(),
+      endsAt: new Date('2026-07-01T09:01:00+03:00').getTime()
+    })
+  })
+
+  it('omits the interrupt when it is disabled, but still sends serverNow', async () => {
+    const addr = await seedAddress(db)
+    const grp = await seedGroup(db, addr.id)
+    await seedDevice(db, { id: 'dev-1', groupId: grp.id })
+    const v = await seedMedia(db, { sha256: 'aaa', kind: 'video', durationMs: 15000 })
+    const clip = await seedMedia(db, { sha256: 'silence', kind: 'video', durationMs: 60000 })
+    const pl = await seedPlaylist(db, { name: 'P', items: [{ mediaId: v.id }] })
+    await assign(db, { deviceId: 'dev-1', playlistId: pl.id })
+    await db.insert(schema.interrupts).values({
+      id: 1, mediaId: clip.id, atMinutes: 9 * 60, timezone: 'Europe/Kyiv', enabled: false
+    })
+
+    const result = await handleManifest(db, 'dev-1', Date.now())
+    expect(result!.interrupt).toBeUndefined()
+    expect(typeof result!.serverNow).toBe('number')
   })
 })

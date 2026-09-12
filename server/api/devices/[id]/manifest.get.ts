@@ -3,12 +3,21 @@ import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import * as schema from '~/server/db/schema'
 import { useDb } from '~/server/db/client'
 import { resolvePlaylistForDevice } from '~/server/services/resolver'
+import { getInterrupt, nextWindow, type InterruptWindow } from '~/server/services/interrupt'
 
 export type ManifestItem = {
   id: number
   type: 'video' | 'image'
   sha256: string
   durationMs: number
+}
+
+export type ManifestInterrupt = {
+  mediaId: number
+  sha256: string
+  durationMs: number
+  startsAt: number
+  endsAt: number
 }
 
 export type Manifest = {
@@ -20,11 +29,18 @@ export type Manifest = {
    *  mismatch with its own bundle. Added by the route handler, not by
    *  handleManifest, so the pure function stays free of runtime config. */
   playerBuild?: string
+  /** Server clock at response time. The player derives an offset from it, so a
+   *  TV that boots with a wrong system clock still fires at the right moment. */
+  serverNow?: number
+  /** The next interrupt occurrence that has not yet ended. Absent when none is
+   *  configured or it is disabled. */
+  interrupt?: ManifestInterrupt
 }
 
 export async function handleManifest(
   db: BetterSQLite3Database<typeof schema>,
-  deviceId: string
+  deviceId: string,
+  nowMs: number = Date.now()
 ): Promise<Manifest | null> {
   const [device] = await db
     .select()
@@ -63,6 +79,37 @@ export async function handleManifest(
     .where(eq(schema.playlistItems.playlistId, resolved.playlistId))
     .orderBy(asc(schema.playlistItems.position))
 
+  const interruptRow = await getInterrupt(db)
+  let interrupt: ManifestInterrupt | undefined
+  if (interruptRow?.enabled) {
+    const [clip] = await db
+      .select()
+      .from(schema.media)
+      .where(eq(schema.media.id, interruptRow.mediaId))
+    const durationMs = clip?.durationMs ?? 0
+    // One bad row must degrade to "no interrupt", never to a 500: this runs
+    // inside every TV's 30 s poll, and a throw here would stop playlist
+    // changes, deploy reloads and schedule updates reaching the whole fleet
+    // (an unknown timezone makes Intl throw RangeError, for one).
+    let w: InterruptWindow | null = null
+    try {
+      w = clip
+        ? nextWindow(nowMs, interruptRow.atMinutes, interruptRow.timezone, durationMs)
+        : null
+    } catch (err) {
+      console.error('[manifest] interrupt window unavailable, publishing none:', err)
+    }
+    if (clip && w) {
+      interrupt = {
+        mediaId: clip.id,
+        sha256: clip.sha256,
+        durationMs,
+        startsAt: w.startsAt,
+        endsAt: w.endsAt
+      }
+    }
+  }
+
   return {
     playlistId: pl.id,
     playlistName: pl.name,
@@ -73,7 +120,9 @@ export async function handleManifest(
       sha256: r.mediaSha,
       durationMs:
         r.mediaKind === 'video' ? (r.mediaDur ?? 0) : (r.durationMsOverride ?? 0)
-    }))
+    })),
+    serverNow: nowMs,
+    ...(interrupt ? { interrupt } : {})
   }
 }
 

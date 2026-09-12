@@ -61,6 +61,7 @@ export async function seedMedia(
     bytes?: number
     durationMs?: number | null
     organizationId?: number | null
+    quality?: 'low' | 'standard' | 'high'
   }
 ) {
   const [row] = await db
@@ -76,7 +77,8 @@ export async function seedMedia(
           : opts.kind === 'video'
             ? 15000
             : null,
-      organizationId: opts.organizationId ?? null
+      organizationId: opts.organizationId ?? null,
+      quality: opts.quality ?? 'standard'
     })
     .returning()
   return row

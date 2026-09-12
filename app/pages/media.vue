@@ -17,11 +17,15 @@ const { t } = useI18n()
 const store = useMediaStore()
 const confirm = useConfirm()
 const toast = useToast()
+const api = useApiClient()
 
 const orgsStore = useOrganizationsStore()
 
 const showUpload = ref(false)
 const selectedId = ref<number | null>(null)
+/** The daily interrupt's clip, if configured. Fetched once -- this page only
+ *  needs to badge one row, not drive the schedule itself. */
+const interruptMediaId = ref<number | null>(null)
 
 const orgFilter = ref<OrgFilter>(ORG_FILTER_ALL)
 
@@ -40,6 +44,11 @@ onMounted(() => {
   store.refresh()
   store.pollUploads()
   orgsStore.refresh()
+  // Best-effort: a failure here only means the badge doesn't show, not that
+  // the page is broken.
+  api.getInterrupt()
+    .then((s) => { interruptMediaId.value = s.config?.mediaId ?? null })
+    .catch(() => {})
 })
 onUnmounted(() => store.stopPolling())
 
@@ -60,17 +69,25 @@ watch(
 
 async function remove(m: MediaListRow) {
   const used = m.usedInPlaylists > 0
+  // The daily schedule is cleared only through its OWN flag, after a confirm
+  // that says so: the playlist `force` must never take the schedule with it.
+  const isInterruptClip = interruptMediaId.value !== null && m.id === interruptMediaId.value
+  const parts = [
+    used
+      ? t('media.deleteConfirmUsed', m.usedInPlaylists, { n: m.usedInPlaylists })
+      : t('media.deleteConfirmUnused')
+  ]
+  if (isInterruptClip) parts.push(t('media.deleteConfirmInterrupt'))
   const ok = await confirm({
     title: t('media.deleteConfirmTitle', { name: m.filename }),
-    description: used
-      ? t('media.deleteConfirmUsed', m.usedInPlaylists, { n: m.usedInPlaylists })
-      : t('media.deleteConfirmUnused'),
+    description: parts.join(' '),
     confirmLabel: t('common.delete'),
     destructive: true
   })
   if (!ok) return
   try {
-    await store.delete(m.id, { force: used })
+    await store.delete(m.id, { force: used, clearInterrupt: isInterruptClip })
+    if (isInterruptClip) interruptMediaId.value = null
     toast.add({ title: t('media.deleted'), color: 'success' })
   } catch (err: any) {
     toast.add({
@@ -143,6 +160,7 @@ async function remove(m: MediaListRow) {
         v-for="m in visibleMedia"
         :key="m.id"
         :media="m"
+        :scheduled="m.id === interruptMediaId"
         @select="selectedId = m.id"
         @delete="remove"
       />

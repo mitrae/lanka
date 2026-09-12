@@ -75,6 +75,8 @@ class PlaybackView @JvmOverloads constructor(
         /** Media ms a load must advance before earlier failures are forgiven;
          *  one frame every few seconds is a crawling decoder, not health. */
         const val HEALTHY_PROGRESS_MS = 5000L
+        /** See ResumeMode. Kept as a constant so the continue path stays live. */
+        private val RESUME_MODE = ResumeMode.RESTART
     }
 
     // Slot A/B swap. When `frontIsA` is true, slot A is front (visible), B is back.
@@ -104,6 +106,13 @@ class PlaybackView @JvmOverloads constructor(
     // Self-heal state.
     private var consecutiveErrors = 0
     private var stalled = false
+    /** True while a scheduled interrupt owns the screen. Every self-heal path
+     *  checks it: under the overlay only telemetry may run. A retry would
+     *  re-prepare the paused front player (the re-prime that killed a prod
+     *  TV), and the recovery runnable would fire mountInitial() mid-observance
+     *  — standDown() only ever stopped the two timers; the event-driven paths
+     *  were wide open. Mirrors PlayerStage.vue's isSuspended(). */
+    private var suspended = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private var recoveryPending = false
     private val recoveryRunnable = Runnable {
@@ -176,7 +185,7 @@ class PlaybackView @JvmOverloads constructor(
     /** Bind a manifest + scheduler and start playback. Idempotent re-bind is not
      *  supported — the host recreates this view (or calls [release] first) on a
      *  manifest change, matching PlayerStage.vue's `:key`-driven remount. */
-    fun bind(manifest: Manifest, scheduler: Scheduler) {
+    fun bind(manifest: Manifest, scheduler: Scheduler, suspended: Boolean = false) {
         this.manifest = manifest
         this.scheduler = scheduler
 
@@ -185,9 +194,20 @@ class PlaybackView @JvmOverloads constructor(
         exoA.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
         exoB.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
 
-        mountInitial()
-        mainHandler.removeCallbacks(stallRunnable)
-        mainHandler.postDelayed(stallRunnable, STALL_SAMPLE_MS)
+        if (suspended) {
+            // Mount INTO the stood-down state (a manifest change during an
+            // interrupt window). Mounting live and then standing down prepared
+            // both slots and started the front under a live overlay — three
+            // codecs on a box with a handful, and an item start nobody saw.
+            // The scheduler is paused BEFORE start() below, so it owes its
+            // first item start to standUp() -> resume(). Mirrors
+            // PlayerStage.vue's mountSuspended().
+            mountSuspended()
+        } else {
+            mountInitial()
+            mainHandler.removeCallbacks(stallRunnable)
+            mainHandler.postDelayed(stallRunnable, STALL_SAMPLE_MS)
+        }
 
         unsubscribers += scheduler.onTransition { e ->
             runOnUi {
@@ -310,6 +330,19 @@ class PlaybackView @JvmOverloads constructor(
         resetProgressTracking()
     }
 
+    /** The front item prepared but NOT played, the back slot empty, no
+     *  watchdog, scheduler paused: one paused codec, ready for a frame-exact
+     *  resume in standUp(). */
+    private fun mountSuspended() {
+        val m = manifest ?: return
+        val sched = scheduler ?: return
+        suspended = true
+        sched.pause()
+        setItemInSlot(frontSlot(), m.items.getOrNull(sched.getFrontIndex()))
+        setItemInSlot(backSlot(), null)
+        resetProgressTracking()
+    }
+
     /** Re-prepare the current front item in place — the only recovery available
      *  when there is nothing to advance to. */
     private fun retryFrontItem() {
@@ -330,6 +363,7 @@ class PlaybackView @JvmOverloads constructor(
      *  so it gets a device_errors row and the same retry/backoff treatment. */
     private fun sampleProgress() {
         if (stalled) return // the recovery runnable owns retries in this state
+        if (suspended) return // the tick is removed for the window; belt and braces
         val item = itemFor(frontSlot())
         if (item == null || item.type != "video") {
             resetProgressTracking()
@@ -337,6 +371,12 @@ class PlaybackView @JvmOverloads constructor(
         }
         val exo = exoFor(frontSlot())
         val state = exo.playbackState
+        // Latch from the live state too, like the web stage reads readyState
+        // every sample. The listener alone missed a player that stayed READY
+        // across a pause/resume: standUp() clears everReady and no STATE_READY
+        // transition re-fires, so a decoder that failed to resume after an
+        // observance was judged by the 45 s startup threshold instead of 8 s.
+        if (state == Player.STATE_READY) everReady = true
         // IDLE is the error path's territory (onPlayerError already fired, or
         // nothing is prepared); ENDED cannot happen under REPEAT_MODE_ONE and
         // is handled by onVideoEnded otherwise.
@@ -422,9 +462,15 @@ class PlaybackView @JvmOverloads constructor(
     }
 
     private fun reportError(index: Int, msg: String) {
+        val sched = scheduler ?: return
+        if (suspended) {
+            // Report only. standUp() restarts the watchdog, which finds a dead
+            // front player then and recovers it on the normal path.
+            sched.noteError(index, msg)
+            return
+        }
         consecutiveErrors += 1
         budgetAnchorMs = -1L // forgiveness needs fresh sustained progress from here
-        val sched = scheduler ?: return
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
             // Record it first: this is the failure that trips the stalled state,
             // and it used to be the one failure that never reached device_errors.
@@ -449,6 +495,7 @@ class PlaybackView @JvmOverloads constructor(
     }
 
     private fun scheduleRecovery() {
+        if (suspended) return // standUp() re-arms it if we are still stalled
         if (recoveryPending) return
         recoveryPending = true
         mainHandler.postDelayed(recoveryRunnable, RECOVERY_DELAY_MS)
@@ -462,6 +509,87 @@ class PlaybackView @JvmOverloads constructor(
     private fun runOnUi(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block()
         else mainHandler.post { if (!released) block() }
+    }
+
+    /**
+     * Hand the screen to a scheduled interrupt.
+     *
+     * Order matters: the back slot is released BEFORE the overlay player is
+     * built, so the box never holds three decoders — on Amlogic that is the
+     * fastest way to starve the visible one.
+     *
+     * The front player is PAUSED, never re-prepared: it keeps its position and
+     * its codec, which is what makes the resume frame-exact.
+     */
+    fun standDown() {
+        if (released) return
+        suspended = true
+        scheduler?.pause()
+        val front = exoFor(frontSlot())
+        front.playWhenReady = false
+        front.pause()
+        setItemInSlot(backSlot(), null)
+        // The watchdog does NOT exempt a paused player — left running it would
+        // re-prepare the front video about 8 s into the observance.
+        mainHandler.removeCallbacks(stallRunnable)
+        // A stage already mid-backoff has a recovery timer armed. Left running,
+        // it fires mountInitial() DURING the observance: the paused front
+        // decoder gets re-prepared (destroying the frame-exact resume — the
+        // same re-prime that killed a prod TV) and the back slot is re-armed,
+        // putting three live decoders on the box while the overlay is on
+        // screen. standUp() re-arms recovery below if we are still stalled.
+        clearRecovery()
+    }
+
+    /** Take the screen back. */
+    /**
+     * How the playlist resumes after an interrupt. Mirrors PlayerStage.vue's
+     * RESUME_MODE: `restart` today, because an ad interrupted halfway is a
+     * broken impression. The continue path is kept deliberately and is
+     * expected to become a per-organization choice. Restarting seeks the SAME
+     * prepared player back to 0 — it never re-prepares, which is what killed
+     * the Haier TV.
+     */
+    private enum class ResumeMode { RESTART, CONTINUE }
+
+    /**
+     * Seek the front player back to its start, for [ResumeMode.RESTART].
+     *
+     * NEVER throws — mirrors the TS twin. A failed seek may cost the restart;
+     * it must not cost the resume. Unguarded on the web surface this aborted
+     * standUp() mid-way and left a prod TV on a frozen frame with the watchdog
+     * stopped and no device_errors at all: no recovery, no signal. A failure is
+     * reported down the normal media-fault path instead of vanishing.
+     */
+    private fun restartFrontItem() {
+        val item = itemFor(frontSlot()) ?: return
+        if (item.type != "video") return
+        val idx = manifest?.items?.indexOfFirst { it.id == item.id } ?: -1
+        runCatching { exoFor(frontSlot()).seekTo(0) }.onFailure { e ->
+            if (idx >= 0) scheduler?.noteError(idx, "interrupt restart seek failed: ${e.message}")
+        }
+    }
+
+    fun standUp() {
+        if (released) return
+        suspended = false
+        val m = manifest ?: return
+        val sched = scheduler ?: return
+        val frontIdx = sched.getFrontIndex()
+        val backIdx = sched.getBackIndex()
+        val backItem = if (backIdx == frontIdx) null else m.items.getOrNull(backIdx)
+        setItemInSlot(backSlot(), backItem)
+        val restart = RESUME_MODE == ResumeMode.RESTART
+        if (restart) restartFrontItem()
+        playFrontVideoIfNeeded()
+        resetProgressTracking()
+        sched.resume(restart)
+        mainHandler.removeCallbacks(stallRunnable)
+        mainHandler.postDelayed(stallRunnable, STALL_SAMPLE_MS)
+        // Re-arm the backoff cancelled in standDown(), or a stage that entered
+        // the observance already stalled would sit stalled forever with no
+        // timer left to heal it.
+        if (stalled) scheduleRecovery()
     }
 
     /** Release both ExoPlayers, cancel animators + the recovery handler, and

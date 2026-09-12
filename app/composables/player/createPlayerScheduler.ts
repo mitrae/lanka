@@ -39,6 +39,23 @@ export interface SchedulerHandle {
    */
   noteError(index: number, message: string): void
   stop(): void
+  /**
+   * Freeze the playlist for a scheduled interrupt: cancel the image slide
+   * timer, remembering how much of it was left. No transitions, no item starts.
+   * While paused the scheduler refuses to advance: `itemEnded` is dropped and
+   * `itemErrored` still reports (telemetry must not go blind) but does not
+   * move the front index. Idempotent.
+   */
+  pause(): void
+  /**
+   * Un-freeze the playlist.
+   *
+   * Default (`restart: false`) re-arms the slide timer with its REMAINING
+   * time — the frame-exact continuation. With `restart: true` the current item
+   * starts over, so an image gets its FULL duration back; the stage does the
+   * matching seek for a video. Idempotent.
+   */
+  resume(opts?: { restart?: boolean }): void
   getFrontIndex(): number
   getBackIndex(): number
   onTransition(fn: (e: TransitionEvent) => void): () => void
@@ -75,6 +92,16 @@ export function createPlayerScheduler(
   let back = items.length > 1 ? 1 % items.length : 0
   let stopped = false
   let imageTimer: unknown = null
+  let imageTimerIndex = -1
+  let imageTimerArmedAt = 0
+  let imageTimerMs = 0
+  let paused = false
+  let pausedRemainingMs: number | null = null
+  /** start() arrived while paused — a manifest mounted DURING an interrupt
+   *  window. The first item start (telemetry + slide timer) is owed to
+   *  resume(): emitting it under the overlay would count a play nobody saw
+   *  and run the slide clock behind the clip. */
+  let startDeferred = false
 
   const itemStartHandlers = new Set<(i: number) => void>()
   const transitionHandlers = new Set<(e: TransitionEvent) => void>()
@@ -100,7 +127,14 @@ export function createPlayerScheduler(
   function armImageTimerIfNeeded(index: number): void {
     const item = items[index]
     if (!item || item.type !== 'image') return
-    const durationMs = Math.max(0, item.durationMs | 0)
+    armImageTimer(index, Math.max(0, item.durationMs | 0))
+  }
+
+  function armImageTimer(index: number, ms: number): void {
+    clearImageTimer() // never overwrite a live handle — that leaks it
+    imageTimerIndex = index
+    imageTimerArmedAt = deps.now()
+    imageTimerMs = ms
     imageTimer = deps.setTimeout(() => {
       imageTimer = null
       if (stopped) return
@@ -112,7 +146,7 @@ export function createPlayerScheduler(
       }
       // Multi-item loop: treat like the stage reporting item ended.
       advance()
-    }, durationMs)
+    }, ms)
   }
 
   function advance(): void {
@@ -141,11 +175,17 @@ export function createPlayerScheduler(
     start() {
       if (stopped) return
       if (mode === 'empty') return
+      if (paused) {
+        startDeferred = true
+        return
+      }
       emitItemStart(0)
       armImageTimerIfNeeded(0)
     },
     itemEnded(index) {
-      if (stopped) return
+      // Dropped while paused: advancing here would desync the front index from
+      // the element the stage is about to resume.
+      if (stopped || paused) return
       if (mode === 'empty' || mode === 'single-video') return
       if (mode === 'single-image') {
         // Stage shouldn't call itemEnded for single-image — timer is
@@ -162,6 +202,8 @@ export function createPlayerScheduler(
     itemErrored(index, msg) {
       if (stopped) return
       emitError(index, msg)
+      // Report, never advance: same desync hazard as itemEnded.
+      if (paused) return
       if (mode === 'empty' || mode === 'single-video' || mode === 'single-image') {
         return
       }
@@ -170,10 +212,41 @@ export function createPlayerScheduler(
     },
     stop() {
       stopped = true
+      paused = false
+      pausedRemainingMs = null
+      startDeferred = false
       clearImageTimer()
       itemStartHandlers.clear()
       transitionHandlers.clear()
       errorHandlers.clear()
+    },
+    pause() {
+      if (stopped || paused) return
+      paused = true
+      if (imageTimer === null) {
+        pausedRemainingMs = null
+        return
+      }
+      const elapsed = deps.now() - imageTimerArmedAt
+      pausedRemainingMs = Math.max(0, imageTimerMs - elapsed)
+      clearImageTimer()
+    },
+    resume(opts) {
+      if (stopped || !paused) return
+      paused = false
+      const restart = opts?.restart === true
+      if (startDeferred) {
+        startDeferred = false
+        emitItemStart(0)
+        armImageTimerIfNeeded(0)
+        return
+      }
+      if (pausedRemainingMs === null) return
+      const index = imageTimerIndex
+      const remaining = pausedRemainingMs
+      pausedRemainingMs = null
+      const full = Math.max(0, items[index]?.durationMs | 0)
+      armImageTimer(index, restart ? full : remaining)
     },
     getFrontIndex() {
       return front

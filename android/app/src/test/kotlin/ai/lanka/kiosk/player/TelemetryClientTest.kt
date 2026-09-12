@@ -31,6 +31,16 @@ class TelemetryClientTest {
         val p = CapturingPoster(); TelemetryClient(p, "1.0.0").clearedCurrent("dev")
         assertTrue(p.bodies.single().second.contains("\"currentItemId\":null"))
     }
+    @Test fun `interruptStarted posts interruptAt and omits currentItemId`() {
+        val p = CapturingPoster(); TelemetryClient(p, "1.0.0").interruptStarted("dev", 1_725_000_000_000L)
+        val (dev, body) = p.bodies.single()
+        assertEquals("dev", dev)
+        assertTrue(body.contains("\"interruptAt\":1725000000000"))
+        assertTrue(body.contains("\"surface\":\"native\""))
+        assertTrue(body.contains("\"apkVersion\":\"1.0.0\""))
+        // The interrupt is not a playlist item — it must never touch currentItemId.
+        assertTrue(!body.contains("currentItemId"))
+    }
 
     private fun vis(
         state: KioskVisibility.State = KioskVisibility.State.BACKGROUND,

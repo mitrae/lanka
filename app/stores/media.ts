@@ -56,7 +56,7 @@ export const useMediaStore = defineStore('media', {
       )
     },
 
-    async delete(id: number, opts: { force?: boolean } = {}): Promise<void> {
+    async delete(id: number, opts: { force?: boolean; clearInterrupt?: boolean } = {}): Promise<void> {
       await this._api.deleteMedia(id, opts)
       this.list = this.list.filter((m) => m.id !== id)
     },

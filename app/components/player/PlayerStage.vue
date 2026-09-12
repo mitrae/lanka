@@ -1,17 +1,22 @@
 <!-- app/components/player/PlayerStage.vue -->
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Manifest, ManifestItem } from '~/app/types/api'
 import type { SchedulerHandle } from '~/app/composables/player/createPlayerScheduler'
 import type { PlayerEnv } from '~/app/composables/player/usePlayerEnv'
 import { createStallWatchdog } from '~/app/composables/player/createStallWatchdog'
 import { describeMediaError } from '~/app/composables/player/describeMediaError'
+import { fetchBlobUrl } from '~/app/composables/player/fetchBlobUrl'
 
 const props = defineProps<{
   manifest: Manifest
   scheduler: SchedulerHandle
   env: PlayerEnv
+  /** True while a scheduled interrupt owns the screen. See standDown(). */
+  suspended?: boolean
 }>()
+
+const emit = defineEmits<{ 'stood-down': [] }>()
 
 // Slot A/B swap. When `frontIsA` is true, slot A is front (visible), B is back (preloading).
 const frontIsA = ref(true)
@@ -89,7 +94,17 @@ function clearRecoveryTimer(): void {
   }
 }
 
+/** True while a scheduled interrupt owns the screen. Every self-heal path
+ *  checks it: under the overlay only telemetry may run. A retry would re-prime
+ *  the paused front decoder (the re-prime that killed a prod TV), and the
+ *  recovery timer would fire mountInitial() mid-observance — standDown() only
+ *  ever stopped the two timers; the event-driven paths were wide open. */
+function isSuspended(): boolean {
+  return props.suspended === true
+}
+
 function scheduleRecovery(): void {
+  if (isSuspended()) return // standUp() re-arms it if we are still stalled
   if (recoveryTimer !== null) return
   recoveryTimer = window.setTimeout(() => {
     recoveryTimer = null
@@ -194,6 +209,12 @@ function retryFrontItem(): void {
 }
 
 function reportError(index: number, msg: string): void {
+  if (isSuspended()) {
+    // Report only. The watchdog standUp() restarts will find a dead front
+    // video then, and recover it on the normal path.
+    props.scheduler.noteError(index, msg)
+    return
+  }
   consecutiveErrors += 1
   budgetAnchorTime = -1 // forgiveness needs fresh sustained progress from here
   if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
@@ -219,6 +240,7 @@ function reportError(index: number, msg: string): void {
  *  gets a device_errors row and the same retry/backoff treatment. */
 function sampleProgress(): void {
   if (stalled.value) return // the recovery timer owns retries in this state
+  if (isSuspended()) return // the timer is stopped for the window; belt and braces
   const item = frontItem()
   const { video } = elementsFor(frontSlot())
   if (!item || item.type !== 'video' || !video) {
@@ -321,7 +343,10 @@ function onVideoError(slot: 'A' | 'B'): void {
     : 'video decode/load error'
   const viaBlob = !!blobUrlBySlot[slot]
   if (viaBlob && item) blobState.set(item.id, 'failed')
-  if (!viaBlob && slot === frontSlot() && item?.type === 'video' && video && !blobState.has(item.id)) {
+  if (
+    !viaBlob && !isSuspended() && slot === frontSlot() &&
+    item?.type === 'video' && video && !blobState.has(item.id)
+  ) {
     blobState.set(item.id, 'tried')
     // Record the direct-URL failure, then retry via blob: without charging the
     // error budget — the retry itself decides whether this is a real fault.
@@ -337,16 +362,23 @@ async function playViaBlob(slot: 'A' | 'B', item: ManifestItem, video: HTMLVideo
   // Same-origin on purpose (see the blob comment above). On the APK the
   // interceptor still answers this from the cache; in a browser it is the
   // app's own /media proxy.
-  const url = `/media/${item.sha256}`
   try {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const blob = await res.blob()
+    const blobUrl = await fetchBlobUrl(item.sha256)
     // The slot may have moved on while we were fetching.
     const stillHere = (slot === 'A' ? itemInA.value : itemInB.value)?.id === item.id
-    if (!stillHere) return
+    if (!stillHere) {
+      URL.revokeObjectURL(blobUrl)
+      return
+    }
+    if (isSuspended()) {
+      // A window opened while we were fetching. Assigning the blob now would
+      // re-prime the paused front decoder under the overlay; give the item
+      // its blob attempt back for after the resume instead.
+      URL.revokeObjectURL(blobUrl)
+      blobState.delete(item.id)
+      return
+    }
     releaseBlob(slot)
-    const blobUrl = URL.createObjectURL(blob)
     blobUrlBySlot[slot] = blobUrl
     video.src = blobUrl
     video.load()
@@ -382,9 +414,139 @@ function mountInitial(): void {
   resetProgressTracking()
 }
 
+/**
+ * Hand the screen to the interrupt overlay.
+ *
+ * Order matters. The back preload slot is released BEFORE the overlay is given
+ * a source, so the box never holds three live decoders — on Amlogic hardware
+ * that is the fastest way to starve the visible one.
+ *
+ * The front video is PAUSED, never torn down: a paused <video> keeps its
+ * currentTime and its decoder, which is what makes the resume frame-exact with
+ * no seek and no re-prime.
+ */
+function standDown(): void {
+  props.scheduler.pause()
+  const item = frontItem()
+  if (item?.type === 'video') {
+    const { video } = elementsFor(frontSlot())
+    video?.pause()
+  }
+  setItemInSlot(backSlot(), null)
+  // The watchdog does NOT exempt a paused element — a paused front video is a
+  // fault it exists to recover from. Left running it would reload the page
+  // about 8 s into the observance, which looks like success while actually
+  // restarting the playlist.
+  if (stallTimer !== null) {
+    window.clearInterval(stallTimer)
+    stallTimer = null
+  }
+  // A stage already mid-backoff has a recovery timer armed. Left running it
+  // fires mountInitial() DURING the observance, which re-assigns src on both
+  // slots: the paused front decoder is re-primed (destroying the frame-exact
+  // resume, and re-priming is what killed a prod TV) and the back slot is
+  // re-armed, putting three live decoders on a box that has a handful — while
+  // the overlay is on screen. standUp() re-arms it if we are still stalled.
+  clearRecoveryTimer()
+  emit('stood-down')
+}
+
+/**
+ * Mount INTO the stood-down state. A manifest change during an interrupt
+ * remounts this component (keyed on playlistId:version) with `suspended`
+ * already true. Mounting live and then standing down loaded + play()ed the
+ * front video and preloaded the back slot under a live overlay — three
+ * decoders on a box with a handful, and a play() nobody saw. Here the front
+ * item is loaded (one paused decoder, ready for a frame-exact resume), the
+ * back slot stays empty, no watchdog runs, and standUp() finishes the mount.
+ * The scheduler was already paused by usePlayerBoot before its start(), so
+ * resume() there also fires the deferred first item start.
+ */
+function mountSuspended(): void {
+  props.scheduler.pause()
+  const front = props.manifest.items[props.scheduler.getFrontIndex()] ?? null
+  setItemInSlot(frontSlot(), front)
+  setItemInSlot(backSlot(), null)
+  resetProgressTracking()
+  emit('stood-down')
+}
+
+/** Take the screen back. */
+/**
+ * How the playlist resumes after an interrupt.
+ *
+ * `restart` today: an ad interrupted halfway is a broken impression — the
+ * advertiser paid for a whole one — so the interrupted item starts over.
+ * The `continue` path is deliberately kept, because it reads better for a long
+ * informational clip, and is expected to become a per-organization choice
+ * (media.organization_id) rather than one fleet-wide setting.
+ *
+ * Restarting seeks the SAME paused element back to 0. It never re-assigns
+ * `src`: that would re-prime the decoder, which is what killed the Haier TV.
+ */
+type ResumeMode = 'restart' | 'continue'
+const RESUME_MODE: ResumeMode = 'restart'
+
+/**
+ * Seek the front video back to its start, for RESUME_MODE === 'restart'.
+ *
+ * NEVER throws. A failed seek may cost the restart; it must not cost the
+ * resume. When this ran unguarded a `currentTime` setter that threw aborted
+ * standUp() mid-way, so playback, the scheduler and the stall sampler were all
+ * left suspended: a prod TV sat on a frozen frame with the watchdog stopped and
+ * ZERO device_errors — no self-recovery and no signal that anything was wrong.
+ * A seek that fails is reported instead, via the same path as any other media
+ * fault, so the next one is visible rather than silent.
+ */
+function restartFrontItem(): void {
+  const item = frontItem()
+  if (item?.type !== 'video') return
+  const { video } = elementsFor(frontSlot())
+  if (!video) return
+  try {
+    video.currentTime = 0
+  } catch (e) {
+    const index = props.manifest.items.findIndex((i) => i.id === item.id)
+    if (index >= 0) {
+      props.scheduler.noteError(index, `interrupt restart seek failed: ${(e as Error).message}`)
+    }
+  }
+}
+
+function standUp(): void {
+  const frontIdx = props.scheduler.getFrontIndex()
+  const backIdx = props.scheduler.getBackIndex()
+  const back = backIdx === frontIdx ? null : (props.manifest.items[backIdx] ?? null)
+  setItemInSlot(backSlot(), back)
+  const restart = RESUME_MODE === 'restart'
+  if (restart) restartFrontItem()
+  playFrontVideoIfNeeded()
+  resetProgressTracking()
+  props.scheduler.resume({ restart })
+  if (stallTimer === null) {
+    stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
+  }
+  // Re-arm the backoff we cancelled on the way down, or a stage that entered
+  // the observance stalled would sit stalled forever with no timer to heal it.
+  if (stalled.value) scheduleRecovery()
+}
+
 onMounted(() => {
-  mountInitial()
-  stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
+  // This component is keyed on playlistId:version, so a manifest change during
+  // an interrupt REMOUNTS it with `suspended` already true. The watch below is
+  // not immediate — see mountSuspended(). The emit there is harmless: the
+  // parent is already past `arming`, so its handler is a no-op.
+  if (props.suspended) {
+    mountSuspended()
+  } else {
+    mountInitial()
+    stallTimer = window.setInterval(sampleProgress, STALL_SAMPLE_MS)
+  }
+
+  const stopSuspendWatch = watch(
+    () => props.suspended === true,
+    (on) => (on ? standDown() : standUp())
+  )
 
   const unsubTransition = props.scheduler.onTransition((e) => {
     // The NEW front is the current back slot — flip which slot is front.
@@ -402,6 +564,7 @@ onMounted(() => {
   })
 
   onBeforeUnmount(() => {
+    stopSuspendWatch()
     unsubTransition()
     unsubStart()
     clearRecoveryTimer()

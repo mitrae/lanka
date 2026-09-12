@@ -70,4 +70,18 @@ describe('useTelemetry', () => {
     expect(posts[0].visibility).toBeUndefined()
     expect(posts[0].surface).toBe('webview')
   })
+
+  it('interruptStarted posts interruptAt and omits currentItemId entirely', () => {
+    const posts: any[] = []
+    const api = {
+      postTelemetry: (_id: string, body: any) => { posts.push(body); return Promise.resolve() }
+    } as any
+    useTelemetry(api).interruptStarted('dev-1', 1_694_000_000_000)
+    expect(posts).toHaveLength(1)
+    expect(posts[0].interruptAt).toBe(1_694_000_000_000)
+    // The interrupt is not a playlist item: it must not disturb the current
+    // item or media.play_count, so the field is absent, not null.
+    expect('currentItemId' in posts[0]).toBe(false)
+    expect(posts[0].surface).toBe('webview')
+  })
 })

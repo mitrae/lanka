@@ -15,6 +15,8 @@ import type {
   DeviceNowPlaying,
   Group,
   GroupDetail,
+  InterruptPut,
+  InterruptStatus,
   Manifest,
   Media,
   MediaDetail,
@@ -77,10 +79,12 @@ export interface ApiClient {
   postTelemetry(
     deviceId: string,
     body: {
-      currentItemId: number | null
+      currentItemId?: number | null
       apkVersion?: string
       surface?: 'webview' | 'native'
+      interruptAt?: number
       error?: { sha256?: string; message: string }
+      [k: string]: unknown
     }
   ): Promise<void>
 
@@ -89,7 +93,7 @@ export interface ApiClient {
   getMedia(id: number): Promise<Media>
   getMediaDetail(id: number): Promise<MediaDetail>
   updateMedia(id: number, body: { filename: string }): Promise<Media>
-  deleteMedia(id: number, opts?: { force?: boolean }): Promise<void>
+  deleteMedia(id: number, opts?: { force?: boolean; clearInterrupt?: boolean }): Promise<void>
   createUpload(body: CreateUploadBody): Promise<CreatedUpload>
   completeUpload(id: string): Promise<UploadJob>
   getUpload(id: string): Promise<UploadJob>
@@ -146,6 +150,10 @@ export interface ApiClient {
 
   // portal
   getPortalStats(): Promise<OrgReach>
+
+  // scheduled interrupt
+  getInterrupt(): Promise<InterruptStatus>
+  putInterrupt(body: InterruptPut): Promise<InterruptStatus>
 
   // assignments (target-addressed)
   assignDeviceToPlaylist(
@@ -232,11 +240,15 @@ export function createApiClient(fetch: FetchFn): ApiClient {
     getMedia: (id) => fetch<Media>(`/api/media/${id}`, { method: 'GET' }),
     getMediaDetail: (id) => fetch<MediaDetail>(`/api/media/${id}`, { method: 'GET' }),
     updateMedia: (id, body) => fetch<Media>(`/api/media/${id}`, { method: 'PATCH', body }),
-    deleteMedia: (id, opts = {}) =>
-      fetch<void>(`/api/media/${id}`, {
+    deleteMedia: (id, opts = {}) => {
+      const query: Record<string, string> = {}
+      if (opts.force) query.force = 'true'
+      if (opts.clearInterrupt) query.clearInterrupt = 'true'
+      return fetch<void>(`/api/media/${id}`, {
         method: 'DELETE',
-        query: opts.force ? { force: 'true' } : undefined
-      }),
+        query: Object.keys(query).length ? query : undefined
+      })
+    },
     createUpload: (body) =>
       fetch<CreatedUpload>('/api/media/uploads', { method: 'POST', body }),
     completeUpload: (id) =>
@@ -303,6 +315,11 @@ export function createApiClient(fetch: FetchFn): ApiClient {
 
     // portal
     getPortalStats: () => fetch<OrgReach>('/api/portal/stats', { method: 'GET' }),
+
+    // scheduled interrupt
+    getInterrupt: () => fetch<InterruptStatus>('/api/interrupt', { method: 'GET' }),
+    putInterrupt: (body) =>
+      fetch<InterruptStatus>('/api/interrupt', { method: 'PUT', body }),
 
     // assignments
     assignDeviceToPlaylist: (deviceId, body) =>

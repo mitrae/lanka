@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import type { MediaListRow } from '~/app/types/api'
 
-const props = defineProps<{ media: MediaListRow }>()
+const props = defineProps<{ media: MediaListRow; scheduled?: boolean }>()
 const emit = defineEmits<{ (e: 'delete', m: MediaListRow): void; (e: 'select', m: MediaListRow): void }>()
 
 function fmtDuration(ms: number | null) {
@@ -41,6 +41,16 @@ function fmtDuration(ms: number | null) {
           <template v-if="media.durationMs"> · {{ fmtDuration(media.durationMs) }}</template>
         </span>
         <div class="flex items-center gap-1">
+          <UBadge
+            v-if="scheduled"
+            size="sm"
+            color="warning"
+            variant="soft"
+            icon="i-lucide-alarm-clock"
+            :title="$t('schedule.clipInUse')"
+          >
+            {{ $t('schedule.title') }}
+          </UBadge>
           <UBadge
             v-if="media.usedInPlaylists > 0"
             size="sm"

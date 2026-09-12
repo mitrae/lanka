@@ -50,6 +50,42 @@ class TelemetryClient(
         }.toString()
     )
 
+    /**
+     * Proof of observance: the window's startsAt, posted when the clip actually
+     * begins. Carries no currentItemId — the interrupt is not a playlist item
+     * and must not disturb the current item or media.play_count.
+     */
+    fun interruptStarted(deviceId: String, startsAt: Long) = poster.post(
+        deviceId,
+        buildJsonObject {
+            put("apkVersion", apkVersion)
+            put("surface", surface)
+            put("interruptAt", startsAt)
+            putVisibility()
+        }.toString()
+    )
+
+    /**
+     * An interrupt that failed to play. Deliberately carries NO currentItemId:
+     * the playlist item on screen never changed, and the server reads an
+     * explicit null as "clear the current item" — on a single-video playlist
+     * (one itemStarted per session) nothing would set it again for hours, so
+     * one failed observance would leave the device page reading "nothing
+     * playing". Same heartbeat semantics interruptStarted already uses.
+     */
+    fun interruptFailed(deviceId: String, sha256: String?, message: String) = poster.post(
+        deviceId,
+        buildJsonObject {
+            put("apkVersion", apkVersion)
+            put("surface", surface)
+            putVisibility()
+            putJsonObject("error") {
+                sha256?.let { put("sha256", it) }
+                put("message", message)
+            }
+        }.toString()
+    )
+
     fun itemStarted(deviceId: String, currentItemId: Int) = poster.post(deviceId, body(currentItemId))
     fun itemFailed(deviceId: String, currentItemId: Int?, sha256: String?, message: String) =
         poster.post(deviceId, body(currentItemId, sha256 to message))

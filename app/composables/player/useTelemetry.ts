@@ -15,6 +15,15 @@ export interface Telemetry {
   /** Periodic proof-of-life carrying on-screen state. Sends NO currentItemId,
    *  so the server neither counts a play nor disturbs the current item. */
   heartbeat(deviceId: string): void
+  /** Proof of observance: the window's startsAt, posted when the clip actually
+   *  begins playing. Carries no currentItemId — the interrupt is not a playlist
+   *  item and must not disturb the current item or media.play_count. */
+  interruptStarted(deviceId: string, startsAt: number): void
+  /** An interrupt that failed to play. Carries no currentItemId: the playlist
+   *  item on screen never changed, and posting `null` would CLEAR the device's
+   *  current item — on a single-video playlist nothing sets it again for
+   *  hours. Same heartbeat semantics the success path already uses. */
+  interruptFailed(deviceId: string, sha256: string | undefined, message: string): void
 }
 
 /**
@@ -31,6 +40,7 @@ export function useTelemetry(api: ApiClient, visibility?: VisibilityHandle): Tel
     deviceId: string,
     body: {
       currentItemId?: number | null
+      interruptAt?: number
       error?: { sha256?: string; message: string }
     }
   ): void {
@@ -69,6 +79,12 @@ export function useTelemetry(api: ApiClient, visibility?: VisibilityHandle): Tel
     },
     heartbeat(deviceId) {
       fire(deviceId, {})
+    },
+    interruptStarted(deviceId, startsAt) {
+      fire(deviceId, { interruptAt: startsAt })
+    },
+    interruptFailed(deviceId, sha256, message) {
+      fire(deviceId, { error: { sha256, message } })
     }
   }
 }

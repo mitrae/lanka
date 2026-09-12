@@ -182,6 +182,16 @@ export interface Manifest {
   items: ManifestItem[]
   /** The server's build id; the player reloads when it differs from its own. */
   playerBuild?: string
+  /** Server clock at response time; the player derives its offset from it. */
+  serverNow?: number
+  /** Next interrupt occurrence that has not yet ended. */
+  interrupt?: {
+    mediaId: number
+    sha256: string
+    durationMs: number
+    startsAt: number
+    endsAt: number
+  }
 }
 
 export interface Assignment {
@@ -283,6 +293,43 @@ export interface ApkRelease {
   sha256: string
   size: number
   uploadedAt: string | number
+}
+
+/** GET/PUT /api/interrupt — the fleet-wide scheduled interrupt config. */
+export interface InterruptConfig {
+  mediaId: number
+  mediaFilename: string
+  sha256: string
+  durationMs: number
+  atMinutes: number
+  timezone: string
+  enabled: boolean
+  label: string | null
+}
+
+export interface InterruptDeviceStatus {
+  id: string
+  name: string | null
+  lastInterruptAt: number | null
+  observedToday: boolean
+  hasPlaylist: boolean
+  lastSeenAt: number | null
+}
+
+/** GET/PUT /api/interrupt */
+export interface InterruptStatus {
+  config: InterruptConfig | null
+  /** Next occurrence that has not yet ended; null when disabled/unset. */
+  window: { startsAt: number; endsAt: number } | null
+  devices: InterruptDeviceStatus[]
+}
+
+export interface InterruptPut {
+  mediaId: number
+  atMinutes: number
+  enabled: boolean
+  label?: string | null
+  timezone?: string
 }
 
 export interface DeviceCommand {

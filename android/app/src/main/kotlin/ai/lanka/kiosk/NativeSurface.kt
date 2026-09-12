@@ -3,8 +3,11 @@ package ai.lanka.kiosk
 import ai.lanka.kiosk.player.AndroidSchedulerDeps
 import ai.lanka.kiosk.player.CommandActions
 import ai.lanka.kiosk.player.CommandClient
+import ai.lanka.kiosk.player.InterruptState
+import ai.lanka.kiosk.player.InterruptTimer
 import ai.lanka.kiosk.player.Manifest
 import ai.lanka.kiosk.player.ManifestClient
+import ai.lanka.kiosk.player.ManifestInterrupt
 import ai.lanka.kiosk.player.OkHttpTelemetryPoster
 import ai.lanka.kiosk.player.PlaybackView
 import ai.lanka.kiosk.player.Scheduler
@@ -22,7 +25,12 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.io.ByteArrayOutputStream
@@ -91,6 +99,27 @@ class NativeSurface(
         Thread(r, "visibility-sample").apply { isDaemon = true }
     }
 
+    // Scheduled interrupt: a wall-clock overlay, not a playlist item. See
+    // beginInterrupt()/endInterrupt() below.
+    private val interruptTimer = InterruptTimer()
+    private var interruptPlayer: ExoPlayer? = null
+    private var interruptView: PlayerView? = null
+    private var interruptStartsAt = 0L
+    // Latches telemetry.interruptStarted to one post per window. Reset at the
+    // top of beginInterrupt() so the next window reports independently.
+    private var interruptReported = false
+    // Failure is loud, never blank. Media3 on Amlogic can sit in
+    // STATE_BUFFERING, or in STATE_READY with a hung MediaCodec, indefinitely
+    // with no onPlayerError — which would be a full window of black on a venue
+    // screen with nothing in device_errors. Mirrors the web overlay's
+    // STARTUP_BUDGET_MS.
+    private var interruptStartupGuard: Runnable? = null
+    /** No decoded frame by then and the playlist gets the screen back. */
+    private val interruptStartupBudgetMs = 5_000L
+    private val interruptExec = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "interrupt-tick").apply { isDaemon = true }
+    }
+
     override fun start() {
         deviceId = DeviceId.get(activity)
 
@@ -135,7 +164,10 @@ class NativeSurface(
             onManifest = { m -> onUi { onManifest(m); onConfirmed() } },
             onError = { onUi { showStandbyIfNeverPlayed() } },
             onReload = { onUi { activity.recreate() } },
-            onCommandSecret = { DeviceSecretStore.put(activity, deviceId, it) }
+            onCommandSecret = { DeviceSecretStore.put(activity, deviceId, it) },
+            onClock = { serverNow, interrupt ->
+                interruptTimer.setSchedule(interrupt, serverNow, System.currentTimeMillis())
+            },
         )
         manifestClient = mc
 
@@ -187,6 +219,19 @@ class NativeSurface(
                 }
             }
         }, 2, 2, TimeUnit.SECONDS)
+
+        // 500 ms so the observance starts within half a second of 09:00:00.
+        interruptExec.scheduleWithFixedDelay({
+            runCatching {
+                if (stopped) return@runCatching
+                val state = interruptTimer.observe(System.currentTimeMillis())
+                // onUi POSTS, so applyInterrupt runs outside the runCatching
+                // above: without its own guard, a throw inside beginInterrupt
+                // (ExoPlayer construction, PlayerView inflation, addView)
+                // crashes the process instead of skipping a window.
+                onUi { runCatching { applyInterrupt(state) } }
+            }
+        }, 500, 500, TimeUnit.MILLISECONDS)
     }
 
     /** Hop to the UI thread; dropped once stopped (a callback can land after teardown). */
@@ -228,20 +273,173 @@ class NativeSurface(
         root.addView(pv, matchParent())
         showOnly(pv)
         hasPlayed = true
-        pv.bind(m, sched)
+        // A playlist edit landing DURING an active interrupt window rebuilds
+        // this view underneath a live overlay. Mount it INTO the stood-down
+        // state: bind() then prepares only the front item, paused, and the
+        // scheduler starts deferred — no third codec, no item start nobody
+        // saw. Mirrors PlayerStage.vue's mountSuspended().
+        pv.bind(m, sched, suspended = interruptPlayer != null)
+    }
+
+    // ── Scheduled interrupt (wall-clock overlay) ──────────────────────────────
+    //
+    // NativeSurface owns its own overlay ExoPlayer, built on demand at the
+    // window and released after — rather than reattaching PlaybackView's back
+    // player, as the design spec first proposed. The decoder budget is
+    // identical either way (the back slot is emptied, so it's still
+    // front-paused + overlay = 2), and this is the only version that also
+    // observes when there is NO PlaybackView on screen — standby / no-content
+    // — which the web overlay covers by construction (it lives in player.vue,
+    // not PlayerStage.vue). All of this runs on the UI thread: the tick above
+    // hops via onUi{} because ExoPlayer is not thread-safe.
+
+    /** Enter or leave the interrupt window. Idempotent per state. */
+    private fun applyInterrupt(state: InterruptState) {
+        when (state) {
+            is InterruptState.Active -> if (interruptPlayer == null) beginInterrupt(state)
+            is InterruptState.Inactive -> if (interruptPlayer != null) endInterrupt()
+        }
+    }
+
+    private fun beginInterrupt(state: InterruptState.Active) {
+        val sha = state.schedule.sha256
+        val uri =
+            if (mediaCache.exists(sha)) Uri.fromFile(mediaCache.file(sha))
+            else Uri.parse("${BuildConfig.LANKA_SERVER_URL}/media/$sha")
+
+        interruptReported = false
+        val startsAt = state.schedule.startsAt
+
+        // Build BEFORE standing the stage down. Construction allocates no
+        // codec (prepare() does, below, after standDown()), and a throw here
+        // — OOM, a PlayerView inflate failure on the Amlogic ROM — used to
+        // leave the stage stood down with `interruptPlayer` still null: the
+        // wall-clock branch never called endInterrupt()/standUp(), so the
+        // playlist stayed frozen until the next manifest change, and the
+        // 500 ms tick re-ran this and leaked one ExoPlayer per tick. The
+        // tick's runCatching swallowed all of it.
+        val exo: ExoPlayer
+        val view: PlayerView
+        try {
+            exo = buildInterruptPlayer(sha, startsAt)
+            view = PlayerView(activity).apply {
+                useController = false
+                setBackgroundColor(Color.BLACK)
+            }
+        } catch (e: Throwable) {
+            telemetry.interruptFailed(deviceId, sha, "interrupt: overlay unavailable: $e")
+            interruptTimer.markDone(startsAt) // one failure per window, not one per tick
+            return
+        }
+
+        // Stand the stage down before prepare(): the back slot must be
+        // released before a third decoder could exist.
+        playbackView?.standDown()
+        interruptPlayer = exo
+        interruptView = view
+        interruptStartsAt = startsAt
+        try {
+            view.player = exo
+            root.addView(view, matchParent())
+            view.bringToFront()
+            exo.setMediaItem(MediaItem.fromUri(uri))
+            // Joining in progress keeps every screen frame-aligned.
+            if (state.offsetMs > 0) exo.seekTo(state.offsetMs)
+            exo.prepare()
+            exo.playWhenReady = true
+        } catch (e: Throwable) {
+            telemetry.interruptFailed(deviceId, sha, "interrupt: overlay failed to start: $e")
+            endInterrupt() // releases the overlay, latches the window, stands the stage up
+            return
+        }
+
+        // Loud, never blank. onPlayerError alone is not enough: Media3 can sit
+        // in STATE_BUFFERING, or STATE_READY behind a hung Amlogic MediaCodec,
+        // for the whole window without ever reporting an error.
+        val guard = Runnable {
+            interruptStartupGuard = null
+            telemetry.interruptFailed(deviceId, sha, "interrupt: clip never started")
+            endInterrupt()
+        }
+        interruptStartupGuard = guard
+        handler.postDelayed(guard, interruptStartupBudgetMs)
+    }
+
+    private fun buildInterruptPlayer(sha: String, startsAt: Long): ExoPlayer =
+        ExoPlayer.Builder(activity).build().apply {
+            volume = 0f // no audio, ever
+            repeatMode = Player.REPEAT_MODE_OFF
+            addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    // Loud, never blank: give the screen back and record it.
+                    telemetry.interruptFailed(deviceId, sha, "interrupt: ${error.errorCodeName}")
+                    onUi { endInterrupt() }
+                }
+
+                /**
+                 * Proof of observance, posted only once the clip is genuinely
+                 * rendering — NOT at handover. A screen whose clip fails to
+                 * decode must read as missed, or devices.last_interrupt_at
+                 * reports an observance that never reached the glass, which is
+                 * the one thing that field exists to rule out. Mirrors the web
+                 * overlay's `started` emit.
+                 */
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying && !interruptReported) {
+                        interruptReported = true
+                        // Real frames are on the glass: the budget has been met.
+                        clearInterruptStartupGuard()
+                        telemetry.interruptStarted(deviceId, startsAt)
+                    }
+                }
+            })
+        }
+
+    /** Ownership rule: the posted guard is removed on every exit from a window. */
+    private fun clearInterruptStartupGuard() {
+        interruptStartupGuard?.let { handler.removeCallbacks(it) }
+        interruptStartupGuard = null
+    }
+
+    /**
+     * Leave the window. Driven by the wall clock (the tick), never by the
+     * clip's own end — so a hung clip cannot hold the screen.
+     */
+    private fun endInterrupt() {
+        // Mirrors usePlayerBoot.ts's endInterrupt(), which returns before
+        // latching when the phase is already idle: without this, stop()'s
+        // unconditional call marks a schedule "done" that never actually ran.
+        if (interruptPlayer == null) return
+        clearInterruptStartupGuard()
+        interruptView?.let { v -> v.player = null; root.removeView(v) }
+        interruptView = null
+        interruptPlayer?.let { runCatching { it.release() } }
+        interruptPlayer = null
+        // The window that PLAYED, not whatever schedule is loaded now — see
+        // InterruptTimer.markDone's own comment.
+        interruptTimer.markDone(interruptStartsAt)
+        playbackView?.standUp()
     }
 
     private fun showStandbyIfNeverPlayed() {
         if (!hasPlayed) showOnly(standbyView)
     }
 
-    /** Make [view] the sole visible child of [root]. */
+    /** Make [view] the sole visible child of [root], except the interrupt overlay. */
     private fun showOnly(view: View) {
         if (view.parent == null) root.addView(view, matchParent())
         for (i in 0 until root.childCount) {
             val child = root.getChildAt(i)
+            // The interrupt overlay is not one of the mutually exclusive screens:
+            // it sits ABOVE whichever one is showing and owns the display for the
+            // whole wall-clock window. Hiding it here would leave its player
+            // decoding invisibly behind the playlist.
+            if (child === interruptView) continue
             child.visibility = if (child === view) View.VISIBLE else View.GONE
         }
+        // addView appends, so a freshly added screen would otherwise sit above
+        // the overlay in z-order.
+        interruptView?.bringToFront()
     }
 
     private fun makeBanner(text: String): View = TextView(activity).apply {
@@ -339,6 +537,13 @@ class NativeSurface(
         // Before the OkHttp shutdown below, so a tick in flight cannot enqueue
         // a call onto a closing client.
         visibilityExec.shutdownNow()
+        // Ownership rule: the overlay player + view this surface created must
+        // be released here too, on every path including mid-window.
+        endInterrupt()
+        // endInterrupt() returns early when there is no overlay, so clear the
+        // startup guard unconditionally too — the ownership rule is strict.
+        clearInterruptStartupGuard()
+        interruptExec.shutdownNow()
         // Release the shared OkHttp client (dispatcher threads + connection pool).
         // Graceful shutdown: manifest/command clients above are already closed.
         if (::http.isInitialized) {

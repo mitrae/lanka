@@ -36,7 +36,8 @@ const navGroups = computed(() => [
     label: t('nav.content'),
     items: [
       { label: t('nav.media'), icon: 'i-lucide-image', to: '/media' },
-      { label: t('nav.playlists'), icon: 'i-lucide-list-music', to: '/playlists' }
+      { label: t('nav.playlists'), icon: 'i-lucide-list-music', to: '/playlists' },
+      { label: t('nav.schedule'), icon: 'i-lucide-alarm-clock', to: '/schedule' }
     ]
   },
   {
