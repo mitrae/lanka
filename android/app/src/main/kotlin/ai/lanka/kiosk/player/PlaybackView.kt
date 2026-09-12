@@ -552,6 +552,24 @@ class PlaybackView @JvmOverloads constructor(
      */
     private enum class ResumeMode { RESTART, CONTINUE }
 
+    /**
+     * Seek the front player back to its start, for [ResumeMode.RESTART].
+     *
+     * NEVER throws — mirrors the TS twin. A failed seek may cost the restart;
+     * it must not cost the resume. Unguarded on the web surface this aborted
+     * standUp() mid-way and left a prod TV on a frozen frame with the watchdog
+     * stopped and no device_errors at all: no recovery, no signal. A failure is
+     * reported down the normal media-fault path instead of vanishing.
+     */
+    private fun restartFrontItem() {
+        val item = itemFor(frontSlot()) ?: return
+        if (item.type != "video") return
+        val idx = manifest?.items?.indexOfFirst { it.id == item.id } ?: -1
+        runCatching { exoFor(frontSlot()).seekTo(0) }.onFailure { e ->
+            if (idx >= 0) scheduler?.noteError(idx, "interrupt restart seek failed: ${e.message}")
+        }
+    }
+
     fun standUp() {
         if (released) return
         suspended = false
@@ -562,7 +580,7 @@ class PlaybackView @JvmOverloads constructor(
         val backItem = if (backIdx == frontIdx) null else m.items.getOrNull(backIdx)
         setItemInSlot(backSlot(), backItem)
         val restart = RESUME_MODE == ResumeMode.RESTART
-        if (restart && itemFor(frontSlot())?.type == "video") exoFor(frontSlot()).seekTo(0)
+        if (restart) restartFrontItem()
         playFrontVideoIfNeeded()
         resetProgressTracking()
         sched.resume(restart)

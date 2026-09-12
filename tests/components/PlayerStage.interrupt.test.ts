@@ -375,3 +375,36 @@ describe('PlayerStage resume mode', () => {
     expect(front.src).toBe(srcBefore)
   })
 })
+
+describe('standUp is exception-safe', () => {
+  beforeEach(() => stubMedia())
+
+  it('still resumes playback, the scheduler and the watchdog when the restart seek throws', async () => {
+    // The failure this guards against put a prod TV on a frozen frame with the
+    // watchdog stopped and ZERO device_errors — no recovery, and no signal that
+    // anything had gone wrong. A failed seek may cost the restart; it must never
+    // cost the resume.
+    const { w, scheduler } = mountStage()
+    const front = w.findAll('video')[0].element as HTMLVideoElement
+    Object.defineProperty(front, 'currentTime', {
+      configurable: true,
+      get: () => 371,
+      set: () => { throw new DOMException('seek failed', 'InvalidStateError') }
+    })
+    const frontPlay = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(front, 'play', { configurable: true, value: frontPlay })
+    const resumeSpy = vi.spyOn(scheduler, 'resume')
+    const noteErrorSpy = vi.spyOn(scheduler, 'noteError')
+    const setIntervalSpy = vi.spyOn(window, 'setInterval')
+
+    await w.setProps({ suspended: true })
+    const intervalsBefore = setIntervalSpy.mock.calls.length
+    await w.setProps({ suspended: false })
+
+    expect(frontPlay).toHaveBeenCalled()                            // playback resumed
+    expect(resumeSpy).toHaveBeenCalled()                            // scheduler un-paused
+    expect(setIntervalSpy.mock.calls.length).toBeGreaterThan(intervalsBefore) // sampling restarted
+    expect(noteErrorSpy).toHaveBeenCalled()                         // and it is on the record
+    setIntervalSpy.mockRestore()
+  })
+})

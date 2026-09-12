@@ -487,16 +487,39 @@ function mountSuspended(): void {
 type ResumeMode = 'restart' | 'continue'
 const RESUME_MODE: ResumeMode = 'restart'
 
+/**
+ * Seek the front video back to its start, for RESUME_MODE === 'restart'.
+ *
+ * NEVER throws. A failed seek may cost the restart; it must not cost the
+ * resume. When this ran unguarded a `currentTime` setter that threw aborted
+ * standUp() mid-way, so playback, the scheduler and the stall sampler were all
+ * left suspended: a prod TV sat on a frozen frame with the watchdog stopped and
+ * ZERO device_errors — no self-recovery and no signal that anything was wrong.
+ * A seek that fails is reported instead, via the same path as any other media
+ * fault, so the next one is visible rather than silent.
+ */
+function restartFrontItem(): void {
+  const item = frontItem()
+  if (item?.type !== 'video') return
+  const { video } = elementsFor(frontSlot())
+  if (!video) return
+  try {
+    video.currentTime = 0
+  } catch (e) {
+    const index = props.manifest.items.findIndex((i) => i.id === item.id)
+    if (index >= 0) {
+      props.scheduler.noteError(index, `interrupt restart seek failed: ${(e as Error).message}`)
+    }
+  }
+}
+
 function standUp(): void {
   const frontIdx = props.scheduler.getFrontIndex()
   const backIdx = props.scheduler.getBackIndex()
   const back = backIdx === frontIdx ? null : (props.manifest.items[backIdx] ?? null)
   setItemInSlot(backSlot(), back)
   const restart = RESUME_MODE === 'restart'
-  if (restart) {
-    const { video } = elementsFor(frontSlot())
-    if (video && frontItem()?.type === 'video') video.currentTime = 0
-  }
+  if (restart) restartFrontItem()
   playFrontVideoIfNeeded()
   resetProgressTracking()
   props.scheduler.resume({ restart })
